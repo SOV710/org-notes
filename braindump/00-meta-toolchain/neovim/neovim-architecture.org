@@ -59,7 +59,7 @@ Neovim 支持多种通道类型，每种对应不同的 IPC 机制:
 - *Named pipe*: Windows 命名管道
 - *Job*: 子进程的 stdin/stdout/stderr
 
-每个通道有唯一的 =channel_id=，可以通过 =vim.api.nvim_list_chans()= 查看。
+每个通道有唯一的 =channel_id=​，可以通过 =vim.api.nvim_list_chans()= 查看。
 
 * 内建模块
 
