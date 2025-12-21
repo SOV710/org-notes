@@ -322,7 +322,7 @@ vim.g.maplocalleader = ' '
 4. *插件管理器*: lazy.nvim, packer.nvim (选一个)
 5. *LSP 配置*: nvim-lspconfig, Mason (外部工具)
 
-*不要一次性全学*，先让 Neovim 能用，再逐步深入。
+*不要一次性全学*​，先让 Neovim 能用，再逐步深入。
 
 *** 3. 查阅 =:help= 时的技巧
 
