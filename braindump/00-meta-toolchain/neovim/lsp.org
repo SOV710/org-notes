@@ -1,0 +1,563 @@
+#+title: Language Server Protocol: The Standardized Bridge Between Editors and Language Intelligence
+#+author: SOV710
+#+date: 2025-12-21
+#+startup: showall
+#+options: toc:2 num:nil
+
+* LSP 是什么
+
+LSP (Language Server Protocol) 是规定了诸如自动补全、跳转定义、光标悬停时显示信息这类开发者工具的标准化 API。
+
+** LSP 解决的核心问题: M×N 复杂度
+
+在 LSP 出现之前，如果你想让一门编程语言在多个编辑器中都有良好的开发体验，需要:
+
+- 为 VSCode 写一个 Python 插件
+- 为 Vim 写一个 Python 插件
+- 为 Emacs 写一个 Python 插件
+- 为 Sublime Text 写一个 Python 插件
+- ...
+
+如果有 M 种编辑器和 N 种语言，就需要实现 *M×N 个插件*。每个插件都要重新实现相同的语言分析逻辑 (解析、类型检查、补全等)。
+
+LSP 的核心思想是将这个问题拆解为 *M+N*:
+
+- 每种语言实现 *一个* LSP server
+- 每个编辑器实现 *一个* LSP client
+
+然后所有语言和编辑器都能互通。
+
+** 能力协商机制 (Capability Negotiation)
+
+*重点*: 遵循 LSP 的语言服务器 *不一定* 遵循 LSP 规定的所有功能。比如一个服务器可以处理 =textDocument/definition= 请求 (跳转定义)，但是可能不处理 =workspace/symbol= 请求 (工作区符号搜索)。
+
+这种设计通过 *能力 (capabilities)* 机制实现:
+
+- 在初始化 (=initialize= 请求) 时，客户端和服务器互相交换各自支持的能力列表
+- 服务器声明: "我支持悬停提示 (hover)，但不支持工作区符号搜索"
+- 客户端声明: "我支持 'about to save' 通知，可以在保存前让你格式化文档"
+
+这样双方都知道对方能做什么，避免发送不支持的请求。
+
+* LSP 的架构: JSON-RPC over Transport
+
+** 三层架构
+
+LSP 规定语言处理在 *语言服务器* (language server) 中进行，而 editor/IDE 的开发工具 (development tool) 和语言服务器之间通过 *JSON-RPC 协议* 进行通信。
+
+#+begin_example
+┌─────────────────┐
+│  Editor/IDE     │  (LSP Client)
+│  - VSCode       │
+│  - Neovim       │
+│  - Emacs        │
+└────────┬────────┘
+         │ JSON-RPC (Request/Response/Notification)
+         │ Transport: stdio / socket / pipe / node IPC
+         │
+┌────────▼────────┐
+│ Language Server │  (LSP Server)
+│  - rust-analyzer│
+│  - clangd       │
+│  - pyright      │
+└─────────────────┘
+#+end_example
+
+** 为什么选择 JSON-RPC？
+
+JSON-RPC 2.0 是一种 *传输层无关* (transport-agnostic) 的远程过程调用协议，使用 JSON 作为数据格式。
+
+LSP 选择它的原因:
+
+1. *简单轻量*: JSON 虽然不是最紧凑的格式，但人类可读，调试友好
+2. *语言无关*: 任何支持 JSON 的语言都能实现
+3. *无状态*: 每个请求独立，不需要复杂的会话管理
+4. *广泛支持*: 几乎所有编程语言都有成熟的 JSON-RPC 库
+
+** 传输层选择
+
+LSP 规范 *不规定* 具体的传输方式，常见选择:
+
+| 传输方式    | 适用场景                   | 优势                  | 劣势                     |
+|------------+---------------------------+-----------------------+--------------------------|
+| =stdio=      | 本地进程间通信 (最常用)       | 简单，无需额外端口，跨平台 | 无法远程调试               |
+| =socket=     | 网络通信，远程语言服务器       | 可跨机器，支持调试       | 需要管理端口，可能有防火墙问题 |
+| =named pipe= | Windows 本地通信           | 高效，不占端口           | 仅限本地，Windows 特有      |
+| =node IPC=   | 客户端和服务器都是 Node.js 时 | Node.js 原生支持，性能好 | 仅限 Node.js 环境         |
+
+*推荐*: 语言服务器至少应该支持 =stdio=，这是最通用的方式。
+
+** JSON-RPC 消息格式
+
+*** Base Protocol
+
+LSP 的消息由两部分组成，类似 HTTP:
+
+#+begin_example
+Content-Length: 123\r\n
+\r\n
+{"jsonrpc":"2.0","id":1,"method":"textDocument/definition",...}
+#+end_example
+
+- *Header 部分*: =Content-Length= 指定消息体长度 (必需)，=Content-Type= 可选 (默认 =application/vscode-jsonrpc; charset=utf-8=)
+- *分隔符*: =\r\n\r\n= (CRLF CRLF)
+- *Content 部分*: JSON-RPC 消息
+
+*** 三种消息类型
+
+*1. Request (请求)*
+
+#+begin_src json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "textDocument/definition",
+    "params": {
+        "textDocument": {"uri": "file:///path/to/file.cpp"},
+        "position": {"line": 3, "character": 12}
+    }
+}
+#+end_src
+
+- =id=: 请求 ID，用于匹配响应 (必须是数字或字符串)
+- =method=: 要调用的方法名
+- =params=: 参数 (可选，通常是对象或数组)
+
+*2. Response (响应)*
+
+成功响应:
+
+#+begin_src json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+        "uri": "file:///path/to/provide.cpp",
+        "range": {
+            "start": {"line": 0, "character": 4},
+            "end": {"line": 0, "character": 11}
+        }
+    }
+}
+#+end_src
+
+错误响应:
+
+#+begin_src json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "error": {
+        "code": -32601,
+        "message": "Method not found"
+    }
+}
+#+end_src
+
+*重点*: 每个 request *必须* 有对应的 response，即使服务器什么都不返回，也要发一个 =result: null= 的响应。
+
+*3. Notification (通知)*
+
+#+begin_src json
+{
+    "jsonrpc": "2.0",
+    "method": "textDocument/didChange",
+    "params": {
+        "textDocument": {"uri": "file:///path/to/file.cpp", "version": 5},
+        "contentChanges": [...]
+    }
+}
+#+end_src
+
+- *没有 =id= 字段* → 单向通知，不需要响应
+- 用于: 文档打开/关闭/修改等事件
+
+* LSP 的核心工作流程
+
+** 初始化流程
+
+#+begin_example
+Client                                 Server
+  │                                       │
+  ├──────── initialize ───────────────>  │  (交换能力)
+  │                                       │
+  │  <────── initialize result ─────────┤
+  │                                       │
+  ├──────── initialized ──────────────>  │  (通知: 初始化完成)
+  │                                       │
+  │         (开始正常通信)                  │
+  │                                       │
+  ├──────── textDocument/didOpen ─────>  │
+  │                                       │
+#+end_example
+
+1. 客户端发送 =initialize= 请求，包含:
+   - 客户端能力 (=ClientCapabilities=)
+   - 工作区路径
+   - 客户端信息 (名称、版本)
+
+2. 服务器返回 =InitializeResult=，包含:
+   - 服务器能力 (=ServerCapabilities=)
+   - 服务器信息
+
+3. 客户端发送 =initialized= 通知，表示初始化完成
+
+4. 此后可以正常通信
+
+** 文档同步流程
+
+*** 用户操作与对应通知
+
+用户的改动大致有几类:
+
+| 用户操作     | 通知方法                        | 说明                               |
+|-------------+--------------------------------+------------------------------------|
+| 打开文件     | =textDocument/didOpen=           | 文档进入内存，服务器接管内容真值 (truth) |
+| 编辑文件     | =textDocument/didChange=         | 可以是全量同步或增量同步 (diff)         |
+| 即将保存     | =textDocument/willSave=          | 服务器可以准备格式化等操作              |
+| 保存并等待编辑 | =textDocument/willSaveWaitUntil= | 服务器可以返回编辑操作 (如自动格式化)     |
+| 保存完成     | =textDocument/didSave=           | 文件已写入磁盘                        |
+| 关闭文件     | =textDocument/didClose=          | 文档离开内存，磁盘内容成为真值           |
+
+*** 文档内容所有权 (Document Content Ownership)
+
+LSP 有一个关键概念: *内容真值* (truth)。
+
+- *文档打开时*: 客户端 (编辑器) 拥有内容真值
+  - 用户可能在编辑器中修改了内容但未保存
+  - 服务器 *不应该* 从磁盘读取文件，而应该用客户端通过 =didChange= 发来的内容
+
+- *文档关闭时*: 文件系统拥有内容真值
+  - 服务器可以从磁盘读取文件
+
+*注意*: =didOpen=, =didChange=, =didClose= 是 *强制性* 的，客户端和服务器都必须实现，不能选择性退出。
+
+*** 同步模式
+
+服务器在初始化时声明支持的同步模式:
+
+- *None* (=TextDocumentSyncKind.None=): 不同步
+- *Full* (=TextDocumentSyncKind.Full=): 每次 =didChange= 发送 *整个文档* 内容
+- *Incremental* (=TextDocumentSyncKind.Incremental=): 只发送 *变化的部分* (diff)
+
+#+begin_src typescript
+// Full 模式
+{
+  "textDocument": {"uri": "file:///test.txt", "version": 2},
+  "contentChanges": [
+    {"text": "entire new content of the document"}
+  ]
+}
+
+// Incremental 模式
+{
+  "textDocument": {"uri": "file:///test.txt", "version": 3},
+  "contentChanges": [
+    {
+      "range": {"start": {"line": 5, "character": 0}, "end": {"line": 5, "character": 10}},
+      "text": "new text"
+    }
+  ]
+}
+#+end_src
+
+*推荐*: Incremental 模式在大文件时性能更好，但实现复杂度高。
+
+** 语言特性请求
+
+用户触发某个操作时，客户端向服务器请求对应的语言特性:
+
+| 用户操作         | LSP 方法                        | 返回结果                    |
+|-----------------+---------------------------------+----------------------------|
+| Ctrl+Space 补全 | =textDocument/completion=         | 补全项列表                   |
+| 跳转定义         | =textDocument/definition=         | 定义位置                    |
+| 悬停查看文档      | =textDocument/hover=              | Markdown 格式的文档          |
+| 查找所有引用      | =textDocument/references=         | 引用位置列表                 |
+| 重命名符号        | =textDocument/rename=             | 工作区编辑操作列表            |
+| 代码格式化        | =textDocument/formatting=         | 文本编辑操作                 |
+| 诊断 (错误/警告)  | =textDocument/publishDiagnostics= | 服务器主动推送 (notification) |
+
+*** 示例: 跳转定义
+
+*请求*:
+
+#+begin_src json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "textDocument/definition",
+    "params": {
+        "textDocument": {
+            "uri": "file:///p%3A/mseng/VSCode/Playgrounds/cpp/use.cpp"
+        },
+        "position": {
+            "line": 3,
+            "character": 12
+        }
+    }
+}
+#+end_src
+
+(注: 上述示例是请求一个变量的定义位置)
+
+*响应*:
+
+#+begin_src json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+        "uri": "file:///p%3A/mseng/VSCode/Playgrounds/cpp/provide.cpp",
+        "range": {
+            "start": {
+                "line": 0,
+                "character": 4
+            },
+            "end": {
+                "line": 0,
+                "character": 11
+            }
+        }
+    }
+}
+#+end_src
+
+** 关闭流程
+
+#+begin_example
+Client                          Server
+  │                                │
+  ├──────── shutdown ──────────>  │  (请求关闭)
+  │                                │
+  │  <────── null ──────────────┤  (确认)
+  │                                │
+  ├──────── exit ──────────────>  │  (通知: 立刻退出)
+  │                                │
+  │         (服务器进程退出)          │
+#+end_example
+
+*重点*: 必须先 =shutdown= 再 =exit=，直接 =exit= 是不符合规范的。
+
+* LSP 的设计哲学
+
+** 编程语言中立 (Language Neutral)
+
+LSP 的数据类型是 *编程语言无关* 的:
+
+- 文档用 URI 标识 (如 =file:///path/to/file.cpp=)
+- 位置用 =line= 和 =character= (从 0 开始计数)
+- 范围用 =Range= (起始位置 + 结束位置)
+
+*不使用*:
+
+- 抽象语法树 (AST)
+- 编译器符号 (类型、命名空间等)
+
+为什么? 因为不同语言的 AST 结构完全不同，标准化它们是不可能的。而 "第 5 行第 10 个字符" 是通用的。
+
+** 增量更新与性能
+
+LSP 设计时考虑了性能:
+
+- 文档修改支持 *增量同步* (只发送变化部分)
+- 语言服务器应该 *保持运行*，避免每次请求都启动新进程
+- 服务器运行在 *独立进程* 中，避免阻塞编辑器 UI
+
+** 双向通信
+
+LSP 不是单向的 "客户端请求 → 服务器响应"，服务器也可以主动:
+
+- 推送诊断: =textDocument/publishDiagnostics=
+- 请求客户端能力: =client/registerCapability=
+- 显示消息: =window/showMessage=
+- 记录日志: =window/logMessage=
+
+实际上，在 JSON-RPC 层面，客户端和服务器的角色是 *对称的*:
+
+- 客户端 = Request 发起者 + Response 处理者
+- 服务器 = Request 处理者 + Response 发起者
+
+但它们也可以反过来! LSP 中服务器经常向客户端发送 request。
+
+* LSP 的版本演进
+
+** 历史
+
+- *2016.06*: Microsoft 联合 Red Hat, Codenvy 宣布 LSP 标准化
+- *LSP 2.0*: 早期版本，TypeScript 服务器的协议扩展而来
+- *LSP 3.0*: 大规模重构，引入能力协商机制
+- *LSP 3.17* (当前稳定版): 新增 Type Hierarchy, Inline Values, Inlay Hints, Notebook 支持
+- *LSP 3.18* (开发中): 进一步完善
+
+** 主要新特性
+
+*** LSP 3.17 新增 (2021)
+
+- *Type Hierarchy*: 类型层次结构 (子类/父类)
+- *Inline Values*: 调试时内联显示变量值
+- *Inlay Hints*: 内联提示 (参数名、类型标注)
+- *Notebook Document*: 支持 Jupyter Notebook 等
+- *Meta Model*: 用 TypeScript 类型定义整个协议
+
+*** 未来方向
+
+- LSIF (Language Server Index Format): 预构建的代码索引，用于 Web UI 代码浏览 (无需本地源码)
+- 更好的多工作区支持
+- 更细粒度的能力控制
+
+* 实际应用: 我的 Language Server 配置
+
+以下是我个人在 Neovim 中配置的语言服务器列表 (仅供参考):
+
+** 主要语言技术栈
+
+- C/C++: =clangd=
+- C# (Windows 系统专场): =csharp_ls=
+- Python: =pyright=
+- JS/TS: =ts_ls=
+- HTML: =html_ls=
+- CSS: =cssls=
+- Go: =gopls=
+- Rust: =rust_analyzer=
+- Lua: =lua_ls=
+- Bash: =bashls=
+
+** 某些领域专用语言
+
+- Vue: =vue_ls=
+
+** 其他的脚本语言
+
+- Vimscript: =vimls=
+- CMake: =neocmake lsp=
+- PowerShell (Windows 平台专属): =powershell_es=
+- Dockerfile: =dockerls=
+- Docker-compose: =docker-compose-language-service=
+- Just: =just-lsp=
+- SQL: =sqlls=
+- JSON: =jsonls=
+- YAML: =yamlls=
+- TOML: =taplo=
+
+** 有趣的发现
+
+另外，对于 sass/scss，意外发现了 [[https://github.com/wkillerud/some-sass/tree/main/packages/language-server][somesass_ls]] 这个仍非常活跃的 LSP，虽然目前只有 81 stars，但是我对其非常好奇，希望有一天能尝试一下。
+
+* LSP 的生态系统
+
+** 主流编辑器的 LSP 支持
+
+| 编辑器/IDE     | LSP 支持方式             | 说明                           |
+|---------------+-------------------------+--------------------------------|
+| VSCode        | 内置 (LSP 发源地)         | 原生支持，体验最好                |
+| Neovim        | #ERROR                  | Lua 配置，性能优秀                |
+| Vim           | =vim-lsp=, =coc.nvim= 等插件 | 需要插件支持                     |
+| Emacs         | =lsp-mode=, =eglot=         | =eglot= 更轻量，即将内置到 Emacs 29 |
+| Sublime Text  | =LSP= 插件                | 第三方插件，支持较好               |
+| IntelliJ IDEA | 部分支持                 | 主要用自己的内部协议，但也支持 LSP   |
+| Eclipse       | =lsp4e= 项目              | Eclipse 基金会维护               |
+#+TBLFM: $2=nvim-lspconfig= (内置 LSP client)
+
+** 流行的 Language Server 实现
+
+*** 静态类型语言
+
+- *rust-analyzer*: Rust (官方推荐，体验极佳)
+- *clangd*: C/C++ (LLVM 项目，替代 ccls)
+- *gopls*: Go (官方实现)
+- *jdtls*: Java (Eclipse 维护)
+- *OmniSharp*: C# (Microsoft 开源)
+
+*** 动态类型语言
+
+- *pyright*: Python (Microsoft，基于 TypeScript 实现，速度快)
+- *pylsp*: Python (Python LSP Server，社区维护)
+- *tsserver*: TypeScript/JavaScript (官方)
+
+*** 新兴语言
+
+- *zls*: Zig
+- *elp*: Erlang (WhatsApp 维护)
+- *hls*: Haskell
+
+** 实现语言服务器的框架
+
+如果你想实现自己的语言服务器，可以使用这些库:
+
+- *Node.js*: =vscode-languageserver-node= (官方 SDK)
+- *Rust*: =tower-lsp= (基于 Tower 框架)
+- *Python*: =pygls= (Python Generic Language Server)
+- *Java*: =lsp4j= (Eclipse 基金会)
+- *Go*: =go-langserver= (Sourcegraph)
+
+* LSP 的局限与未来
+
+** 当前局限
+
+*** 1. 只适用于文本
+
+LSP 设计时只考虑了 *基于文本* 的语言 (包括 DSL)，对于以下场景支持不佳:
+
+- 可视化编程 (如 Scratch)
+- 图形化 DSL (如 UML 编辑器)
+- 二进制格式 (如 Protobuf)
+
+*** 2. 实时协作支持弱
+
+LSP 假设 "一个服务器服务一个客户端"，多人同时编辑同一文件时:
+
+- 需要额外的文档锁机制
+- 协作编辑 (如 Google Docs 式) 需要协议扩展
+
+*** 3. 性能瓶颈
+
+对于超大项目 (如 Chromium, Linux Kernel):
+
+- 初始索引可能需要数分钟
+- 全局搜索/重构可能很慢
+- 内存占用可能达到数 GB
+
+LSIF (预构建索引) 试图解决这个问题，但还不成熟。
+
+** 未来方向
+
+*** LSIF (Language Server Index Format)
+
+*目标*: 支持在 *无需本地源码* 的情况下提供代码导航 (如 GitHub 代码浏览)。
+
+*原理*:
+
+1. 本地构建时生成 LSIF 索引文件 (包含所有符号定义/引用关系)
+2. 将索引上传到 Web 服务器
+3. 用户浏览代码时，前端从索引查询，实现 "跳转定义" 等功能
+
+*状态*: LSIF 0.6.0 规范已发布，部分工具支持 (如 =lsif-clang=, =lsif-java=)。
+
+*** 更细粒度的能力控制
+
+当前的能力协商还比较粗糙，未来可能支持:
+
+- 按文件类型启用不同能力 (如 =.test.ts= 文件禁用某些检查)
+- 按工作区文件夹启用能力 (如 monorepo 中不同子项目用不同配置)
+
+*** 标准化更多语言特性
+
+LSP 还在不断扩展，未来可能标准化:
+
+- AI 辅助补全 (如 Copilot 式)
+- 代码度量 (圈复杂度、测试覆盖率)
+- 性能分析集成
+
+* 总结: LSP 的意义
+
+LSP 的出现是 *编辑器战争* 的终结和 *语言工具生态* 的大统一:
+
+- *对编辑器开发者*: 不需要为每种语言重新实现支持，只需实现一个 LSP client
+- *对语言作者*: 不需要为每个编辑器写插件，只需实现一个 LSP server
+- *对用户*: 可以在任何编辑器中获得一致的开发体验
+
+从 2016 年至今，LSP 已经成为事实标准，几乎所有现代编辑器和主流语言都支持。它的成功证明了 *开放标准 + 社区协作* 的威力。
+
+如果你正在开发一门新语言，*第一优先级* 就是实现一个 LSP server。如果你在用一个小众编辑器，*第一优先级* 就是支持 LSP。
+
+*LSP 就是编辑器和语言之间的 HTTP/TCP，是现代开发工具生态的基石。*

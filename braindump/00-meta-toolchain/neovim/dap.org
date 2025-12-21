@@ -1,0 +1,1085 @@
+#+title: Debug Adapter Protocol and Language-Specific Debuggers: A Comprehensive Guide
+#+author: SOV710
+#+date: 2025-12-21
+#+startup: showall
+#+options: toc:2 num:nil
+
+* DAP: 统一调试协议
+
+*Debug Adapter Protocol (DAP)* 是 Microsoft 在 2016 年提出的调试器通信标准，旨在解决一个长期存在的问题: 每个 IDE 都要为每种语言实现不同的调试器接口，导致大量重复工作。
+
+** DAP 的核心思想
+
+DAP 在 *开发工具 (IDE/编辑器)* 和 *调试器后端 (debugger/runtime)* 之间定义了一层抽象协议。这样:
+
+- IDE 只需实现一次 *通用的调试 UI* (断点、变量查看、调用栈等)
+- 每种语言只需提供一个 *DAP 适配器* (Debug Adapter) 来桥接协议和具体调试器
+
+#+begin_example
+┌──────────────┐
+│   IDE/编辑器  │ (VS Code, Neovim, Visual Studio)
+└──────┬───────┘
+       │ DAP (JSON-RPC over stdio/TCP)
+       │
+┌──────▼───────┐
+│ Debug Adapter│ (codelldb, debugpy, delve)
+└──────┬───────┘
+       │ 具体协议 (LLDB, Python trace, Go delve)
+       │
+┌──────▼───────┐
+│  真实调试器   │ (LLDB, GDB, Python debugger)
+└──────────────┘
+#+end_example
+
+** DAP 的通信模式
+
+DAP 基于 *JSON-RPC* 协议，支持两种启动模式:
+
+*** Single-session mode (单会话模式)
+
+IDE 直接启动 debug adapter 作为子进程，通过 =stdin/stdout= 通信。每个调试会话对应一个独立的 adapter 进程。
+
+#+begin_src sh
+# 启动方式
+$ codelldb --stdio
+#+end_src
+
+*** Multi-session mode (多会话模式)
+
+Debug adapter 作为独立的 TCP 服务器运行，IDE 通过网络连接。多个 IDE 实例可以连接到同一个 adapter (如果 adapter 支持 =--accept-multiclient=)。
+
+#+begin_src sh
+# 启动方式
+$ dlv dap --listen=127.0.0.1:8181
+#+end_src
+
+** DAP 消息格式
+
+所有 DAP 消息都遵循 HTTP-like 的格式:
+
+#+begin_example
+Content-Length: 119\r\n
+\r\n
+{"seq":1,"type":"request","command":"initialize","arguments":{"adapterID":"codelldb"}}
+#+end_example
+
+三种消息类型:
+
+- *Request*: 客户端 (IDE) 发起的请求
+- *Response*: 对 request 的响应
+- *Event*: 服务端 (adapter) 主动推送的事件
+
+* 主流语言的 Debug Adapter
+
+** C/C++/Rust: codelldb
+
+=codelldb= 是基于 *LLDB* (LLVM Debugger) 的 DAP 实现，主要面向 C, C++, Rust 和其他编译型语言。
+
+*** 为什么选择 LLDB？
+
+LLDB 是 LLVM 项目的调试器，相比 GDB 有几个优势:
+
+- *原生支持 Rust*: Rust 项目维护了自己的 LLDB fork，提供 Rust 数据结构的 pretty-printer
+- *更好的 C++ 支持*: 理解现代 C++ (C++11/14/17/20) 的复杂类型
+- *跨平台一致性*: 在 Linux, macOS, Windows 上行为统一
+
+codelldb 在 LLDB 基础上提供了:
+
+- 内置的 =std::vector=, =std::string=, =std::map= 等标准库类型的可视化
+- Rust 的 =Vec=, =String=, =HashMap=, =Arc= 等类型的自动展开
+- 支持 *表达式求值* (expression evaluation)，可在调试时执行任意 C++ 代码
+
+*** 安装和配置
+
+*通过 Mason (Neovim)*
+
+#+begin_src lua
+-- 在 nvim-dap 中配置
+local dap = require('dap')
+
+dap.adapters.codelldb = {
+  type = "executable",
+  command = "codelldb", -- 或 "/absolute/path/to/codelldb"
+  -- Windows 可能需要:
+  -- detached = false,
+}
+
+dap.configurations.cpp = {
+  {
+    name = "Launch file",
+    type = "codelldb",
+    request = "launch",
+    program = function()
+      return vim.fn.input('Path to executable: ', vim.fn.getcwd() .. '/', 'file')
+    end,
+    cwd = '${workspaceFolder}',
+    stopOnEntry = false,
+  },
+}
+
+-- C 和 Rust 复用 C++ 配置
+dap.configurations.c = dap.configurations.cpp
+dap.configurations.rust = dap.configurations.cpp
+#+end_src
+
+*重要*: 可执行文件必须带 *调试符号* 编译:
+
+#+begin_src sh
+# C/C++
+$ g++ -g main.cpp -o main
+$ clang++ -g main.cpp -o main
+
+# Rust
+$ cargo build  # Debug 模式自动带符号
+$ cargo build --release  # Release 模式需手动启用
+#+end_src
+
+*** 特色功能
+
+*1. 反向调试 (Reverse Debugging)*
+
+在支持的平台上 (Linux + =rr=)，可以 *倒退执行*:
+
+#+begin_src json
+{
+  "name": "Launch with rr",
+  "type": "codelldb",
+  "request": "launch",
+  "program": "${workspaceFolder}/target/debug/myapp",
+  "reverseDebugging": true
+}
+#+end_src
+
+*2. Cargo 集成*
+
+直接调试 Rust crate，无需手动指定可执行文件路径:
+
+#+begin_src json
+{
+  "type": "codelldb",
+  "request": "launch",
+  "cargo": {
+    "args": ["build", "--bin=my-binary"],
+  }
+}
+#+end_src
+
+*3. 远程调试*
+
+可以调试运行在其他机器上的程序 (通过 =lldb-server=):
+
+#+begin_src json
+{
+  "type": "codelldb",
+  "request": "custom",
+  "targetCreateCommands": ["target create /path/to/binary"],
+  "processCreateCommands": ["gdb-remote 192.168.1.100:1234"]
+}
+#+end_src
+
+** Python: debugpy
+
+=debugpy= 是 Microsoft 开发的 Python DAP 实现，替代了旧的 =ptvsd=。
+
+*** 工作原理
+
+debugpy 基于 Python 的 =sys.settrace()= API，通过注入 *trace function* 来监控程序执行:
+
+#+begin_src python
+import sys
+
+def trace_calls(frame, event, arg):
+    if event == 'line':
+        print(f"Line {frame.f_lineno} in {frame.f_code.co_filename}")
+    return trace_calls
+
+sys.settrace(trace_calls)
+#+end_src
+
+debugpy 的核心组件:
+
+- *pydevd*: 底层调试引擎 (in-process)，处理断点、单步、变量查看
+- *debugpy.server*: DAP 适配器层 (可选 out-of-process)，将 pydevd API 转换为 DAP
+
+*** 三种使用方式
+
+*1. 命令行启动*
+
+#+begin_src sh
+# 立即启动，不等待客户端
+$ python -m debugpy --listen 5678 myfile.py
+
+# 等待客户端连接后再执行
+$ python -m debugpy --listen 5678 --wait-for-client myfile.py
+#+end_src
+
+*2. 代码内嵌*
+
+#+begin_src python
+import debugpy
+
+debugpy.listen(("localhost", 5678))
+print("Waiting for debugger attach")
+debugpy.wait_for_client()  # 阻塞直到 IDE 连接
+print("Debugger attached!")
+
+# 程序逻辑
+#+end_src
+
+*3. Attach 到运行中的进程*
+
+#+begin_src sh
+# 注入调试器到 PID 12345
+$ python -m debugpy --listen 5678 --pid 12345
+#+end_src
+
+*** nvim-dap 配置
+
+#+begin_src lua
+local dap = require('dap')
+
+dap.adapters.python = {
+  type = 'executable',
+  command = 'python',
+  args = { '-m', 'debugpy.adapter' },
+}
+
+dap.configurations.python = {
+  {
+    type = 'python',
+    request = 'launch',
+    name = "Launch file",
+    program = "${file}",
+    pythonPath = function()
+      return '/usr/bin/python3'  -- 或虚拟环境中的 python
+    end,
+  },
+}
+#+end_src
+
+*** 特色功能
+
+*1. 子进程调试*
+
+默认情况下，debugpy 会自动 attach 到子进程:
+
+#+begin_src json
+{
+  "type": "python",
+  "request": "launch",
+  "program": "${file}",
+  "subProcess": true  // 默认为 true
+}
+#+end_src
+
+*2. Django/Flask 调试*
+
+#+begin_src json
+{
+  "type": "python",
+  "request": "launch",
+  "module": "flask",
+  "env": {
+    "FLASK_APP": "app.py"
+  },
+  "args": ["run", "--no-debugger", "--no-reload"],
+  "jinja": true  // 启用 Jinja 模板调试
+}
+#+end_src
+
+*3. Jupyter Notebook 调试*
+
+VS Code 和部分 Neovim 插件支持在 Jupyter cell 中设置断点。
+
+** Go: delve
+
+=delve= (简称 =dlv=) 是 Go 语言的官方调试器，从 v1.6.1 起原生支持 DAP。
+
+*** 为什么 Go 需要专门的调试器？
+
+GDB 和 LLDB 对 Go 的支持有限，因为:
+
+- Go 的 *goroutine* 调度是用户态的，GDB 看不到
+- Go 的 *interface* 和 *channel* 是运行时特有的数据结构
+- Go 的栈是 *可增长* 的，与 C 的固定栈不同
+
+delve 深度理解 Go 运行时，可以:
+
+- 列出所有 goroutine 及其状态
+- 在特定 goroutine 上下文中求值表达式
+- 查看 channel 的缓冲区内容
+- 正确处理 deferred function
+
+*** DAP 模式 vs 传统模式
+
+delve 有两种模式:
+
+| 模式          | 启动命令              | 用途                     |
+|---------------+----------------------+--------------------------|
+| 传统 headless | =dlv debug --headless= | JSON-RPC API, 支持多客户端 |
+| DAP 模式      | =dlv dap=              | 单客户端, 符合 DAP 标准     |
+
+DAP 模式的优势:
+
+- 直接与 VS Code/Neovim 集成，无需中间层
+- 更好的 *变量可视化*: 复杂类型 (map, struct, slice) 自动展开
+- 支持 *goroutine 切换*: 在单步时可以跳到另一个 goroutine
+
+*** nvim-dap 配置
+
+#+begin_src lua
+local dap = require('dap')
+
+dap.adapters.delve = {
+  type = 'server',
+  port = '${port}',
+  executable = {
+    command = 'dlv',
+    args = {'dap', '-l', '127.0.0.1:${port}'},
+  }
+}
+
+dap.configurations.go = {
+  {
+    type = "delve",
+    name = "Debug",
+    request = "launch",
+    program = "${file}"
+  },
+  {
+    type = "delve",
+    name = "Debug test",
+    request = "launch",
+    mode = "test",
+    program = "${file}"
+  },
+}
+#+end_src
+
+*** 调试命令
+
+delve 提供丰富的 REPL 命令:
+
+#+begin_example
+(dlv) goroutines           # 列出所有 goroutine
+(dlv) goroutine 5          # 切换到 goroutine 5
+(dlv) frame 2              # 切换到栈帧 2
+(dlv) locals               # 查看局部变量
+(dlv) print myVar          # 打印变量
+(dlv) whatis myVar         # 查看变量类型
+(dlv) set myVar = 42       # 修改变量值
+#+end_example
+
+*** 特色功能
+
+*1. 条件断点与日志点*
+
+#+begin_src json
+{
+  // 条件断点: 仅在 i > 100 时暂停
+  "condition": "i > 100",
+
+  // 日志点: 不暂停，只打印
+  "logMessage": "Loop iteration: {i}"
+}
+#+end_src
+
+*2. 远程调试*
+
+#+begin_src sh
+# 在远程机器上启动 DAP 服务器
+$ dlv dap --listen=0.0.0.0:2345
+
+# 在本地 launch.json 中连接
+{
+  "type": "go",
+  "request": "attach",
+  "mode": "remote",
+  "remotePath": "/app",
+  "port": 2345,
+  "host": "192.168.1.100"
+}
+#+end_src
+
+*3. Core dump 分析*
+
+#+begin_src sh
+$ dlv core ./myapp ./core.12345
+#+end_src
+
+** JavaScript/TypeScript: js-debug-adapter
+
+=vscode-js-debug= 是 VS Code 内置的 JavaScript/TypeScript 调试器，支持 Node.js, Chrome, Edge, WebView2 等多种运行时。
+
+*** 工作原理
+
+js-debug 不是传统意义上的 "调试器"，而是一个 *协议转换器*:
+
+#+begin_example
+VS Code DAP
+    ↓
+js-debug adapter
+    ↓
+Chrome DevTools Protocol (CDP) / Node.js Inspector Protocol
+    ↓
+V8 引擎调试接口
+#+end_example
+
+*** 支持的运行时
+
+- *Node.js*: 通过 Inspector Protocol (=--inspect= 标志)
+- *Chrome/Edge*: 通过 CDP (Chrome DevTools Protocol)
+- *VS Code 扩展*: 调试 VS Code 插件本身
+- *WebAssembly*: 支持 DWARF debug info (需要 source map)
+
+*** nvim-dap 配置
+
+对于 Neovim 用户，需要安装独立的 =js-debug-adapter=:
+
+#+begin_src sh
+$ npm install -g js-debug-adapter
+#+end_src
+
+配置:
+
+#+begin_src lua
+local dap = require('dap')
+
+dap.adapters['pwa-node'] = {
+  type = 'server',
+  host = 'localhost',
+  port = '${port}',
+  executable = {
+    command = 'js-debug-adapter',
+    args = {'${port}'},
+  }
+}
+
+dap.configurations.javascript = {
+  {
+    type = 'pwa-node',
+    request = 'launch',
+    name = 'Launch file',
+    program = '${file}',
+    cwd = '${workspaceFolder}',
+  },
+}
+
+-- TypeScript 配置类似
+dap.configurations.typescript = {
+  {
+    type = 'pwa-node',
+    request = 'launch',
+    name = 'Launch TypeScript',
+    runtimeExecutable = 'ts-node',
+    runtimeArgs = {},
+    program = '${file}',
+    cwd = '${workspaceFolder}',
+    sourceMaps = true,
+    protocol = 'inspector',
+  },
+}
+#+end_src
+
+*** Source Map 支持
+
+对于 TypeScript 和打包后的 JS，source map 是关键:
+
+#+begin_src json
+// tsconfig.json
+{
+  "compilerOptions": {
+    "sourceMap": true,  // 必须启用
+    "outDir": "./dist"
+  }
+}
+#+end_src
+
+配置 =outFiles= 帮助调试器定位:
+
+#+begin_src json
+{
+  "type": "pwa-node",
+  "request": "launch",
+  "program": "${workspaceFolder}/src/index.ts",
+  "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+}
+#+end_src
+
+*** 特色功能
+
+*1. Smart Stepping*
+
+自动跳过编译器生成的代码 (如 async/await polyfill)，只在用户代码中单步。
+
+*2. Auto Attach*
+
+在 VS Code 中，启用 Auto Attach 后，任何带 =--inspect= 启动的 Node.js 进程都会自动被调试。
+
+*3. 性能分析*
+
+可以直接在 IDE 中生成 CPU profile:
+
+#+begin_example
+1. 点击 Call Stack 视图中的 ⚪ 按钮
+2. 或运行命令: Debug: Take Performance Profile
+#+end_example
+
+** C#: netcoredbg
+
+=netcoredbg= 是 Samsung 开发的 .NET Core 调试器，支持 C#, F# 等 .NET 语言。
+
+*** 特点
+
+- 跨平台: Linux, macOS, Windows
+- 支持 .NET Core 和 .NET 5+
+- 比 Microsoft 的 =vsdbg= 更轻量
+
+配置示例:
+
+#+begin_src lua
+dap.adapters.netcoredbg = {
+  type = 'executable',
+  command = 'netcoredbg',
+  args = {'--interpreter=vscode'}
+}
+
+dap.configurations.cs = {
+  {
+    type = "netcoredbg",
+    name = "launch - netcoredbg",
+    request = "launch",
+    program = function()
+      return vim.fn.input('Path to dll: ', vim.fn.getcwd() .. '/bin/Debug/', 'file')
+    end,
+  },
+}
+#+end_src
+
+* Debugger 运行的七个阶段
+
+DAP 定义的调试会话生命周期:
+
+** 1. init
+
+*客户端 (IDE) 发送 =initialize= 请求*
+
+#+begin_src json
+{
+  "seq": 1,
+  "type": "request",
+  "command": "initialize",
+  "arguments": {
+    "clientID": "vscode",
+    "adapterID": "codelldb",
+    "linesStartAt1": true,
+    "columnsStartAt1": true,
+    "supportsVariableType": true
+  }
+}
+#+end_src
+
+*Adapter 返回 capabilities (支持的功能)*
+
+#+begin_src json
+{
+  "seq": 1,
+  "type": "response",
+  "success": true,
+  "body": {
+    "supportsConfigurationDoneRequest": true,
+    "supportsConditionalBreakpoints": true,
+    "supportsHitConditionalBreakpoints": true,
+    "supportsSteppingGranularity": true
+  }
+}
+#+end_src
+
+** 2. target create
+
+*设置可执行文件路径和启动参数*
+
+对于 =launch= 类型的请求:
+
+#+begin_src json
+{
+  "command": "launch",
+  "arguments": {
+    "program": "/path/to/executable",
+    "args": ["--flag", "value"],
+    "cwd": "/working/directory"
+  }
+}
+#+end_src
+
+对于 =attach= 类型:
+
+#+begin_src json
+{
+  "command": "attach",
+  "arguments": {
+    "processId": 12345
+  }
+}
+#+end_src
+
+** 3. pre run
+
+*设置断点、异常处理等*
+
+#+begin_src json
+{
+  "command": "setBreakpoints",
+  "arguments": {
+    "source": {"path": "/path/to/file.cpp"},
+    "breakpoints": [
+      {"line": 42, "condition": "x > 10"}
+    ]
+  }
+}
+#+end_src
+
+发送 =configurationDone= 表示配置完成:
+
+#+begin_src json
+{"command": "configurationDone"}
+#+end_src
+
+** 4. process
+
+*程序开始执行*
+
+Adapter 发送 =initialized= 事件:
+
+#+begin_src json
+{
+  "type": "event",
+  "event": "initialized"
+}
+#+end_src
+
+如果设置了 =stopOnEntry=true=，会立即暂停并发送 =stopped= 事件:
+
+#+begin_src json
+{
+  "type": "event",
+  "event": "stopped",
+  "body": {
+    "reason": "entry",
+    "threadId": 1
+  }
+}
+#+end_src
+
+** 5. post run
+
+*程序执行结束*
+
+Adapter 发送 =exited= 事件:
+
+#+begin_src json
+{
+  "type": "event",
+  "event": "exited",
+  "body": {
+    "exitCode": 0
+  }
+}
+#+end_src
+
+** 6. pre terminate
+
+*客户端请求终止*
+
+#+begin_src json
+{"command": "disconnect"}
+#+end_src
+
+** 7. exit
+
+*Adapter 发送 =terminated= 事件并退出*
+
+#+begin_src json
+{
+  "type": "event",
+  "event": "terminated"
+}
+#+end_src
+
+* 调试的对象: Executable 与 Debug Symbols
+
+调试器不是魔法，它依赖于编译器在可执行文件中埋下的 *调试符号* (debug symbols)。
+
+** Debug Symbols 的作用
+
+- 将 *机器码地址* 映射回 *源代码行号*
+- 保存 *变量名* 和 *类型信息*
+- 记录 *函数调用栈* 的元数据
+- 存储 *内联函数* 的展开信息
+
+** 两种调试信息格式
+
+*** DWARF (Linux/macOS)
+
+*DWARF* (Debugging With Attributed Record Formats) 是开放标准，由 ELF 文件格式配套使用。
+
+查看 DWARF 信息:
+
+#+begin_src sh
+$ objdump --dwarf=info myapp
+$ readelf --debug-dump myapp
+#+end_src
+
+*** PDB (Windows)
+
+*PDB* (Program Database) 是 Microsoft 的专有格式，由 MSVC 和 Clang (MSVC 模式) 生成。
+
+查看 PDB 信息:
+
+#+begin_src powershell
+PS> dumpbin /headers myapp.pdb
+#+end_src
+
+** 如何生成调试符号
+
+*** C/C++
+
+#+begin_src sh
+# GCC/Clang
+$ gcc -g main.c -o main        # 生成 DWARF
+$ gcc -g3 main.c -o main       # 更详细的调试信息
+
+# MSVC
+$ cl /Zi main.c                # 生成 PDB
+#+end_src
+
+*** Rust
+
+#+begin_src sh
+# Debug 模式默认带符号
+$ cargo build
+
+# Release 模式需在 Cargo.toml 中启用
+[profile.release]
+debug = true
+#+end_src
+
+*** Go
+
+#+begin_src sh
+# Go 默认不剥离符号
+$ go build main.go
+
+# 剥离符号 (不可调试)
+$ go build -ldflags="-s -w" main.go
+#+end_src
+
+*** Python
+
+Python 是解释型语言，无需编译，调试信息直接从源码获取。但可以设置 =.pyc= 字节码包含行号:
+
+#+begin_src python
+import py_compile
+py_compile.compile('module.py', doraise=True)
+#+end_src
+
+* nvim-dap 变量替换
+
+nvim-dap 的 =launch.json= 支持的变量替换:
+
+| 变量                       | 含义                         | 示例                      |
+|----------------------------+------------------------------+---------------------------|
+| =${file}=                    | 当前打开的文件绝对路径           | =/home/user/project/main.c= |
+| =${fileBasename}=            | 当前文件名                     | =main.c=                    |
+| =${fileBasenameNoExtension}= | 当前文件名 (无扩展名)           | =main=                      |
+| =${fileDirname}=             | 当前文件所在目录                | =/home/user/project=        |
+| =${fileExtname}=             | 当前文件扩展名                  | =.c=                        |
+| =${relativeFile}=            | 当前文件相对于 =getcwd()= 的路径   | =src/main.c=                |
+| =${relativeFileDirname}=     | 当前文件目录相对于 =getcwd()=     | =src=                       |
+| =${workspaceFolder}=         | Neovim 当前工作目录 (=getcwd()=) | =/home/user/project=        |
+| =${workspaceFolderBasename}= | 工作目录的名称                  | =project=                   |
+| =${command:pickProcess}=     | 打开对话框选择进程              | (交互式)                   |
+| =${command:pickFile}=        | 打开对话框选择文件              | (交互式)                   |
+| =${env:NAME}=                | 环境变量                      | =${env:HOME}=               |
+
+示例配置:
+
+#+begin_src lua
+dap.configurations.cpp = {
+  {
+    name = "Launch current file",
+    type = "codelldb",
+    request = "launch",
+    program = "${fileDirname}/${fileBasenameNoExtension}",
+    cwd = "${workspaceFolder}",
+    env = {
+      MY_VAR = "${env:HOME}/data"
+    },
+  },
+}
+#+end_src
+
+* nvim-dap 提供的调试 Actions
+
+nvim-dap 的核心 API 函数:
+
+** =toggle_breakpoint()=
+
+*设置或移除断点*
+
+#+begin_src lua
+require('dap').toggle_breakpoint()
+
+-- 条件断点
+require('dap').set_breakpoint('i == 10')
+
+-- 日志点
+require('dap').set_breakpoint(nil, nil, 'Loop iteration: {i}')
+#+end_src
+
+在 Neovim 中绑定快捷键:
+
+#+begin_src lua
+vim.keymap.set('n', '<F9>', require('dap').toggle_breakpoint)
+#+end_src
+
+** =continue()=
+
+*启动调试会话或恢复执行*
+
+这个函数的命名确实有点迷惑，因为它同时负责:
+
+1. *启动* 调试会话 (如果未启动)
+2. *继续* 执行到下一个断点 (如果已暂停)
+
+#+begin_src lua
+require('dap').continue()
+#+end_src
+
+快捷键:
+
+#+begin_src lua
+vim.keymap.set('n', '<F5>', require('dap').continue)
+#+end_src
+
+** =step_over()=
+
+*单步执行，跳过函数调用*
+
+遇到函数调用时，直接执行完函数并停在下一行。
+
+#+begin_src lua
+require('dap').step_over()
+#+end_src
+
+快捷键:
+
+#+begin_src lua
+vim.keymap.set('n', '<F10>', require('dap').step_over)
+#+end_src
+
+** =step_into()=
+
+*单步执行，进入函数调用*
+
+遇到函数调用时，进入函数内部。
+
+#+begin_src lua
+require('dap').step_into()
+#+end_src
+
+快捷键:
+
+#+begin_src lua
+vim.keymap.set('n', '<F11>', require('dap').step_into)
+#+end_src
+
+** =step_out()=
+
+*执行完当前函数并返回调用者*
+
+在函数内部时，自动执行完剩余代码并停在调用处的下一行。
+
+#+begin_src lua
+require('dap').step_out()
+#+end_src
+
+快捷键:
+
+#+begin_src lua
+vim.keymap.set('n', '<S-F11>', require('dap').step_out)
+#+end_src
+
+** =repl.open()=
+
+*打开 REPL (Read-Eval-Print Loop) 检查状态*
+
+在 REPL 中可以:
+
+- 求值表达式: =print(myVar)=
+- 执行命令: =.help=, =.exit=, =.threads=, =.frames=
+- 调用函数 (某些调试器支持)
+
+#+begin_src lua
+require('dap.repl').open()
+#+end_src
+
+示例 REPL 会话:
+
+#+begin_example
+dap> print(myVar)
+42
+dap> .frames
+#0 main() at /path/to/main.c:42
+#1 __libc_start_main() at ??:0
+dap> .help
+Available commands:
+  .exit - Close REPL
+  .threads - List threads
+  .frames - Show call stack
+#+end_example
+
+* 实战技巧与常见问题
+
+** 问题 1: 断点显示为灰色 (未验证)
+
+*原因*: 调试器找不到对应的机器码
+
+可能情况:
+
+1. 可执行文件没有调试符号 → 重新编译加 =-g=
+2. Source map 配置错误 → 检查 =outFiles= 路径
+3. 文件路径不匹配 → 使用 =sourceMap= / =pathMappings=
+
+** 问题 2: TypeScript 断点不生效
+
+检查 =tsconfig.json=:
+
+#+begin_src json
+{
+  "compilerOptions": {
+    "sourceMap": true,  // 必须启用
+    "inlineSourceMap": false,  // 不要用内联
+    "inlineSources": false
+  }
+}
+#+end_src
+
+配置 =launch.json=:
+
+#+begin_src json
+{
+  "type": "pwa-node",
+  "sourceMaps": true,
+  "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+}
+#+end_src
+
+** 问题 3: 变量显示为 "optimized out"
+
+编译器优化掉了变量，解决方法:
+
+#+begin_src sh
+# C/C++: 降低优化级别
+$ gcc -O0 -g main.c
+
+# Rust: 使用 dev profile
+$ cargo build  # 默认 opt-level = 0
+
+# 或在 Cargo.toml 中禁用优化
+[profile.dev]
+opt-level = 0
+#+end_src
+
+** 问题 4: 远程调试连接失败
+
+确认网络可达:
+
+#+begin_src sh
+$ telnet 192.168.1.100 2345
+#+end_src
+
+检查防火墙:
+
+#+begin_src sh
+# Linux
+$ sudo ufw allow 2345
+
+# 或临时关闭
+$ sudo ufw disable
+#+end_src
+
+使用 SSH 端口转发 (更安全):
+
+#+begin_src sh
+$ ssh -L 2345:localhost:2345 user@remote-host
+
+# 然后在本地连接 localhost:2345
+#+end_src
+
+** 技巧 1: 使用 DAP UI 增强体验
+
+安装 =nvim-dap-ui=:
+
+#+begin_src lua
+require("dapui").setup()
+
+local dap, dapui = require("dap"), require("dapui")
+dap.listeners.after.event_initialized["dapui_config"] = function()
+  dapui.open()
+end
+dap.listeners.before.event_terminated["dapui_config"] = function()
+  dapui.close()
+end
+#+end_src
+
+** 技巧 2: 使用虚拟文本显示变量值
+
+安装 =nvim-dap-virtual-text=:
+
+#+begin_src lua
+require("nvim-dap-virtual-text").setup()
+#+end_src
+
+效果: 在代码右侧显示变量的当前值 (类似 VS Code)。
+
+** 技巧 3: 自动生成 launch.json
+
+某些插件提供自动检测功能:
+
+#+begin_src lua
+-- 对于 Go
+require('dap-go').setup()
+
+-- 对于 Python
+require('dap-python').setup('~/.virtualenvs/debugpy/bin/python')
+#+end_src
+
+* 总结
+
+** 语言 → Debug Adapter 映射速查
+
+| 语言          | Debug Adapter | 底层调试器      | 特点                   |
+|---------------+---------------+---------------+------------------------|
+| C/C++         | codelldb      | LLDB          | 跨平台, Rust 支持        |
+| C#            | netcoredbg    | .NET Debugger | .NET Core/5+ 轻量级     |
+| Python        | debugpy       | sys.settrace  | 子进程支持, Django/Flask |
+| JavaScript/TS | js-debug      | CDP/Inspector | Source map, 多运行时    |
+| Go            | delve         | delve 自身    | Goroutine 感知, 远程调试 |
+| Rust          | codelldb      | LLDB          | 与 C++ 共用, Cargo 集成  |
+
+** 调试器选择原则
+
+1. *优先使用官方 adapter*: 如 Go 用 delve, Python 用 debugpy
+2. *跨语言项目用 LLDB*: codelldb 支持 C/C++/Rust 混合调试
+3. *Web 开发用 js-debug*: 支持浏览器和 Node.js
+4. *性能要求高用原生 DAP*: 避免中间层开销
+
+** 必备技能
+
+1. 理解调试符号的生成 (=-g= flag)
+2. 掌握 source map 配置 (TypeScript/打包工具)
+3. 熟悉 DAP 生命周期 (init → run → terminate)
+4. 善用 REPL 和表达式求值
+
+*调试不是可有可无的技能，而是理解代码执行的透视镜。掌握好调试器，就掌握了程序的真相。*

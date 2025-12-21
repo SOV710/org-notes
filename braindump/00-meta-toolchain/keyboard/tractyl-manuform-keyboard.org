@@ -1,0 +1,1018 @@
+#+title: Building a Tractyl Manuform Ergonomic Keyboard: A Complete Guide
+#+author: SOV710
+#+date: 2025-12-21
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 项目概述
+
+Tractyl Manuform 是一个基于 Dactyl Manuform 的分体人体工学键盘，集成了轨迹球功能。本项目使用 Clojure 代码生成 OpenSCAD 模型，然后转换为可 3D 打印的 STL 文件。
+
+*重要说明:*
+- 本项目是 *手工布线 (Hand-wired)* 方案，没有 PCB 设计文件
+- 如果你需要柔性 PCB 方案，需要自己设计或寻找其他项目
+- 原项目为 4x5 布局，本指南将说明如何修改为 3x5 或 3x6
+
+*项目特点:*
+- 集成轨迹球 (可选)
+- 热插拔开关
+- 可调节倾角
+- 掌托支持
+- 完全可定制的 3D 打印外壳
+
+** Dactyl 键盘家族的历史
+
+Dactyl 键盘最初由 Matthew Adereth 在 2012 年左右设计，其设计理念源于两个经典人体工学键盘:
+
+- *Kinesis Advantage*: 拥有弯曲键井 (curved keywell) 设计，让手指自然弯曲而非平直伸展
+- *ErgoDox*: 分体式设计，允许双手自然分开，减少肩部压力
+
+Dactyl 将这两者的优点结合，创造出既有弯曲键井又分体式的键盘。随后 Tom Short 在 2015 年左右基于 Dactyl 创建了 *Dactyl Manuform*，主要改进是将拇指簇从 ManuForm 键盘 (来自 GeekHack 论坛的设计) 移植过来，并简化了外壳的打印难度 (将侧壁改为直接垂直落地)。
+
+Tractyl Manuform 则是在 Dactyl Manuform 基础上，由 Noah Prince 在 2020 年左右添加了轨迹球集成功能，使键盘实现 "手不离键盘" 的完整输入方案。
+
+** 人体工学设计原理
+
+这类键盘的核心设计理念:
+
+1. *列交错布局 (Column-stagger)*: 不同于传统键盘的行交错，键盘按列排列，符合手指长度差异
+2. *弯曲键井*: 键帽呈碗状排列，减少手指伸展距离
+3. *分体式*: 双手自然分开，肩膀放松
+4. *拇指簇*: 充分利用拇指的灵活性，分担小指负担
+5. *可调倾角*: 通过支撑脚调整键盘角度，适应不同手腕姿势
+
+* 环境配置
+
+** 1. 安装 Java
+
+Leiningen 需要 Java 运行环境。在 Gentoo 上安装:
+
+#+begin_src bash
+# 安装 OpenJDK
+sudo emerge -av virtual/jdk
+
+# 验证安装
+java -version
+#+end_src
+
+** 2. 安装 Leiningen
+
+Leiningen 是 Clojure 的构建工具:
+
+#+begin_src bash
+# 下载 lein 脚本
+curl https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein -o ~/bin/lein
+
+# 如果没有 ~/bin 目录，创建它
+mkdir -p ~/bin
+
+# 添加执行权限
+chmod +x ~/bin/lein
+
+# 确保 ~/bin 在你的 PATH 中 (添加到 ~/.zshrc)
+echo 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+
+# 首次运行会自动下载依赖
+lein version
+#+end_src
+
+** 3. 安装 OpenSCAD
+
+OpenSCAD 用于将 .scad 文件转换为 STL:
+
+#+begin_src bash
+# 在 Gentoo 上安装
+sudo emerge -av media-gfx/openscad
+
+# 验证安装
+openscad --version
+#+end_src
+
+** 4. 克隆项目
+
+#+begin_src bash
+cd ~/proj
+git clone https://github.com/noahprince22/tractyl-manuform-keyboard.git
+cd tractyl-manuform-keyboard
+#+end_src
+
+* 修改为 3x5/3x6 布局
+
+** 理解配置参数
+
+打开 =src/dactyl_keyboard/dactyl.clj=，关键配置在文件开头:
+
+#+begin_src clojure
+(def nrows 4)                    ; 行数
+(def ncols 5)                    ; 列数
+(def trackball-enabled true)     ; 是否启用轨迹球
+(def printed-hotswap? true)      ; 是否使用 3D 打印热插拔座
+#+end_src
+
+** 修改为 3x5 布局
+
+编辑 =src/dactyl_keyboard/dactyl.clj=:
+
+#+begin_src clojure
+(def nrows 3)                    ; 改为 3 行
+(def ncols 5)                    ; 保持 5 列
+(def trackball-enabled true)     ; 根据需要选择是否启用轨迹球
+#+end_src
+
+*可能需要调整的其他参数:*
+
+#+begin_src clojure
+(def centerrow (- nrows 2.5))    ; 控制前后倾斜
+(def centercol 2)                ; 控制左右倾角
+(def keyboard-z-offset 23.5)     ; 整体高度，可能需要调整
+#+end_src
+
+** 修改为 3x6 布局
+
+#+begin_src clojure
+(def nrows 3)                    ; 改为 3 行
+(def ncols 6)                    ; 改为 6 列
+(def trackball-enabled true)     ; 根据需要选择是否启用轨迹球
+#+end_src
+
+*注意:* 当列数变化时，你可能还需要调整:
+
+#+begin_src clojure
+(def centercol 2)                ; 可能需要根据新的列数调整
+#+end_src
+
+** 创建 3x5 补丁文件 (可选)
+
+如果想要像项目中 4x6.patch 那样创建补丁:
+
+#+begin_src bash
+# 1. 先提交当前状态
+git add src/dactyl_keyboard/dactyl.clj
+
+# 2. 修改为 3x5 配置
+
+# 3. 创建补丁
+git diff src/dactyl_keyboard/dactyl.clj > 3x5.patch
+
+# 4. 恢复原始文件
+git checkout src/dactyl_keyboard/dactyl.clj
+#+end_src
+
+* 生成 3D 模型
+
+** 1. 生成 SCAD 文件
+
+#+begin_src bash
+# 进入项目目录
+cd ~/proj/tractyl-manuform-keyboard
+
+# 生成 .scad 文件 (会在 things/ 目录下生成)
+lein generate
+
+# 或者使用自动重新生成 (修改代码后自动更新)
+lein auto generate
+#+end_src
+
+*生成的文件:*
+- =things/right.scad= - 右手键盘主体
+- =things/left.scad= - 左手键盘主体
+- =things/right-plate.scad= - 右手底板
+- =things/left-plate.scad= - 左手底板
+- =things/palm-rest.scad= - 掌托
+- =things/tent-stand.scad= - 支撑脚架
+- =things/tent-foot.scad= - 脚垫
+- =things/hotswap-clamp.scad= - 热插拔固定夹
+
+** 2. 使用 OpenSCAD 预览和调整
+
+#+begin_src bash
+# 使用 GUI 预览 (推荐先预览再导出)
+openscad things/right.scad &
+#+end_src
+
+在 OpenSCAD 中:
+1. 按 *F5* 进行快速预览
+2. 按 *F6* 进行完整渲染 (需要等待，可能需要 10+ 分钟)
+3. 检查模型是否符合预期
+4. 如果需要调整，修改 dactyl.clj 后重新运行 =lein generate=
+
+** 3. 导出 STL 文件
+
+*** 方法 1: 使用 OpenSCAD GUI
+
+1. 打开 .scad 文件
+2. 按 F6 完整渲染
+3. File → Export → Export as STL
+4. 保存为对应的 .stl 文件
+
+*** 方法 2: 使用命令行批量导出
+
+#+begin_src bash
+# 导出右手键盘
+openscad -o things/right.stl things/right.scad
+
+# 导出左手键盘
+openscad -o things/left.stl things/left.scad
+
+# 导出右手底板 (注意: 这个渲染可能需要很长时间)
+openscad -o things/right-plate.stl things/right-plate.scad
+
+# 导出左手底板
+openscad -o things/left-plate.stl things/left-plate.scad
+
+# 导出其他部件
+openscad -o things/palm-rest.stl things/palm-rest.scad
+openscad -o things/tent-stand.stl things/tent-stand.scad
+openscad -o things/tent-foot.stl things/tent-foot.scad
+openscad -o things/hotswap-clamp.stl things/hotswap-clamp.scad
+#+end_src
+
+*提示:* 底板的渲染可能需要 10 分钟以上，请耐心等待。
+
+*** 方法 3: 使用项目提供的脚本 (适用于生成多个版本)
+
+#+begin_src bash
+# 查看 create-models.sh 了解批量生成方法
+cat create-models.sh
+#+end_src
+
+** 4. 准备打印
+
+将生成的 STL 文件导入切片软件 (如 Cura, PrusaSlicer) 进行切片:
+
+*推荐打印设置:*
+- *填充率:* 测试打印 20%, 最终版本 100% (手感更好)
+- *打印温度:* 根据 PLA 类型，通常 190-220°C
+- *速度:* 50mm/s (降低速度提高质量)
+- *支撑:* 大部分部件需要支撑，推荐使用树形支撑 (Tree Support)
+- *底板粘附:* 大部件用裙边 (Skirt)，小部件用边缘 (Brim)
+
+*特殊注意:*
+- *热插拔夹子:* 必须横向打印 (沿 X/Y 轴)，否则会在插入时断裂
+- *支撑脚:* 横向打印以增加强度
+- *底板:* 如果启用轨迹球，不要移除传感器支架下的支撑，它们有助于固定
+
+* 硬件方案说明
+
+** PCB vs 手工布线
+
+*本项目采用手工布线方案，没有 PCB 设计文件。*
+
+如果你想使用柔性 PCB:
+1. 需要自己设计 PCB (可以使用 KiCad)
+2. 参考其他 Dactyl 项目的 PCB 设计 (如 Dactyl Manuform 的 PCB 变体)
+3. 或者使用点对点焊接的方式模拟柔性连接
+
+** 主控方案
+
+根据 README，推荐使用:
+
+*Pro Micro (或兼容品)*
+- 每侧一个 Pro Micro (左右各一个)
+- 使用 TRRS 线缆连接两侧
+- 建议购买 3 个 (备用，USB 口容易损坏)
+
+*引脚布局:*
+
+参考 README 中的引脚图:
+- 行引脚: 根据你的布局，3 行需要 3 个引脚
+- 列引脚: 5 列需要 5 个引脚，6 列需要 6 个引脚
+- TRRS 通信: PD0 (固定)
+- 轨迹球 (如果启用):
+  - VCC, GND
+  - MISO, MOSI, SCK, NCS, Motion (SPI 接口)
+
+** 轨迹球传感器
+
+*PMW3360 传感器模块*
+- 购买链接见 README 物料清单
+- 从 Tindie 购买预焊接模块
+- 需要 3 个轴承和销钉支撑轨迹球
+- 建议使用排针使其可拆卸
+
+*** PMW3360 技术规格
+
+PMW3360 是 PixArt 公司生产的高端光学传感器，广泛应用于游戏鼠标:
+
+- *最高 DPI*: 12,000 (可调)
+- *最高追踪速度*: 250 IPS (inches per second)
+- *最高加速度*: 50g
+- *帧率*: 12,000 FPS
+- *轮询率*: 1000Hz (1ms 响应时间)
+- *特性*: 无硬件加速，1:1 完美追踪，无角度修正
+
+这使得 PMW3360 成为集成到键盘中的理想选择: 它提供了专业级的精度，同时功耗适中，适合 Pro Micro 驱动。
+
+** 布线方案
+
+*手工布线步骤:*
+1. 每个键的一侧焊接二极管 (黑线朝外)
+2. 二极管串联成行
+3. 使用彩色线缆连接列
+4. 行列连接到 Pro Micro
+5. 使用排针使所有连接可拆卸 (方便调试和维护)
+
+*注意事项:*
+- README 建议的线缆容易断裂，考虑使用更粗的线
+- 在外壳外焊接，焊接完成后再装入
+- 使用热缩管或热熔胶固定接点
+
+* 物料清单
+
+** 一次性使用部件 (每把键盘)
+
+*** 3x5 布局 (每侧 15 键 + 拇指区)
+
+假设拇指区 4 键，总计约 19 键/侧，38 键总计。
+
+| 物料              | 数量  | 备注                   |
+|-----------------+------+------------------------|
+| 开关              | 38+  | 建议 50 个装，你已有      |
+| 键帽              | 38+  | 你已有                 |
+| 二极管 (1N4148)    | 38+  | 建议 50 个             |
+| Pro Micro         | 2-3  | 建议买 3 个备用         |
+| TRRS 插座         | 2    | PJ-320A               |
+| TRRS 线缆         | 1    | 4 芯                  |
+| PMW3360 传感器    | 1    | 如果启用轨迹球          |
+| 轨迹球 (34mm)     | 1    | 如果启用轨迹球          |
+| 滚珠轴承           | 3    | MR63ZZ                |
+| 销钉              | 3    | 3mm 直径              |
+| Kailh 热插拔座     | 38+  | Choc 低矮轴专用        |
+| M2 螺丝           | 10   | 固定底板               |
+| M2 热熔螺母        | 10   | 嵌入外壳               |
+| 彩色线缆           | 1 卷 | 建议 28-30 AWG        |
+| 排针/排母          | 若干  | 用于可拆卸连接          |
+
+*** 3x6 布局 (每侧 18 键 + 拇指区)
+
+假设拇指区 4 键，总计约 22 键/侧，44 键总计。
+
+相应调整上述数量:
+- 开关: 44+
+- 键帽: 44+
+- 二极管: 44+
+- 热插拔座: 44+
+- 其他部件相同
+
+** 工具和耗材
+
+| 物料        | 备注                |
+|-----------+---------------------|
+| 3D 打印机   | Ender 3 Pro 或类似   |
+| PLA 耗材    | ~500g/把，建议韧性好的 |
+| 烙铁        | 带尖头，用于小焊点     |
+| 焊锡丝      | 0.8mm               |
+| 剥线钳      | 精密型               |
+| 万用表      | 调试必备             |
+| 热熔胶枪    | 固定部件             |
+| 镊子/尖嘴钳 | 组装小部件           |
+
+** 可选部件
+
+| 物料       | 用途            |
+|----------+-----------------|
+| 地毯胶带    | 防止键盘滑动     |
+| 掌托泡棉    | 增加舒适度       |
+| USB 数据线  | Micro USB, 连接主机 |
+
+** 成本估算
+
+- *最小化版本* (无轨迹球，使用现有轴和键帽): 约 ¥200-300
+- *完整版本* (含轨迹球): 约 ¥400-500
+- *首次搭建* (含工具): 约 ¥800-1200
+
+*提示:* 如果你已有 3D 打印机, 烙铁等工具，第二把键盘成本会大幅降低。
+
+* 焊接布线
+
+** 原理说明
+
+键盘矩阵的工作原理:
+- *行 (Row)*: 二极管串联连接
+- *列 (Column)*: 直接连接到开关另一侧
+- *扫描*: 主控逐行扫描，检测列上的信号变化
+
+*二极管方向:* 黑线 (或标记线) 朝向行的末端 (远离开关)。
+
+** 3x5 布局的矩阵
+
+#+begin_example
+      Col0  Col1  Col2  Col3  Col4
+Row0   [ ]   [ ]   [ ]   [ ]   [ ]
+Row1   [ ]   [ ]   [ ]   [ ]   [ ]
+Row2   [ ]   [ ]   [ ]   [ ]   [ ]
+
+拇指区 (根据具体设计可能有不同的行列分配)
+#+end_example
+
+** 焊接步骤
+
+*** 1. 准备热插拔座
+
+如果使用 3D 打印热插拔座 (=printed-hotswap? true=):
+1. 打印 =hotswap-socket= 和 =hotswap-clamp=
+2. 从排母中拔出金属针脚
+3. 插入 clamp 并固定
+
+如果使用 Kailh 热插拔座:
+1. 直接准备 Kailh Choc 热插拔座
+
+*** 2. 焊接行 (二极管)
+
+*外壳外操作，不要在键盘内焊接！*
+
+#+begin_example
+对于每一行:
+1. 在热插拔座的一侧焊接二极管 (黑线朝外)
+2. 将二极管弯曲，末端互相连接
+3. 焊接二极管形成串联
+4. 行的末端预留导线，连接排针
+5. 剪短多余的二极管引脚
+#+end_example
+
+参考 README 图片:
+- =images/Rows Pt 1.jpg= - 二极管焊接
+- =images/Rows Pt 2.jpg= - 行线布线
+- =images/Rows Pt 4.jpg= - 完成效果
+
+*重要:*
+- 给每行预留足够长度的导线 (考虑到在外壳内的走线)
+- 使用不同颜色的线区分不同的行
+- 每行末端连接排针，方便插拔
+
+*** 3. 焊接列
+
+#+begin_example
+对于每一列:
+1. 从列的顶部到底部，使用一根导线串联
+2. 将导线穿过热插拔座的侧槽 (参考设计)
+3. 在每个热插拔座的另一侧焊接
+4. 列的末端预留导线，连接排针
+#+end_example
+
+参考 README 图片:
+- =images/Columns Pt 1.jpg= - 列线焊接
+
+*提示:*
+- 使用鳄鱼夹固定导线，方便焊接
+- 同样使用不同颜色区分列
+
+*** 4. 完成布线
+
+完成后应该有:
+- 3 根行线 (带排针)
+- 5 根列线 (3x5) 或 6 根列线 (3x6) (带排针)
+- 所有热插拔座已准备好插入外壳
+
+参考: =images/Finished Wiring.jpg=
+
+*** 5. 焊接 Pro Micro 连接
+
+准备排针/排母:
+- 行引脚: D4, D5, D6 (3 行示例，根据实际调整)
+- 列引脚: A0, A1, A2, A3, F4 (5 列示例)
+- VCC 和 GND
+- TRRS: PD0, VCC, GND
+
+*建议:* 使用排针使 Pro Micro 可拆卸，方便更换或调试。
+
+*** 6. 焊接 TRRS 插座
+
+TRRS 4 个接点:
+- Tip: PD0 (信号)
+- Ring 1: VCC
+- Ring 2: GND
+- Sleeve: GND (或悬空)
+
+*注意:* 左右两侧必须使用相同的引脚布局！
+
+*** 7. 焊接轨迹球传感器 (如果启用)
+
+PMW3360 传感器引脚 (参考 README):
+- VCC → VCC
+- GND → GND
+- MISO → B4
+- MOSI → B2
+- SCK → B1
+- NCS → B0
+- Motion → 可选连接到其他引脚用于检测运动
+
+使用排母使传感器可拆卸。
+
+** 测试布线
+
+*在装入外壳前必须测试！*
+
+1. 刷入 QMK 固件 (参见下一章节)
+2. 使用万用表检查:
+   - 短路: 各引脚之间不应短路
+   - 通路: 按下开关时，对应的行列应导通
+3. 插入测试开关，使用 QMK 测试工具或 [[https://www.keyboardtester.com/][键盘测试网站]]
+4. 逐个测试所有按键位置
+5. 测试轨迹球传感器 (如果有)
+
+*调试技巧:*
+- 如果整行不工作: 检查行线到 Pro Micro 的连接
+- 如果整列不工作: 检查列线到 Pro Micro 的连接
+- 如果单个键不工作: 检查该键的二极管和连接
+- 如果一个键触发多个: 检查是否有短路
+
+* QMK 固件配置
+
+** QMK 简介
+
+QMK (Quantum Mechanical Keyboard) 是开源的键盘固件框架，支持几乎所有自定义键盘。它的特性包括:
+
+- *完全可编程*: 每个按键都可以自定义功能
+- *层 (Layers)*: 类似 Fn 键，可以定义多个键盘布局层
+- *宏*: 支持复杂的按键序列和脚本
+- *鼠标键*: 用键盘模拟鼠标
+- *Tap Dance*: 单击, 双击, 长按触发不同功能
+- *Home Row Mods*: 在 home row 上实现修饰键
+- *RGB 灯光*: 支持 RGB 背光和下光
+
+QMK 运行在 AVR 和 ARM 微控制器上，使用 C 语言编写，编译后通过 USB 刷入键盘。
+
+** 1. 获取 QMK 固件
+
+#+begin_src bash
+# 克隆 QMK 仓库
+cd ~
+git clone https://github.com/qmk/qmk_firmware.git
+cd qmk_firmware
+
+# 或者使用 Noah 的 fork (包含轨迹球支持)
+git clone https://github.com/noahprince22/qmk_firmware.git -b trackball
+cd qmk_firmware
+#+end_src
+
+*推荐使用 Noah 的 fork* 如果你要使用轨迹球功能。
+
+** 2. 安装 QMK 工具链
+
+#+begin_src bash
+# 在 Gentoo 上
+sudo emerge -av dev-embedded/avr-gcc dev-embedded/avr-libc dev-embedded/avrdude
+
+# 或使用 QMK 官方安装脚本
+python3 -m pip install --user qmk
+qmk setup
+#+end_src
+
+** 3. 创建或修改键盘配置
+
+如果使用 Noah 的仓库，已经有 =handwired/dactyl_manuform/4x5= 配置。
+
+*** 创建 3x5 配置
+
+#+begin_src bash
+cd ~/qmk_firmware/keyboards/handwired/dactyl_manuform
+
+# 复制 4x5 配置作为基础
+cp -r 4x5 3x5
+cd 3x5
+#+end_src
+
+*** 修改 =config.h=
+
+#+begin_src c
+// config.h
+#pragma once
+
+// 矩阵大小 (行 x 列)
+// 注意: 这是两侧的总数
+#define MATRIX_ROWS 6    // 每侧 3 行，共 6 行
+#define MATRIX_COLS 10   // 3x5 配置: 每侧 5 列，共 10 列
+                         // 3x6 配置: 改为 12
+
+// 行引脚定义 (右侧主控)
+#define MATRIX_ROW_PINS { D4, D5, D6 }
+
+// 列引脚定义 (右侧主控)
+#define MATRIX_COL_PINS { A0, A1, A2, A3, F4 }  // 3x5
+// 对于 3x6，添加一个引脚，例如: { A0, A1, A2, A3, F4, F5 }
+
+// 二极管方向
+#define DIODE_DIRECTION COL2ROW
+
+// 分体式键盘配置
+#define SOFT_SERIAL_PIN PD0
+#define MASTER_RIGHT     // 或 MASTER_LEFT，取决于你想用哪侧作为主控
+
+// TRRS
+#define USE_SERIAL
+
+// 轨迹球 (如果启用)
+#ifdef POINTING_DEVICE_ENABLE
+    #define PMW3360_CS_PIN B0
+    #define POINTING_DEVICE_ROTATION_90
+#endif
+#+end_src
+
+*** 修改 =3x5.h= (或对应的头文件)
+
+定义物理布局到矩阵的映射:
+
+#+begin_src c
+// 3x5.h
+#pragma once
+
+#include "quantum.h"
+
+#define LAYOUT( \
+    L00, L01, L02, L03, L04,    R00, R01, R02, R03, R04, \
+    L10, L11, L12, L13, L14,    R10, R11, R12, R13, R14, \
+    L20, L21, L22, L23, L24,    R20, R21, R22, R23, R24, \
+         L30, L31,                   R30, R31,           \
+              L32, L33,         R32, R33                 \
+) { \
+    { L00, L01, L02, L03, L04 }, \
+    { L10, L11, L12, L13, L14 }, \
+    { L20, L21, L22, L23, L24 }, \
+    { KC_NO, KC_NO, L30, L31, L32, L33 }, \
+    { R00, R01, R02, R03, R04 }, \
+    { R10, R11, R12, R13, R14 }, \
+    { R20, R21, R22, R23, R24 }, \
+    { KC_NO, KC_NO, R30, R31, R32, R33 }  \
+}
+#+end_src
+
+*注意:* 根据你实际的拇指区布局调整。
+
+*** 创建 keymap
+
+在 =keymaps/default/keymap.c= 中定义你的按键布局:
+
+#+begin_src c
+// keymap.c
+#include QMK_KEYBOARD_H
+
+const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
+    [0] = LAYOUT(
+        KC_Q,    KC_W,    KC_E,    KC_R,    KC_T,        KC_Y,    KC_U,    KC_I,    KC_O,    KC_P,
+        KC_A,    KC_S,    KC_D,    KC_F,    KC_G,        KC_H,    KC_J,    KC_K,    KC_L,    KC_SCLN,
+        KC_Z,    KC_X,    KC_C,    KC_V,    KC_B,        KC_N,    KC_M,    KC_COMM, KC_DOT,  KC_SLSH,
+                          KC_LCTL, KC_SPC,               KC_ENT,  KC_RALT
+    )
+};
+#+end_src
+
+** 4. 编译固件
+
+#+begin_src bash
+# 回到 qmk_firmware 根目录
+cd ~/qmk_firmware
+
+# 编译 3x5 配置 (替换为你的路径)
+make handwired/dactyl_manuform/3x5:default
+
+# 或直接编译并刷入
+make handwired/dactyl_manuform/3x5:default:avrdude
+#+end_src
+
+** 5. 刷入固件
+
+*** 刷入左侧
+
+1. 确保 =config.h= 中设置了 =#define MASTER_LEFT=
+2. 编译: =make handwired/dactyl_manuform/3x5:default:avrdude=
+3. 当提示时，使用镊子短接 Pro Micro 的 RST 和 GND 引脚
+4. 固件会自动刷入
+
+*** 刷入右侧
+
+1. 修改 =config.h=，注释掉 =MASTER_LEFT=，设置 =#define MASTER_RIGHT=
+2. 连接 TRRS 线缆 (左右两侧)
+3. 连接 USB 到右侧 Pro Micro
+4. 编译并刷入: =make handwired/dactyl_manuform/3x5:default:avrdude=
+5. 短接 RST 和 GND
+
+** 6. 测试固件
+
+1. 在固件的某个层添加 =RESET= 按键，方便后续刷固件
+2. 使用在线键盘测试器测试所有按键
+3. 测试轨迹球 (如果启用)
+
+*调试工具:*
+#+begin_src bash
+# 查看 QMK 输出 (需要启用调试)
+hid_listen
+#+end_src
+
+** 关于轨迹球的 QMK 配置
+
+参考 Noah 的配置:
+- [[https://github.com/noahprince22/qmk_firmware/tree/trackball/keyboards/handwired/dactyl_manuform/4x5/pmw3360][PMW3360 驱动代码]]
+- [[https://github.com/noahprince22/qmk_firmware/compare/noah...noahprince22:trackball][配置 diff]]
+
+需要:
+1. 在 =rules.mk= 中启用 =POINTING_DEVICE_ENABLE = yes=
+2. 添加 PMW3360 驱动文件
+3. 在 =config.h= 中配置 SPI 引脚
+
+* 组装流程
+
+** 打印时间估算
+
+根据 README:
+- 右侧外壳: 约 18 小时
+- 左侧外壳: 约 18 小时
+- 右侧底板: 8-12 小时 (如果有轨迹球)
+- 左侧底板: 4 小时
+- 掌托: 3 小时
+- 支撑和脚垫: 3 小时
+- 热插拔夹子: 3 小时
+
+*总计: 约 60 小时连续打印*
+
+建议先打印一个小的测试件，确认尺寸和手感，再打印完整版本。
+
+** 组装步骤
+
+*** 1. 准备外壳
+
+打印并清理支撑材料:
+- 右侧键盘外壳
+- 左侧键盘外壳
+- 右侧底板 (含轨迹球支架，如果启用)
+- 左侧底板
+
+*** 2. 安装热熔螺母
+
+使用烙铁将 M2 热熔螺母嵌入外壳底部的螺丝孔:
+1. 加热烙铁到合适温度
+2. 将热熔螺母对准孔
+3. 用烙铁轻轻向下压，使其嵌入塑料
+4. 等待冷却固定
+
+参考 README: 共需约 5 个螺丝孔/侧。
+
+*** 3. 安装热插拔座和布线
+
+*在外壳外完成所有焊接后:*
+
+1. 将热插拔座插入外壳的蛇形孔 (snake-bite holes)
+2. 从背面推入热插拔夹子固定
+3. 确保每个座位稳固
+
+参考: =images/Sockets.jpg=
+
+*** 4. 安装轨迹球 (如果启用)
+
+**** 安装传感器
+
+1. 将 PMW3360 传感器模块滑入底板的传感器槽
+2. 确保排母朝外，方便连接
+
+参考: =images/Sensor Slot.png=
+
+**** 安装轴承和销钉
+
+1. 将 3mm 销钉插入 MR63ZZ 轴承，使轴承位于销钉中部
+2. 使用尖嘴钳将销钉+轴承组件压入轨迹球底座的 3 个孔中
+3. 确保轴承可以自由旋转
+
+参考: =images/Bearings and Dowels.png=
+
+**** 测试轨迹球
+
+1. 将 34mm 轨迹球放入支架
+2. 旋转测试，应该顺滑无阻
+3. 连接传感器到 Pro Micro 测试光标移动
+
+*** 5. 安装开关
+
+*在连接底板前安装开关:*
+
+1. 将开关插入热插拔座
+2. 用手指按住底部的热插拔座，确保良好接触
+3. 听到 "咔嗒" 声表示插入到位
+
+参考: README 建议在组装前插入，组装后更换会有风险。
+
+*** 6. 固定 Pro Micro 和 TRRS 插座
+
+使用热熔胶将以下部件固定到底板或外壳内:
+- Pro Micro (使用排针使其可拆卸)
+- TRRS 插座
+
+参考: =images/TRRS and Pro Micro.png=
+
+确保 USB 口和 TRRS 口对准外壳的开孔。
+
+*** 7. 连接排针
+
+将焊接好的行/列排针插入 Pro Micro 的排母:
+1. 先连接轨迹球传感器，测试功能
+2. 然后连接行线 (3 根)
+3. 最后连接列线 (5 或 6 根)
+
+*** 8. 组装外壳和底板
+
+1. 小心地将外壳主体 (含开关和布线) 与底板对齐
+2. 向下按压，使其卡入槽位
+3. 使用 M2 螺丝固定 (每侧约 5 颗)
+
+*注意:* 轨迹球上方的某个键可能略微凸起 (间隙问题)，属正常。
+
+*** 9. 安装支撑脚架
+
+*准备:*
+- Tent Stand (支撑螺杆) x 每侧 2 个 (如果有掌托则更多)
+- Tent Foot (脚垫) x 相应数量
+
+*步骤:*
+1. 将 Tent Stand 螺纹拧入外壳底部的螺纹孔
+2. 调整高度以设置倾角
+3. 在 Tent Foot 底部贴上地毯胶带防滑
+4. 将 Tent Foot 卡扣到 Tent Stand 的球头上
+
+参考: =images/Tent All.png=
+
+*** 10. 安装掌托 (可选)
+
+1. 将 Tent Stand 拧入掌托底部
+2. 在 Tent Foot 底部贴上地毯胶带
+3. 将掌托卡扣插入键盘背面的卡扣孔
+4. 将 Tent Stand 插入 Tent Foot
+5. 调整高度使键盘稳定，不晃动
+
+*提示:* 也可以在掌托表面贴泡棉增加舒适度。
+
+*** 11. 防滑处理
+
+在键盘底部和脚垫贴上地毯胶带，防止键盘在桌面滑动。
+
+*** 12. 安装键帽
+
+将你的键帽安装到开关上，完成组装！
+
+* 常见问题
+
+** Q1: 我的布局改成 3x5 后，模型渲染失败怎么办？
+
+*A:* 检查以下参数:
+- =centerrow= 和 =centercol= 是否需要调整
+- =lastrow= 和 =lastcol= 会自动计算，但检查相关代码是否有硬编码的行列值
+- 尝试禁用轨迹球 (=trackball-enabled false=) 看是否能生成
+
+** Q2: OpenSCAD 渲染底板时非常慢，怎么办？
+
+*A:*
+- 底板的渲染确实需要 10+ 分钟，这是正常的 (多边形数量多)
+- 使用命令行后台渲染: =openscad -o things/right-plate.stl things/right-plate.scad &=
+- 或者先做其他事，等待渲染完成
+
+** Q3: 我没有轨迹球，能否去掉轨迹球功能？
+
+*A:* 可以。修改 =dactyl.clj=:
+#+begin_src clojure
+(def trackball-enabled false)
+#+end_src
+这会生成不带轨迹球槽的外壳，拇指区会恢复为完整的按键布局。
+
+** Q4: 3D 打印的热插拔座和官方 Kailh 热插拔座有什么区别？
+
+*A:*
+- *3D 打印版* (=printed-hotswap? true=): 使用排针和 3D 打印的外壳，需要手工组装，不够稳固
+- *Kailh 官方版* (=printed-hotswap? false=): 购买专用的 Choc 热插拔座，更稳固但需要等待 1 个月+国际运输
+
+建议使用 Kailh 官方热插拔座。
+
+** Q5: 我的键盘一个按键触发多个字符，怎么调试？
+
+*A:* 这是短路问题:
+1. 检查 Pro Micro 排针处是否有焊锡桥接
+2. 使用万用表测试相邻引脚是否导通
+3. 检查外壳内的导线是否相互接触
+4. 重新整理布线，使用热缩管隔离
+
+** Q6: 轨迹球不工作，怎么调试？
+
+*A:*
+1. 检查传感器的 VCC 和 GND 是否正确连接
+2. 使用万用表测试传感器是否有 3.3V 或 5V 电压
+3. 检查 SPI 引脚 (MISO, MOSI, SCK, NCS) 是否连接正确
+4. 在 QMK 中启用调试，查看传感器是否被识别
+5. 检查轴承是否自由旋转，轨迹球是否与传感器镜头对齐
+
+** Q7: 左右两侧无法通信，怎么办？
+
+*A:*
+1. 检查 TRRS 线缆是否完好 (4 芯)
+2. 确认左右两侧 TRRS 插座的引脚布局一致
+3. 测试 PD0 引脚连接
+4. 确保左侧已刷入固件 (至少刷过一次)
+5. 尝试交换主从设置 (MASTER_LEFT ↔ MASTER_RIGHT)
+
+** Q8: 如何修改键盘的倾角和高度？
+
+*A:* 修改 =dactyl.clj= 中的参数:
+#+begin_src clojure
+(def tenting-angle (deg2rad 20))      ; 倾角，增加数值增加倾斜
+(def keyboard-z-offset 23.5)          ; 整体高度
+(def centercol 2)                     ; 左右倾斜中心
+#+end_src
+修改后重新生成模型并打印测试。
+
+** Q9: 打印的部件太脆弱，容易断裂，怎么办？
+
+*A:*
+1. 增加填充率到 100%
+2. 使用韧性更好的 PLA (README 中的丝绸 PLA 层间粘附差)
+3. 调整打印方向，使受力方向沿 XY 轴而非 Z 轴
+4. 提高打印温度改善层间粘附
+5. 降低打印速度
+
+** Q10: 我想要柔性 PCB 方案，有什么建议？
+
+*A:* 本项目没有 PCB 设计文件。如果你想要 PCB:
+1. 自己设计: 使用 KiCad，参考其他 Dactyl 项目的 PCB
+2. 寻找其他项目:
+   - [[https://github.com/carbonfet/dactyl-manuform-mini-keyboard][Dactyl Manuform PCB]]
+   - 搜索 "Dactyl flexible PCB" 找到社区方案
+3. 使用现成的分体式键盘 PCB (如 Corne, Lily58) 并修改外壳
+
+** Q11: Leiningen 安装失败或下载很慢怎么办？
+
+*A:*
+1. 检查 Java 是否正确安装: =java -version=
+2. 使用国内镜像加速:
+   #+begin_src bash
+   # 编辑 ~/.lein/profiles.clj
+   mkdir -p ~/.lein
+   echo '{:user {:mirrors {"central" {:name "aliyun" :url "https://maven.aliyun.com/repository/central"}}}}' > ~/.lein/profiles.clj
+   #+end_src
+3. 或手动下载 leiningen-standalone.jar 放到 =~/.lein/self-installs/=
+
+** Q12: 生成的 STL 文件在 Cura 中显示错误怎么办？
+
+*A:*
+1. 在 OpenSCAD 中检查模型是否有红色错误提示
+2. 尝试增加 OpenSCAD 的多边形精度 (F5 预览时可以看到)
+3. 使用修复工具:
+   #+begin_src bash
+   # 使用 meshlab 或在线工具修复 STL
+   # 或使用 Cura 的自动修复功能
+   #+end_src
+4. 重新导出 STL，确保 F6 完整渲染后再导出
+
+** Q13: 焊接时不小心烧坏了 Pro Micro，怎么办？
+
+*A:*
+- 这就是为什么建议买 3 个备用
+- 使用排针使 Pro Micro 可拆卸，方便更换
+- 未来考虑使用更耐用的主控，如 Elite-C 或 Nice!Nano
+
+** Q14: 键盘整体太重/太轻，怎么调整？
+
+*A:*
+- *太重:* 降低填充率到 20-30% (非受力部件)
+- *太轻 (滑动):* 增加填充率，贴更多地毯胶带，或在底板内加配重块
+
+** Q15: 我想调整键间距或键的倾角，在哪里修改？
+
+*A:* 在 =dactyl.clj= 中:
+#+begin_src clojure
+(def α (/ π 8))          ; 列弯曲度
+(def β (/ π 26))         ; 行弯曲度
+(def extra-width 2.5)    ; 键之间额外宽度
+(def extra-height 1.0)   ; 键之间额外高度
+#+end_src
+
+需要一些试验和迭代，建议使用 =things/right-test.scad= 预览手部模型进行调整。
+
+* 下一步
+
+完成构建后:
+
+1. *优化键位映射:* 使用 [[https://config.qmk.fm/][QMK Configurator]] 或手动编辑 keymap.c
+2. *调整倾角:* 通过支撑脚架调整舒适的倾角
+3. *定制外观:* 尝试不同颜色的 PLA，或后期喷漆
+4. *迭代改进:* 根据使用体验调整布局，打印新版本
+5. *分享经验:* 在社区 (如 Reddit r/MechanicalKeyboards) 分享你的构建
+
+* 参考资源
+
+- *原项目 README:* =/README.md= (英文，包含详细图片教程)
+- *QMK 固件文档:* [[https://docs.qmk.fm/]]
+- *Noah 的 QMK Fork (轨迹球):* [[https://github.com/noahprince22/qmk_firmware/tree/trackball]]
+- *Dactyl 键盘社区:* [[https://github.com/adereth/dactyl-keyboard]]
+- *Clojure 文档:* [[https://clojure.org/]]
+- *OpenSCAD 手册:* [[https://openscad.org/documentation.html]]
+
+* 联系和贡献
+
+如有问题或改进建议:
+- 提交 Issue 到原项目: [[https://github.com/noahprince22/tractyl-manuform-keyboard]]
+- 加入 Dactyl 键盘 Discord 社区讨论
+
+祝你构建顺利！享受你的定制人体工学键盘！
+
+* 许可证
+
+- 源代码: GNU AGPL v3
+- 生成的模型: CC BY-SA 4.0
+
+Copyright © 2015-2020 Matthew Adereth, Tom Short, Leo Lou and Noah Prince

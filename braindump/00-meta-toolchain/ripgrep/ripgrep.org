@@ -1,0 +1,1058 @@
+#+title: Ripgrep Deep Dive: The Fastest Code Search Tool You Should Be Using
+#+author: SOV710
+#+date: 2025-12-21
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 什么是 ripgrep
+
+ripgrep (=rg=) 是一个用 Rust 写的行导向搜索工具，递归搜索当前目录中的正则表达式模式。它在 2016 年由 Andrew Gallant (BurntSushi) 创建，迅速成为 *事实标准* 的代码搜索工具。
+
+** 为什么 ripgrep 这么快
+
+ripgrep 的速度来自多个层面的优化:
+
+*** 1. Rust 的正则引擎
+
+ripgrep 基于 Rust 的 =regex= crate，这个引擎使用:
+
+- *有限自动机* (Finite Automata): 避免回溯，保证线性时间复杂度
+- *SIMD 指令*: 使用 AVX2/SSE 并行比较多个字符
+- *激进的字面量优化*: 提取正则中的固定字符串，用 Boyer-Moore 或 memchr 快速定位
+
+例如，搜索 =\w+Sherlock\s+Holmes\w+= 时，ripgrep 会提取 ="Sherlock Holmes"= 这个字面量子串，先用 SIMD 加速的 =memchr= 找到候选位置，再用正则验证。
+
+*** 2. 智能并行
+
+ripgrep 自动选择最优的搜索策略:
+
+- *单文件*: 使用内存映射 (mmap)，直接在虚拟内存中搜索
+- *大目录*: 使用无锁的并行目录迭代器 (=crossbeam=)，多核心同时搜索不同文件
+
+*** 3. 原生 UTF-8 支持
+
+与 GNU grep 不同，ripgrep 的 UTF-8 支持是 *零开销* 的。Rust 的正则引擎直接在 DFA 中处理 UTF-8 解码，不需要预转换。
+
+性能对比 (在 Linux 内核源码树中搜索 =[A-Z]+_SUSPEND=):
+
+| 工具     | 时间   | Unicode 支持 |
+|----------+--------+--------------|
+| ripgrep  | 0.106s | ✓            |
+| git grep | 0.553s | ✗ (ASCII)   |
+| git grep | 0.971s | ✓ (慢 9 倍)  |
+| GNU grep | 0.429s | ✓            |
+| ag       | 0.199s | ✓            |
+
+** 与其他工具的对比
+
+| 特性              | ripgrep | ag   | git grep | GNU grep | ack  |
+|-----------------+--------+-----+---------+---------+-----|
+| 速度 (大仓库)       | ★★★★★  | ★★★ | ★★★★    | ★★      | ★   |
+| 自动 .gitignore   | ✓      | ✓   | ✓       | ✗       | ✓   |
+| Unicode 性能      | ★★★★★  | ★★★ | ★       | ★★★     | ★★  |
+| PCRE2 支持        | ✓ (opt) | ✗   | ✓       | ✓       | ✓   |
+| 压缩文件搜索        | ✓      | ✗   | ✗       | ✓ (zgrep) | ✗   |
+| 配置文件           | ✓      | ✗   | ✗       | ✗       | ✓   |
+| 跨平台二进制        | ✓      | ✓   | ✗       | ✗       | ✓   |
+
+* 基础使用
+
+** 搜索单个文件
+
+#+begin_src sh
+rg 'fast\w+' README.md
+#+end_src
+
+这会在 =README.md= 中搜索匹配 =fast\w+= (以 "fast" 开头的单词) 的所有行。
+
+输出示例:
+
+#+begin_example
+README.md
+75: faster than both. (N.B. It is not, strictly speaking, a "drop-in" replacement
+119:### Is it really faster than everything else?
+#+end_example
+
+默认会显示:
+
+- 文件名
+- 行号
+- 匹配的行 (高亮匹配部分)
+
+** 目录递归搜索
+
+#+begin_src sh
+rg 'fn write\('
+#+end_src
+
+一般来说，=rg foo= 等同于 =rg foo ./=。ripgrep 会递归搜索当前目录下的所有文件。
+
+*** 递归搜索的默认行为
+
+ripgrep 默认会:
+
+1. *尊重 .gitignore*: 跳过 git 忽略的文件
+2. *跳过隐藏文件*: 以 =.= 开头的文件和目录
+3. *跳过二进制文件*: 包含 NUL 字节 (=0x00=) 的文件
+4. *不跟随符号链接*: 避免循环引用
+
+这就是 ripgrep 的 *"智能过滤"* (smart filtering)。
+
+* 自动过滤机制
+
+** 过滤规则的优先级
+
+ripgrep 自动匹配这三类文件中的内容，进行过滤:
+
+1. =.gitignore= (最低优先级)
+2. =.ignore=
+3. =.rgignore= (最高优先级)
+
+优先级从上到下依次增大。
+
+*** 优先级示例
+
+假设你有一个 =.gitignore=:
+
+#+begin_example
+log/
+#+end_example
+
+这通常意味着 =log/= 目录不会被 git 跟踪。但如果你想在搜索时 *包含* 这个目录，可以创建一个 =.ignore= 文件:
+
+#+begin_example
+!log/
+#+end_example
+
+ripgrep 会优先处理 =.ignore= 中的 =!log/= 白名单规则，从而搜索 =log/= 目录。
+
+*** 更多过滤源
+
+ripgrep 的 .gitignore 处理实际上超越了简单的 =.gitignore= 文件:
+
+- 仓库特定规则: =$GIT_DIR/info/exclude=
+- 全局忽略规则: =core.excludesFile= (通常是 =$XDG_CONFIG_HOME/git/ignore=)
+- 父目录中的 =.gitignore/.ignore/.rgignore=
+
+*** 注意事项
+
+*重要*: ripgrep 会向上遍历目录树寻找 =.ignore= 和 =.gitignore= 文件！
+
+这意味着如果你在 =/home/user/project/src/= 中运行 =rg=，它会检查:
+
+- =/home/user/project/src/.gitignore=
+- =/home/user/project/.gitignore=
+- =/home/user/.gitignore=
+- =/home/.gitignore=
+
+直到找到 git 仓库的根目录或文件系统根目录。
+
+这可能导致意外的过滤行为！如果你发现某些文件没有被搜索，用 =--debug= 查看详细的过滤日志:
+
+#+begin_src sh
+rg --debug pattern
+#+end_src
+
+** 解除过滤的方法
+
+*** =--no-ignore= 解除所有 ignore 文件过滤
+
+#+begin_src sh
+rg --no-ignore pattern
+#+end_src
+
+这会禁用 =.gitignore=, =.ignore=, =.rgignore= 的所有规则，但 *仍然* 会:
+
+- 跳过隐藏文件
+- 跳过二进制文件
+- 不跟随符号链接
+
+*** =--hidden= (=-.=) 搜索隐藏的文件和目录
+
+#+begin_src sh
+rg --hidden pattern
+# 或简写
+rg -. pattern
+#+end_src
+
+这会搜索以 =.= 开头的文件和目录，但仍然尊重 ignore 规则。
+
+*** =--text= (=-a=) 搜索二进制文件
+
+#+begin_src sh
+rg --text pattern
+# 或简写
+rg -a pattern
+#+end_src
+
+*警告*: 二进制文件可能会向你的终端发送控制字符，可能导致异常行为！
+
+例如，搜索 =.git/objects/= 中的 git 对象文件可能会输出乱码，甚至改变终端颜色或光标位置。
+
+安全做法:
+
+#+begin_src sh
+# 只计数匹配，不显示内容
+rg -a -c pattern
+
+# 重定向到文件
+rg -a pattern > output.txt
+#+end_src
+
+*** =--unrestricted= (=-u=) 逐步解除过滤功能
+
+=-u= 可以重复使用最多 3 次，每次解除一层过滤:
+
+| 命令       | 等价于                               | 效果                          |
+|----------|-------------------------------------|------------------------------|
+| =rg -u=    | =rg --no-ignore=                    | 禁用 .gitignore 等规则          |
+| =rg -uu=   | =rg --no-ignore --hidden=           | + 搜索隐藏文件                  |
+| =rg -uuu=  | =rg --no-ignore --hidden --binary=  | + 搜索二进制文件                 |
+
+=-uuu= 之后，ripgrep 仍然会:
+
+- 跳过符号链接 (除非加 =-L/--follow=)
+- 避免在终端打印二进制文件的匹配 (除非明确指定文件名)
+
+*** 完全等价于 =grep -r=
+
+#+begin_src sh
+rg -uuu pattern
+# 几乎等同于
+grep -r pattern
+#+end_src
+
+区别:
+
+- =rg -uuu= 仍然跳过符号链接 (需要 =-L= 跟随)
+- =rg -uuu= 在检测到二进制文件时会停止搜索该文件 (需要 =-a= 继续)
+
+真正的完全等价:
+
+#+begin_src sh
+rg -uuuaL pattern
+#+end_src
+
+** 二进制文件的三种模式
+
+ripgrep 对二进制文件有 *三种* 处理模式:
+
+*** 1. 默认模式 (自动过滤)
+
+一旦检测到 NUL 字节，立即停止搜索该文件。
+
+*仅适用于* 递归搜索时发现的文件。如果你显式指定文件名:
+
+#+begin_src sh
+rg pattern binary-file
+#+end_src
+
+ripgrep 会自动切换到 "二进制模式" (见下)。
+
+*** 2. 二进制模式 (隐式或 =--binary=)
+
+继续搜索二进制文件，直到:
+
+- 文件结束，或
+- 找到匹配
+
+但 *不会* 在终端打印匹配内容 (避免控制字符破坏终端)。
+
+触发条件:
+
+- 显式指定二进制文件名
+- 使用 =--binary= 标志
+
+*** 3. 文本模式 (=-a/--text=)
+
+强制将文件视为文本，即使包含 NUL 字节。
+
+#+begin_src sh
+rg -a pattern binary-file
+#+end_src
+
+*风险*: 可能输出控制字符到终端！
+
+实用技巧:
+
+#+begin_src sh
+# 安全查看二进制文件中的文本
+rg -a pattern binary-file | cat -v
+# cat -v 会显示控制字符为 ^X 形式
+
+# 或用 hexdump
+rg -a pattern binary-file | hexdump -C
+#+end_src
+
+* 手动过滤: Glob 模式
+
+除了自动过滤，ripgrep 还支持 *手动过滤*，通过 glob 模式指定要搜索或排除的文件。
+
+** 基础 glob 语法
+
+#+begin_src sh
+# 只搜索 .toml 文件
+rg 'clap' -g '*.toml'
+
+# 排除 .toml 文件
+rg 'clap' -g '!*.toml'
+
+# 组合多个 glob
+rg 'pattern' -g '*.rs' -g '*.toml'
+#+end_src
+
+*重要*: glob 模式必须用引号，防止 shell 展开！
+
+*** Glob 优先级
+
+glob 的 *顺序很重要*！后面的 glob 优先级更高。
+
+#+begin_src sh
+# 先排除再包含 → 最终搜索 *.toml
+rg 'clap' -g '!*.toml' -g '*.toml'
+
+# 先包含再排除 → 最终不搜索任何文件！
+rg 'clap' -g '*.toml' -g '!*.toml'
+#+end_src
+
+第二个命令为什么不搜索任何文件？
+
+因为当存在 *至少一个非黑名单 glob* 时，ripgrep 会要求 *每个文件至少匹配一个 glob*。第二个 glob (黑名单) 覆盖了第一个，导致没有文件匹配。
+
+*** Glob 与 .gitignore 的优先级
+
+*Glob 优先级最高*，总是覆盖 .gitignore 规则！
+
+#+begin_src sh
+# 即使 log/ 在 .gitignore 中，也会搜索
+rg 'error' -g 'log/*'
+#+end_src
+
+** 复杂 glob 示例
+
+*** 搜索所有 Rust 和 Toml 文件
+
+#+begin_src sh
+rg 'pattern' -g '*.{rs,toml}'
+#+end_src
+
+*** 排除整个目录
+
+#+begin_src sh
+# 排除 node_modules
+rg 'pattern' -g '!node_modules'
+
+# 或更精确
+rg 'pattern' -g '!node_modules/**'
+#+end_src
+
+*** 只搜索特定目录
+
+#+begin_src sh
+# 只搜索 src/ 目录
+rg 'pattern' -g 'src/**'
+
+# 只搜索 src/ 中的 .rs 文件
+rg 'pattern' -g 'src/**/*.rs'
+#+end_src
+
+*** 多重排除
+
+#+begin_src sh
+rg 'pattern' -g '!*.{min.js,map}' -g '!dist/**' -g '!build/**'
+#+end_src
+
+* 手动过滤: 文件类型
+
+如果你经常搜索特定类型的文件，glob 模式会很啰嗦。ripgrep 提供了 *文件类型* 过滤。
+
+** 内置文件类型
+
+ripgrep 预定义了大量文件类型:
+
+#+begin_src sh
+# 只搜索 Rust 文件
+rg 'fn run' --type rust
+# 或简写
+rg 'fn run' -trust
+
+# 只搜索 Python 文件
+rg 'import' -tpy
+
+# 排除 JavaScript 文件
+rg 'pattern' -Tjs
+#+end_src
+
+*** 查看所有内置类型
+
+#+begin_src sh
+rg --type-list
+#+end_src
+
+输出示例:
+
+#+begin_example
+asm: *.asm, *.s, *.S
+c: *.[chH], *.[chH].in, *.cats
+cpp: *.[ChH], *.cc, *.cpp, *.cxx, *.h++, *.hh, *.hpp, *.hxx, *.inl
+css: *.css, *.scss
+go: *.go
+html: *.ejs, *.htm, *.html
+java: *.java, *.jsp, *.jspx, *.properties
+js: *.js, *.jsx, *.vue, *.ts, *.tsx
+json: *.json, composer.lock, Pipfile.lock
+make: *.mak, *.mk, GNUmakefile, Makefile, makefile
+md: *.markdown, *.md, *.mdown, *.mkdn
+python: *.py, *.pyi, *.pyx, *.pyw, *.bzl, BUILD, WORKSPACE
+rust: *.rs
+sql: *.sql
+toml: *.toml, Cargo.lock
+yaml: *.yaml, *.yml
+...
+#+end_example
+
+*** 查看特定类型的 glob
+
+#+begin_src sh
+rg --type-list | rg '^rust:'
+# 输出: rust: *.rs
+#+end_src
+
+** 自定义文件类型
+
+*** 临时定义
+
+#+begin_src sh
+# 定义 "web" 类型
+rg --type-add 'web:*.{html,css,js}' -tweb 'title'
+#+end_src
+
+也可以分开写:
+
+#+begin_src sh
+rg --type-add 'web:*.html' \
+   --type-add 'web:*.css' \
+   --type-add 'web:*.js' \
+   -tweb 'title'
+#+end_src
+
+*** 持久化自定义类型: 配置文件
+
+临时定义的类型只在当前命令有效。如果想持久化，使用 *配置文件*。
+
+ripgrep 支持配置文件 (类似 =.bashrc=):
+
+1. 设置环境变量 =RIPGREP_CONFIG_PATH=
+2. 在配置文件中每行写一个参数
+
+*示例*:
+
+#+begin_src sh
+# ~/.ripgreprc
+# 定义 web 类型
+--type-add
+web:*.{html,css,js}
+
+# 定义 config 类型
+--type-add
+config:*.{json,yaml,toml,ini}
+
+# 默认显示行号
+--line-number
+
+# 默认使用智能大小写
+--smart-case
+#+end_src
+
+然后在 shell 配置中:
+
+#+begin_src sh
+# ~/.bashrc 或 ~/.zshrc
+export RIPGREP_CONFIG_PATH="$HOME/.ripgreprc"
+#+end_src
+
+现在 =-tweb= 和 =-tconfig= 在所有 ripgrep 命令中可用！
+
+*** Shell Alias 方式
+
+如果不想用配置文件，也可以用 shell alias:
+
+#+begin_src sh
+# ~/.bashrc
+alias rgweb="rg --type-add 'web:*.{html,css,js}' -tweb"
+#+end_src
+
+使用:
+
+#+begin_src sh
+rgweb 'pattern'
+#+end_src
+
+** 组合类型过滤
+
+*** 多个类型 (OR)
+
+#+begin_src sh
+# 搜索 Rust 或 Python 文件
+rg 'pattern' -trust -tpy
+#+end_src
+
+*** 排除多个类型
+
+#+begin_src sh
+# 排除 JavaScript 和 CSS
+rg 'pattern' -Tjs -Tcss
+#+end_src
+
+*** 类型 + Glob
+
+#+begin_src sh
+# 只搜索 src/ 中的 Rust 文件
+rg 'pattern' -trust -g 'src/**'
+#+end_src
+
+* 实用技巧
+
+** 固定字符串搜索 (非正则)
+
+ripgrep 默认将模式视为正则表达式。如果搜索包含正则元字符的字符串，需要转义或使用固定字符串模式。
+
+#+begin_src sh
+# 错误: ?. 是非法正则 (? 后面没有表达式)
+rg '?.'
+# 报错: regex parse error
+
+# 方法 1: 转义
+rg '\?\.'
+
+# 方法 2: 固定字符串模式
+rg -F '?.'
+# 或
+rg --fixed-strings '?.'
+#+end_src
+
+=-F= 模式在搜索代码中的特殊字符时非常有用:
+
+#+begin_src sh
+# 搜索 C++ 指针语法
+rg -F 'std::vector<int>*'
+
+# 搜索 shell 变量
+rg -F '$USER'
+#+end_src
+
+** 大小写敏感控制
+
+*** 智能大小写 (=-S=, 默认行为)
+
+#+begin_src sh
+# 模式全小写 → 忽略大小写
+rg 'hello'
+# 匹配: hello, Hello, HELLO
+
+# 模式含大写 → 大小写敏感
+rg 'Hello'
+# 只匹配: Hello
+#+end_src
+
+*** 强制忽略大小写 (=-i=)
+
+#+begin_src sh
+rg -i 'hello'
+# 匹配: hello, Hello, HELLO, HeLLo
+#+end_src
+
+*** 强制大小写敏感 (=-s=)
+
+#+begin_src sh
+rg -s 'hello'
+# 只匹配: hello
+#+end_src
+
+** 显示上下文
+
+*** 显示匹配行的前后 N 行
+
+#+begin_src sh
+# 显示前后各 3 行
+rg -C 3 'pattern'
+
+# 只显示前 3 行
+rg -B 3 'pattern'
+
+# 只显示后 3 行
+rg -A 3 'pattern'
+#+end_src
+
+输出示例:
+
+#+begin_example
+file.rs
+10-fn setup() {
+11-    let config = Config::new();
+12:    let result = process(config);  // 匹配行
+13-    println!("{:?}", result);
+14-}
+#+end_example
+
+=-= 表示上下文行，=:= 表示匹配行。
+
+** 统计匹配
+
+*** 只显示匹配计数
+
+#+begin_src sh
+rg -c 'pattern'
+#+end_src
+
+输出示例:
+
+#+begin_example
+src/main.rs:5
+src/lib.rs:12
+tests/test.rs:3
+#+end_example
+
+*** 显示详细统计
+
+#+begin_src sh
+rg --stats 'pattern'
+#+end_src
+
+输出示例:
+
+#+begin_example
+[... 正常输出 ...]
+
+1292 matches
+1083 matched lines
+232 files contained matches
+36826 files searched
+6296587 bytes printed
+254562478 bytes searched
+5.805867 seconds spent searching
+1.559705 seconds
+#+end_end
+
+这对评估搜索工作量非常有用！
+
+** 只列出包含匹配的文件名
+
+#+begin_src sh
+# 只显示文件名，不显示匹配内容
+rg -l 'pattern'
+
+# 只显示不包含匹配的文件名
+rg --files-without-match 'pattern'
+#+end_src
+
+** 替换预览
+
+ripgrep 本身不支持替换，但可以预览替换效果:
+
+#+begin_src sh
+# 预览将 'old' 替换为 'new'
+rg 'old' -r 'new'
+#+end_src
+
+要真正替换，使用 =sed= 或 =sd= (一个 Rust 写的替换工具):
+
+#+begin_src sh
+# 方法 1: sed (in-place 替换)
+rg -l 'old' | xargs sed -i 's/old/new/g'
+
+# 方法 2: sd (更安全，自动处理文件)
+sd 'old' 'new' $(rg -l 'old')
+#+end_src
+
+** 多模式搜索
+
+*** OR 搜索 (正则 alternation)
+
+#+begin_src sh
+# 搜索 var 或 let 或 const
+rg 'var|let|const'
+#+end_src
+
+*** AND 搜索 (管道组合)
+
+#+begin_src sh
+# 搜索同时包含 'query' 和 'string' 的行
+rg 'query' | rg 'string'
+#+end_src
+
+*** 使用多个模式文件
+
+#+begin_src sh
+# patterns.txt:
+# error
+# warning
+# critical
+
+rg -f patterns.txt
+#+end_src
+
+** 搜索压缩文件
+
+ripgrep 支持搜索常见压缩格式 (需要对应的解压工具):
+
+#+begin_src sh
+rg -z 'pattern' file.gz
+# 支持: .gz, .bz2, .xz, .lz4, .lzma, .br, .zst
+#+end_src
+
+递归搜索压缩文件:
+
+#+begin_src sh
+rg -z 'pattern'
+# 自动搜索所有支持的压缩文件
+#+end_src
+
+** 多行匹配
+
+*** 匹配跨多行的模式
+
+#+begin_src sh
+# 匹配 function ... end 块
+rg -U 'function.*?end'
+#+end_src
+
+=-U/--multiline= 允许 =.= 匹配换行符，=.*?= 使用非贪婪匹配。
+
+*** 实用示例: 查找多行注释
+
+#+begin_src sh
+# 查找 /* ... */ 注释
+rg -U '/\*.*?\*/'
+#+end_src
+
+** JSON 输出 (用于工具集成)
+
+#+begin_src sh
+rg --json 'pattern'
+#+end_src
+
+输出每个匹配的 JSON 对象，适合用管道传给其他工具:
+
+#+begin_src sh
+# 用 jq 处理结果
+rg --json 'pattern' | jq '.data.lines.text'
+
+# 用 delta 语法高亮
+rg --json 'pattern' | delta
+#+end_src
+
+* 性能优化技巧
+
+** 避免不必要的 Unicode 模式
+
+如果确定只搜索 ASCII，可以禁用 Unicode:
+
+#+begin_src sh
+rg --no-unicode 'pattern'
+#+end_src
+
+但 *不推荐*，因为 ripgrep 的 Unicode 支持已经优化得很好，几乎无性能损失。
+
+** 限制搜索深度
+
+#+begin_src sh
+# 只搜索当前目录及一级子目录
+rg --max-depth 2 'pattern'
+#+end_src
+
+** 使用 mmap vs. 缓冲读取
+
+ripgrep 会自动选择:
+
+- 单文件或少量文件: mmap (内存映射)
+- 大量文件: 缓冲读取
+
+强制指定:
+
+#+begin_src sh
+# 强制使用 mmap
+rg --mmap 'pattern'
+
+# 禁用 mmap
+rg --no-mmap 'pattern'
+#+end_src
+
+*何时手动指定？*
+
+- 搜索网络文件系统 (NFS, SMB): 禁用 mmap (=--no-mmap=)
+- 搜索单个巨大文件: 启用 mmap (=--mmap=)
+
+** 线程数控制
+
+#+begin_src sh
+# 使用 8 个线程
+rg -j8 'pattern'
+
+# 单线程 (调试或避免并发问题)
+rg -j1 'pattern'
+#+end_src
+
+默认值 (=0=) 会自动选择 CPU 核心数。
+
+** 预编译正则 (多次搜索同一模式)
+
+如果要多次搜索相同的模式，可以将 ripgrep 集成到脚本中，避免重复启动进程:
+
+#+begin_src sh
+# 不好: 每次搜索都启动新进程
+for dir in */; do
+    rg 'pattern' "$dir"
+done
+
+# 好: 一次搜索所有目录
+rg 'pattern' */
+#+end_src
+
+* 实战案例
+
+** 查找函数定义
+
+#+begin_src sh
+# Rust 函数
+rg 'fn \w+\(' -trust
+
+# Python 函数
+rg '^def \w+\(' -tpy
+
+# C/C++ 函数 (简单版)
+rg '^\w+\s+\w+\([^)]*\)\s*{' -tc -tcpp
+#+end_src
+
+** 查找 TODO/FIXME 注释
+
+#+begin_src sh
+rg 'TODO|FIXME|XXX|HACK'
+#+end_src
+
+更精确 (避免误匹配字符串):
+
+#+begin_src sh
+rg '(//|#|/\*)\s*(TODO|FIXME|XXX|HACK)'
+#+end_src
+
+** 查找硬编码的 IP 地址
+
+#+begin_src sh
+rg '\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'
+#+end_src
+
+** 查找可能的密钥泄露
+
+#+begin_src sh
+rg -i 'api[_-]?key|secret|password|token' -g '!*.{md,txt}'
+#+end_src
+
+排除文档文件，避免误报。
+
+** 查找大文件
+
+#+begin_src sh
+# 查找超过 1MB 的文件
+rg --files | xargs ls -lh | awk '$5 ~ /M/ && $5+0 > 1'
+#+end_src
+
+** 统计代码行数
+
+#+begin_src sh
+# 统计所有 Rust 代码行数
+rg --files -trust | xargs wc -l
+
+# 只统计非空行
+rg -trust '.' -c | awk -F: '{sum+=$2} END {print sum}'
+#+end_src
+
+** 查找未使用的导入 (Rust)
+
+#+begin_src sh
+# 查找 use 语句
+rg '^use ' -trust | cut -d: -f2 | sort -u > imports.txt
+
+# 查找代码中的引用
+for import in $(cat imports.txt); do
+    name=$(echo "$import" | sed 's/.*::\(\w\+\);$/\1/')
+    if ! rg -q "\b$name\b" --type rust; then
+        echo "Unused: $import"
+    fi
+done
+#+end_src
+
+* 常见问题
+
+** 为什么我的文件没有被搜索？
+
+#+begin_src sh
+# 1. 检查是否被 ignore 规则过滤
+rg --debug 'pattern' 2>&1 | rg -i 'ignore'
+
+# 2. 尝试禁用所有过滤
+rg -uuu 'pattern'
+
+# 3. 检查是否是二进制文件
+file suspicious_file
+rg -a 'pattern' suspicious_file
+#+end_src
+
+** ripgrep 比 grep 慢？
+
+可能的原因:
+
+1. *搜索的文件太少*: 进程启动开销占主导
+2. *网络文件系统*: mmap 性能差，用 =--no-mmap=
+3. *模式太复杂*: 尝试简化正则或用 =-F= 固定字符串
+4. *匹配数太多*: 性能瓶颈在输出，不在搜索
+
+** 如何在 Windows 上避免路径问题？
+
+#+begin_src sh
+# 使用前斜杠 (ripgrep 会自动处理)
+rg 'pattern' src/main.rs
+
+# 避免 PowerShell 的 glob 展开
+rg 'pattern' -g '*.rs'  # 加引号
+#+end_src
+
+** 如何忽略 .git 目录本身？
+
+默认情况下，ripgrep 会跳过 =.git= 目录 (因为它是隐藏的)。如果使用 =--hidden=，需要手动排除:
+
+#+begin_src sh
+rg --hidden -g '!.git' 'pattern'
+#+end_src
+
+* 与编辑器集成
+
+** Vim/Neovim
+
+*** 使用 =:grep= 命令
+
+#+begin_src vim
+" ~/.vimrc
+set grepprg=rg\ --vimgrep
+set grepformat=%f:%l:%c:%m
+#+end_src
+
+使用:
+
+#+begin_example
+:grep 'pattern'
+:copen  " 打开 quickfix 窗口
+#+end_example
+
+*** 使用 fzf.vim
+
+#+begin_src vim
+" ~/.vimrc
+Plug 'junegunn/fzf.vim'
+
+" 使用 ripgrep 作为后端
+let $FZF_DEFAULT_COMMAND = 'rg --files --hidden --follow -g "!.git"'
+
+command! -bang -nargs=* Rg
+  \ call fzf#vim#grep(
+  \   'rg --column --line-number --no-heading --color=always --smart-case -- '.shellescape(<q-args>), 1,
+  \   fzf#vim#with_preview(), <bang>0)
+#+end_src
+
+使用:
+
+#+begin_example
+:Rg pattern
+#+end_example
+
+** Emacs
+
+*** 使用 =rg.el=
+
+#+begin_src emacs-lisp
+;; ~/.emacs.d/init.el
+(use-package rg
+  :config
+  (rg-enable-default-bindings))
+#+end_src
+
+使用:
+
+- =M-x rg=
+- =M-x rg-project=
+
+** VSCode
+
+安装扩展: *ripgrep (rg)*
+
+或直接在设置中启用 ripgrep (VSCode 默认使用 ripgrep):
+
+#+begin_example
+"search.useRipgrep": true
+#+end_example
+
+* 总结
+
+ripgrep 是一个 *强大、快速、智能* 的代码搜索工具。
+
+** 何时使用 ripgrep
+
+- *日常代码搜索*: 比 =grep= 快 5-10 倍
+- *大型代码库*: 自动过滤 .gitignore，减少噪音
+- *Unicode 文本*: 零开销的 UTF-8 支持
+- *跨平台脚本*: 行为一致，无需适配不同 grep 版本
+
+** 何时不使用 ripgrep
+
+- *需要 POSIX 兼容*: 某些企业环境只允许标准工具
+- *需要完整的 PCRE 功能*: 虽然 ripgrep 支持 =-P/--pcre2=，但默认引擎更快
+- *已安装 grep 且性能足够*: 没必要为了微小提升增加依赖
+
+** 推荐配置
+
+创建 =~/.ripgreprc=:
+
+#+begin_src conf
+# 智能大小写
+--smart-case
+
+# 显示行号
+--line-number
+
+# 自定义类型
+--type-add
+web:*.{html,css,js,jsx,ts,tsx,vue}
+
+--type-add
+config:*.{json,yaml,toml,ini,conf}
+
+--type-add
+docs:*.{md,txt,rst,adoc}
+
+# 总是使用颜色 (即使重定向)
+--color=always
+
+# 最大列宽 (避免输出过长)
+--max-columns=150
+
+# 最大匹配数 (避免输出爆炸)
+--max-count=1000
+#+end_src
+
+在 =~/.bashrc= 或 =~/.zshrc= 中:
+
+#+begin_src sh
+export RIPGREP_CONFIG_PATH="$HOME/.ripgreprc"
+#+end_src
+
+现在，每次运行 =rg= 都会应用这些默认设置，同时你仍然可以用命令行参数覆盖它们。
+
+** 最后的建议
+
+1. *阅读官方指南*: [[https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md][ripgrep User Guide]]
+2. *学习正则表达式*: ripgrep 的速度来自正则引擎，好的正则能极大提升效率
+3. *善用类型过滤*: 比 glob 更简洁，更易维护
+4. *集成到编辑器*: 让 ripgrep 成为开发流程的一部分
+5. *不要过度优化*: ripgrep 已经够快，除非真的遇到瓶颈
+
+*如果你还在用 =grep -r=​，是时候切换到 =rg= 了。*

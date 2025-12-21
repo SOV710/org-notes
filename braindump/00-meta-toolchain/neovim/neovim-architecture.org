@@ -1,0 +1,442 @@
+#+title: Neovim Architecture Deep Dive: From RPC to LuaJIT
+#+author: SOV710
+#+date: 2025-12-19
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 总体架构
+
+Neovim 的架构分为以下几层，自顶向下:
+
+1. *Frontend/UI*: 外部 GUI 或 TUI (Terminal UI)，通过 RPC 与 Neovim 核心通信
+2. *Msgpack-RPC*: 序列化层，使用 MessagePack 协议进行进程间通信
+3. *API Server*: 暴露给外部的 C 接口，位于 =src/nvim/api/=​，定义了上千个 =nvim_buf_*=, =nvim_win_*=, =nvim_*= 函数
+4. *Core*: 纯 C 实现的编辑器核心逻辑，继承自 Vim
+5. *LuaJIT VM*: 嵌入的 LuaJIT 虚拟机，提供高性能脚本环境
+6. *Remote Plugins & LSP 客户端*: 运行在独立进程，通过 RPC 调用 API Server
+
+** 架构细节补充
+
+*** Msgpack-RPC 的非标准约束
+
+Neovim 实现的 MessagePack-RPC 协议有两个额外约束 (不在官方规范中):
+
+1. *响应必须按照请求的逆序返回* (LIFO, Last-In-First-Out): 像栈一样展开，这允许嵌套 RPC 调用
+2. *所有消息 (请求和通知) 按接收顺序在事件循环中顺序处理*: 保证可预测的行为，避免竞态条件
+
+这意味着外部进程可以在等待 Neovim 响应的同时，接收 Neovim 的反向 RPC 调用 (例如 Neovim 调用插件的函数)。
+
+*** API Server 的代码生成机制
+
+API Server 中的函数不是手写的分发逻辑，而是由构建系统 *自动生成*:
+
+- 构建系统解析 =src/nvim/api/*= 中的 C 头文件
+- 生成分发函数，将 RPC API 方法名映射到公共 C API 函数
+- 自动转换/验证参数和返回值
+- 生成 API 元数据 (函数签名、类型、版本信息)
+
+可以通过 =vim.fn.api_info()= 查看完整的 API 元数据。
+
+*** LuaJIT 的直接 C 调用
+
+虽然外部进程需要通过 RPC 调用 API，但 *内嵌的 LuaJIT 可以直接调用 C 函数*​，无需经过 RPC 序列化。这通过 LuaJIT 的 FFI (Foreign Function Interface) 实现:
+
+#+begin_src lua
+-- Lua 可以直接调用 C 函数 (通过生成的绑定)
+local result = vim.api.nvim_get_current_line()
+-- 这是一次直接的 C 函数调用，不经过 RPC
+#+end_src
+
+这是为什么 Lua 插件比 Python/Ruby 远程插件快得多的原因之一。
+
+*** 通道 (Channel) 的类型
+
+Neovim 支持多种通道类型，每种对应不同的 IPC 机制:
+
+- *stdio*: 标准输入/输出 (用于 =--embed= 模式)
+- *TCP socket*: 网络套接字 (如 =127.0.0.1:6666=)
+- *Unix domain socket*: Unix 套接字 (如 =/tmp/nvim.sock=)
+- *Named pipe*: Windows 命名管道
+- *Job*: 子进程的 stdin/stdout/stderr
+
+每个通道有唯一的 =channel_id=，可以通过 =vim.api.nvim_list_chans()= 查看。
+
+* 内建模块
+
+Neovim 在 Lua 侧提供了多个命名空间，每个都有不同的作用域和性能特征:
+
+1. *vim.api*: 内建在 Core 层的，最原生最核心的 C 函数，一般以 =nvim_= 开头，可以操作几乎任何东西
+2. *vim.fn*: 调用 Vimscript 函数 (包括内建函数和用户函数)
+3. *vim.cmd*: 执行 Ex 命令 (如 =:set=, =:highlight=)
+4. *vim.opt*: 配置选项 (现代化的 option 接口)
+5. *vim.o*: Vim 全局选项 (等价于 =:set=)
+6. *vim.bo*: Buffer 局部选项 (如 =vim.bo.filetype=)
+7. *vim.wo*: Window 局部选项 (如 =vim.wo.number=)
+8. *vim.g*: Vim 全局变量 (等价于 =g:variable=)
+9. *vim.b*: Buffer 局部变量
+10. *vim.w*: Window 局部变量
+11. *vim.keymap.set*: 键映射 (替代 =nvim_set_keymap=)
+12. *vim.uv*: 操作底层的 libuv 事件循环，定时器和其他 IO 能力
+13. *vim.schedule*: 将函数调度到主循环 (事件循环的下一个 tick)
+14. *vim.ui*: 提供异步输入的统一接口，可被插件 (如 Telescope, WhichKey) 重写
+
+** 模块间的调用路径
+
+*** vim.api 的直接调用
+
+=vim.api= 中的函数是 *直接的 C 函数调用*，不经过 RPC 层，也不经过 Vimscript 解释器。这是最快的调用方式。
+
+#+begin_src lua
+-- 直接调用 C 函数 nvim_buf_set_lines
+vim.api.nvim_buf_set_lines(0, 0, 1, false, {"Hello, World!"})
+-- 调用路径: Lua → C (无中间层)
+#+end_src
+
+*** vim.fn 和 vim.cmd 的桥接
+
+=vim.fn= 和 =vim.cmd= 是 Lua 到 Vimscript 的 *桥接*:
+
+#+begin_src lua
+-- vim.fn 调用 Vimscript 函数
+vim.fn.expand('%:p')
+-- 调用路径: Lua → Vimscript 解释器 → C 实现 (如果是内建函数)
+
+-- vim.cmd 执行 Ex 命令
+vim.cmd('set number')
+-- 调用路径: Lua → Ex 命令解析器 → C 实现
+#+end_src
+
+*重要*: 跨越 Lua ↔ Vimscript 边界时，数据会被 *拷贝* (marshalled)，而非引用传递:
+
+#+begin_src lua
+local list = { 1, 2, 3 }
+vim.fn.remove(list, 0)  -- 拷贝到 Vimscript，修改副本
+vim.print(list)         -- 仍然是 { 1, 2, 3 }，原 Lua 表未被修改
+#+end_src
+
+*** vim.opt 等 meta-accessor 的实现
+
+=vim.opt=, =vim.o=, =vim.wo=, =vim.bo= 是 *元表驱动的访问器* (meta-accessor):
+
+#+begin_src lua
+-- vim.opt.number 实际上调用了 nvim_set_option_value
+vim.opt.number = true
+-- 等价于
+vim.api.nvim_set_option_value('number', true, {})
+#+end_src
+
+它们在 Lua 侧提供了更友好的语法，但底层仍然调用 =nvim_set_option_value= 等 C API。
+
+*** vim.schedule 的事件循环调度
+
+=vim.schedule= 将函数推迟到主事件循环的 *下一个 tick*:
+
+#+begin_src lua
+vim.schedule(function()
+  print("This runs in the next event loop iteration")
+end)
+#+end_src
+
+这在需要从 *api-fast* 回调中调用 API 时很重要 (某些 API 不能在快速回调中调用)。
+
+** 疑问解答: 是否所有 Lua API 都经过 RPC？
+
+*答案: 否。*
+
+- *vim.api* 函数是 *直接的 C 函数调用*​，不经过 RPC 层，也不经过 Msgpack 序列化
+- *vim.fn* 和 *vim.cmd* 调用 Vimscript 解释器，解释器再调用 C 实现 (如果是内建函数)
+- *vim.opt*, *vim.keymap.set* 等高级接口，底层调用 =vim.api=​，因此也是直接 C 调用
+
+*只有外部进程* (Python/Ruby/Node.js 远程插件, 外部 GUI) 需要通过 Msgpack-RPC 与 Neovim 通信。
+
+LuaJIT 是 *嵌入* 在 Neovim 进程内部的，与 Core C 代码运行在同一地址空间，因此可以通过 FFI 直接调用 C 函数。
+
+*** 调用路径图示
+
+#+begin_example
+外部 Python 插件:
+Python 代码 → Msgpack-RPC → API Server → C 函数 → Core
+
+内嵌 Lua 代码:
+Lua 代码 → FFI 绑定 → C 函数 → Core
+(无 RPC 开销，零拷贝)
+
+Vimscript 代码:
+VimL 解释器 → C 函数 → Core
+#+end_example
+
+这也是为什么 Neovim 官方鼓励用 Lua 而非 Vimscript 或远程插件: *Lua 结合了 Vimscript 的便利性和接近 C 的性能*​。
+
+* API 接口的触发时机
+
+Neovim 的 API 调用可以按触发机制分为五大类:
+
+** 1. 启动/配置时同步调用
+
+在 =init.lua= 或插件 =setup()= 阶段，Neovim 启动或插件加载时立即执行。
+
+#+begin_src lua
+-- 在 init.lua 中，启动时立即执行
+vim.opt.number = true
+vim.g.mapleader = " "
+#+end_src
+
+** 2. Autocmd/事件驱动
+
+通过 =vim.api.nvim_create_autocmd= 监听事件后触发:
+
+#+begin_src lua
+vim.api.nvim_create_autocmd("BufRead", {
+  pattern = "*.rs",
+  callback = function()
+    vim.opt_local.expandtab = true
+  end
+})
+#+end_src
+
+常见事件: =BufRead=, =FileType=, =InsertEnter=, =TextChanged=, =VimEnter= 等。
+
+** 3. 用户命令/指令驱动
+
+用户在命令行执行自定义命令:
+
+#+begin_src lua
+vim.api.nvim_create_user_command('Format', function()
+  vim.lsp.buf.format()
+end, {})
+
+-- 用户执行 :Format 时触发
+#+end_src
+
+** 4. 键映射/UI 交互驱动
+
+在 =vim.keymap.set= 定义的回调中，响应快捷键:
+
+#+begin_src lua
+vim.keymap.set('n', '<leader>ff', function()
+  require('telescope.builtin').find_files()
+end)
+#+end_src
+
+** 5. RPC/外部进程驱动
+
+通过 Msgpack-RPC 与 LSP, DAP, Git 等后台进程通信，接收异步事件:
+
+#+begin_src lua
+-- LSP 诊断更新时触发
+vim.api.nvim_create_autocmd("LspAttach", {
+  callback = function(args)
+    local client = vim.lsp.get_client_by_id(args.data.client_id)
+    -- 设置 LSP 相关的 keybindings
+  end
+})
+#+end_src
+
+* Neovim 文档的 "开发者傲慢" 问题
+
+如果你看过 Neovim 或其主要插件的文档，你肯定会被它劝退，因为 Neovim 和其几乎所有插件的文档都带着一股 "开发者的傲慢"。
+它总是假设使用者有足够的知识，它总是假设读者知道插件配置中的 =config = function() end=, =require('any-plugin').setup= 是什么意思，它总是假设使用者知道 package manager, LSP, linter, DAP 都是什么意思，知道 Neovim 的 buffer, tabs 都是什么，在 Neovim 中扮演什么角色。
+
+它就像是总是在说: *你连这个都不懂吗？*
+
+然后绝大部分人都被从 Neovim 劝退，少数人去用一个 Neovim 的发行版，比如 LazyVim, AstroVim, 或者是 kickstart.nvim 所构建的一个简易 Neovim。真正能把 Neovim 用明白，配置明白的人，只是极少数。
+
+** 为什么文档如此晦涩
+
+*** 1. 历史包袱: Vim 遗留概念
+
+Neovim 继承了 Vim 的大部分概念 (buffer, window, tab, mode, register 等)，文档默认你已经理解这些。但对新手来说:
+
+- *Buffer* 不是 "缓冲区"，而是 "文件内容在内存中的表示"
+- *Window* 不是 "窗口"，而是 "buffer 的视口"
+- *Tab* 不是 "标签页"，而是 "window 布局的容器"
+
+这些概念与现代编辑器 (VSCode, Sublime) 的 "tab = file" 直觉完全不同。
+
+*** 2. 多层 API 的混乱
+
+如前所述，Neovim 有三层 API (Vim API, Nvim API, Lua API)，文档经常混用:
+
+#+begin_src lua
+-- 三种设置 number 的方式，文档都会提到
+vim.cmd('set number')         -- Vim API (Ex 命令)
+vim.fn.setbufvar(0, '&number', 1)  -- Vim API (函数)
+vim.opt.number = true         -- Lua API (meta-accessor)
+vim.api.nvim_set_option_value('number', true, {})  -- Nvim API (C 函数)
+#+end_src
+
+新手不知道该用哪个，文档也不说明优劣。
+
+*** 3. 插件生态的 "隐式契约"
+
+几乎所有 Lua 插件都遵循 =require('plugin').setup({})= 模式，但文档不解释 *为什么*:
+
+#+begin_src lua
+require('telescope').setup({
+  defaults = { ... },
+  extensions = { ... }
+})
+#+end_src
+
+新手不知道:
+
+- =setup()= 是插件作者定义的函数，不是 Neovim 内建的
+- =setup()= 通常会初始化插件、注册命令、设置 keybindings
+- 某些插件 (如 lualine) 调用 =setup()= 后会立即生效，某些插件 (如 nvim-cmp) 需要手动调用其他函数
+
+*** 4. LSP/DAP/Linter 的概念门槛
+
+文档假设你知道:
+
+- *LSP* (Language Server Protocol) 是什么
+- *Linter* 和 *Formatter* 的区别
+- *DAP* (Debug Adapter Protocol) 如何工作
+- *Mason* (包管理器) 如何安装 LSP server
+
+但这些都是外部协议/工具，不是 Neovim 特有的，新手容易混淆。
+
+** 如何破解这个困局
+
+*** 1. 从 kickstart.nvim 开始
+
+[[https://github.com/nvim-lua/kickstart.nvim][kickstart.nvim]] 是一个 *注释丰富的单文件配置*，解释了每一步在做什么:
+
+#+begin_src lua
+-- kickstart.nvim 的风格
+-- Set <space> as the leader key
+-- See `:help mapleader`
+--  NOTE: Must happen before plugins are required (otherwise wrong leader will be used)
+vim.g.mapleader = ' '
+vim.g.maplocalleader = ' '
+#+end_src
+
+每一行都有注释，适合新手学习。
+
+*** 2. 理解 Neovim 的 "层次"
+
+记住这个顺序:
+
+1. *Core 概念*: buffer, window, tab, mode (必学)
+2. *Lua 基础*: 函数, 表, 模块, =require= (必学)
+3. *vim.api 常用函数*: =nvim_buf_*=, =nvim_win_*=, =nvim_set_keymap= (逐步学)
+4. *插件管理器*: lazy.nvim, packer.nvim (选一个)
+5. *LSP 配置*: nvim-lspconfig, Mason (外部工具)
+
+*不要一次性全学*，先让 Neovim 能用，再逐步深入。
+
+*** 3. 查阅 =:help= 时的技巧
+
+Neovim 的 =:help= 很强大，但需要知道怎么查:
+
+#+begin_example
+:help lua-guide         " Lua 入门指南
+:help api              " Nvim API 概览
+:help vim.api          " vim.api 函数列表
+:help vim.fn           " vim.fn 函数列表
+:help autocmd-events   " 所有 autocmd 事件
+:help nvim_buf_set_lines  " 查询具体 API 函数
+#+end_example
+
+如果不知道函数名，用 =:help api-<Tab>= 补全。
+
+*** 4. 阅读源码时的优先级
+
+如果插件文档太烂，直接看源码:
+
+1. =plugin/<name>.lua=: 插件的入口，注册命令/keybindings
+2. =lua/<name>/config.lua= 或 =lua/<name>/init.lua=: =setup()= 函数定义
+3. =lua/<name>/*.lua=: 具体功能模块
+
+例如 telescope.nvim 的结构:
+
+#+begin_example
+telescope.nvim/
+├── plugin/telescope.lua        # 注册 :Telescope 命令
+├── lua/telescope/init.lua      # setup() 函数
+├── lua/telescope/builtin.lua   # find_files, live_grep 等
+└── lua/telescope/pickers.lua   # picker 实现
+#+end_example
+
+** 为什么有人能 "用明白" Neovim
+
+能真正配置好 Neovim 的人，通常具备以下背景之一:
+
+1. *Vim 老用户*: 已经理解 buffer/window/mode，只需学 Lua
+2. *程序员*: 理解 API, RPC, event loop 等概念，配置 Neovim 只是 "写代码"
+3. *Linux 重度用户*: 习惯阅读 man page 风格的文档，耐心好
+
+如果你三者都不是，*不要强求自己完全理解 Neovim*。用 LazyVim 或 AstroVim 是完全合理的选择，它们提供了开箱即用的配置，你可以在使用中慢慢学习。
+
+** 我的建议
+
+1. *不要从零配置*: 用 kickstart.nvim 或 LazyVim 作为起点
+2. *逐步替换*: 先用默认配置，遇到不满意的地方再改
+3. *读别人的配置*: GitHub 上搜 "neovim config"，看高 star 的配置如何组织
+4. *问社区*: Reddit 的 [[https://www.reddit.com/r/neovim/][r/neovim]], Neovim Discourse 都很活跃
+
+*最重要的是*: Neovim 不是目的，而是工具。如果配置 Neovim 花的时间比写代码还多，那就本末倒置了。用 LazyVim 或 VSCode 都行，能高效工作才是王道。
+
+* 附录: Neovim 架构源码位置
+
+根据官方源码结构 (=neovim/neovim= 仓库):
+
+#+begin_example
+neovim/
+├─ src/nvim/
+│  ├─ api/              # API Server (nvim_* 函数定义)
+│  ├─ eval/             # Vimscript 解释器
+│  ├─ event/            # 事件循环 (libuv 封装)
+│  ├─ lua/              # Lua 子系统
+│  │  ├─ executor.c     # Lua 执行器
+│  │  └─ vim.lua        # vim.* 命名空间实现
+│  ├─ msgpack_rpc/      # RPC 子系统
+│  │  ├─ channel.c      # 通道管理
+│  │  └─ server.c       # RPC 服务器
+│  ├─ os/               # 底层平台代码 (libuv)
+│  └─ tui/              # 内建的终端 UI
+├─ runtime/
+│  ├─ lua/vim/          # Lua 标准库 (vim.lsp, vim.treesitter 等)
+│  │  ├─ lsp.lua        # LSP 客户端
+│  │  ├─ treesitter.lua # Tree-sitter 集成
+│  │  └─ ...
+│  └─ doc/              # 文档 (:help)
+└─ cmake.deps/          # 第三方依赖 (LuaJIT, libuv, msgpack 等)
+#+end_example
+
+** 关键依赖库
+
+- *LuaJIT*: [[https://luajit.org/][官网]]，高性能 Lua 5.1 虚拟机 (带 JIT 编译)
+- *libuv*: [[https://libuv.org/][官网]]，跨平台异步 I/O 库 (事件循环)
+- *msgpack-c*: [[https://msgpack.org/][官网]]，高效的二进制序列化格式
+- *tree-sitter*: [[https://tree-sitter.github.io/][官网]]，增量语法解析库 (用于语法高亮/代码折叠)
+- *unibilium*: terminfo 库，处理终端能力
+- *libtermkey*: 终端按键解析
+
+这些依赖会在构建时自动下载到 =.deps/= 目录。
+
+** 为什么选择 LuaJIT 而非 Lua 5.4
+
+1. *性能*: LuaJIT 的 JIT 编译器比标准 Lua 解释器快 10-50 倍
+2. *FFI*: LuaJIT 的 FFI (Foreign Function Interface) 允许直接调用 C 函数，无需编写 C 绑定代码
+3. *兼容性*: LuaJIT 兼容 Lua 5.1 (Neovim 启动时是 Lua 5.1 生态)
+
+*注意*: Neovim 0.10+ 也支持编译为使用标准 Lua 5.1 (去除 JIT 依赖)，但性能会下降。
+
+* 总结
+
+Neovim 的架构是一个 *分层的、可扩展的* 设计:
+
+- *Core* 用 C 实现，保证性能和稳定性
+- *LuaJIT* 提供高性能脚本环境，直接调用 C API
+- *RPC* 允许外部进程 (GUI, 远程插件) 控制 Neovim
+- *多层 API* (Vim API, Nvim API, Lua API) 给用户灵活性
+
+但这种灵活性也带来了 *复杂性*: 新手需要理解多个概念层次，文档假设你有背景知识。
+
+*我的建议*:
+
+1. 如果你是 Vim 老用户，学习 Lua API，逐步迁移到 Neovim
+2. 如果你是新手，用 LazyVim 或 kickstart.nvim，慢慢学习
+3. 如果你只想高效编辑，VSCode + Vim 插件也是好选择
+
+Neovim 是工具，不是信仰。适合自己的才是最好的。

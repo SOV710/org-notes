@@ -1,0 +1,293 @@
+#+title: Emacs Essential Keybindings Reference
+#+author: SOV710
+#+date: 2025-12-21
+#+startup: showall
+#+options: toc:2 num:nil
+
+* Common
+
+- 取消
+  - =C-g=
+- 撤销
+  - =C-/=
+  - =C-_=
+  - =C-x u=
+- 关闭 Emacs
+  - =C-x C-c=
+
+* Emacs Motion
+
+- 前后左右: =C-n/p/b/f=
+- 词级移动:
+  - =M-f= 向后一词
+  - =M-b= 向前一词
+- 行级移动:
+  - =C-a= 移动到当前行的开头
+  - =C-e= 移动到当前行的末尾
+- 句级移动:
+  - =M-a= 移动到上一句的句首
+  - =M-e= 移动到下一句的句尾
+- 屏级移动:
+  - =C-v= 向后一屏
+  - =M-v= 向前一屏
+- 缓冲区级移动:
+  - =M-<= 缓冲区开头
+  - =M->= 缓冲区末尾
+
+- 接受数字前缀
+  - =C-u <number>= 通用
+  - =M-0= ... =M-9=
+  - =M--= (负号)
+
+- 重新定位光标: =C-l=
+  - 按一次: 光标行移动到屏幕中间
+  - 按第二次: 移动到顶部
+  - 按第三次: 移动到底部
+
+** 关于句子的定义
+
+Emacs 对 "句子" 的定义比较传统 (源自 TeX/1970s Emacs 风格):
+
+- 句子以 =. ! ?= 结尾
+- 后跟一个空格或换行 (通常至少两个空格在旧风格中更常见)
+
+* Windows
+
+- 分割窗口
+  - =C-x 2= 上下分割
+  - =C-x 3= 左右分割
+  - =C-x 4 f= 在新窗口中打开文件
+  - =C-x 4 b= 在新窗口中切换 buffer
+- 移动
+  - =C-x o= 移动到其他窗口
+  - =C-x O= 反方向移动到其他窗口
+- 调整大小
+  - =C-x ^= 垂直扩展窗口
+  - =C-x }= 向右扩展窗口
+  - =C-x {= 向左压缩窗口
+  - =C-x += 自动调整所有窗口大小为均衡比例
+- 关闭
+  - =C-x 0= 删除当前窗口
+  - =C-x 1= 删除其他所有窗口，只保留当前的
+  - =C-x 5 0= 删除当前 frame
+
+- 切换窗口布局
+  - =C-x r w= 保存当前窗口布局为一个寄存器
+  - =C-x r j= 调回一个窗口布局
+
+- Tab-bar
+  - =C-x t 2= 新建 tab
+  - =C-x t 0= 关闭 tab
+  - =C-x t o= 切换 tab
+- Frame
+  - =C-x 5 2= 新建 frame
+  - =C-x 5 0= 删除 frame
+  - =C-x 5 o= 切换到其他 frame
+  - =C-x C-c= 关闭根 emacs
+
+#+begin_quote
+分割界面产生的所有子区域都是 window。
+
+Tab 是一组 windows 的配置窗口，每个 Tab 都有自己的 window 布局。
+
+Frame 是 Emacs 中真正对应操作系统 GUI 窗口的实体。
+#+end_quote
+
+总而言之:
+
+- 同一个 buffer 可以同时出现在多个 window 中
+- 同一个 frame 内可以有多个 tab
+- 每个 tab 内可以有多个窗口
+- frame 才是系统级窗口
+
+* Inserting and Deleting
+
+- 字符级
+  - 插入
+    - =Tab= 自动缩进
+    - =C-q= 输入原始字节
+  - 删除
+    - =DEL= 删除 point 左侧 1 字符
+    - =C-d= 删除 point 右侧 1 字符
+- 单词级
+  - 插入
+    - =M-/= 自动补全前面的单词
+    - =C-y= 粘贴
+  - 删除
+    - =M-DEL= 删除 point 左侧 1 单词
+    - =M-d= 删除 point 右侧 1 单词
+- 句子级
+  - 删除
+    - =C-x DEL= 删除 point 左侧句子到前一个句子开头
+    - =M-k= 删除 point 右侧句子直到末尾
+- 行级
+  - 插入
+    - =RET= 插入新行
+    - =C-o= 在当前行下方打开一行，但保持光标不动
+    - =C-j= 插入新行并缩进 (deprecated)
+  - 删除
+    - =C-k= 删除 point 右侧的整行
+    - =M-0 C-k= 删除 point 左侧的整行
+    - =C-S-DEL= 删除整行
+  - 连接
+    - =M-^= 删除前一行的换行
+- 注释
+  - =M-;= 注释一行
+  - =C-x C-;= 注释 region
+
+- 粘贴
+  - =C-y= 粘贴 kill-ring 最新项
+  - =M-y= 继续往历史中翻，替换为更老的剪贴内容
+
+* Files
+
+- 打开文件
+  - =C-x C-f= 打开文件，若不存在则创建 buffer 并保存为该路径
+  - =C-x C-v= 打开另一个文件替换当前 buffer，不创建新 buffer
+- 保存文件
+  - =C-x C-s= 保存当前 buffer 到对应文件
+  - =C-x s= 保存所有已修改的 buffer
+  - =C-x C-w= 另存为，当前 buffer 写入新文件路径
+- 插入文件
+  - =C-x i= 将某文件的内容插入当前 buffer
+- 路径操作
+  - =C-x C-q= 将当前 buffer 置为只读或可写
+  - =M-x rename-file= 重命名磁盘上的文件
+  - =M-x delete-file= 删除磁盘上的文件
+
+* Buffer
+
+- 创建
+  - =C-x b NEWNAME= 创建一个新 buffer (不关联文件)
+  - =M-x scratch-buffer= 新建一个临时 scratch buffer
+- 切换
+  - =C-x b= 跳转到另一个 buffer (自动补全)
+  - =C-x 4 b= 在其他窗口显示 buffer
+  - =C-x 5 b= 在另一个 frame 打开 buffer
+- 关闭
+  - =C-x k= 关闭当前 buffer
+  - =C-x 4 0= 同时杀死窗口和 buffer
+- 查看
+  - =C-x C-b= 打开 buffer list
+
+* Modes
+
+Mode = 对 buffer 行为的一套规则集合:
+
+- 语法高亮
+- 自动缩进
+- 特定命令 (格式化、跳转、运行)
+- 特定键绑定
+- 特定变量 (如注释格式、tab 行为)
+- 特定外部工具 (LSP、编译器、解释器)
+
+每个 buffer 最多只能有一个 Major Mode，Major Mode 决定当前 buffer 的主要编辑功能，比如 keymap、高亮、缩进等。
+
+每个 buffer 可以开启任意多个 minor modes。Minor Mode 是 "可叠加功能插件"，它们像 "可插拔模块"。
+
+** Modes 如何被选择？
+
+- 根据文件拓展名 (=auto-mode-alist=)
+- 根据文件 shebang 判断
+- 手动配置规则切换
+- 手动切换 Mode
+
+#+begin_src elisp
+M-x python-mode
+M-x org-mode
+M-x fundamental-mode
+#+end_src
+
+** 如何配置各个 Modes 进行定制化？
+
+- 通过 Mode Hook
+
+底部的 Mode-line 显示和 Mode 相关的信息。
+
+** Mode 的继承关系
+
+- =prog-mode= 是所有 "编程语言模式" 的父类
+- =text-mode= 是普通文本模式的父类
+- =special-mode= 用于交互式缓冲区 (=*help*=, =*compilation*=, =*grep*=)
+
+* Search
+
+- 增量搜索
+  - =C-s= 向前搜索
+  - =C-r= 向后搜索
+- 正则搜索
+  - =C-M-s= 使用正则向前搜索
+  - =C-M-r= 使用正则向后搜索
+- 替换
+  - =M-%=  普通替换
+  - =C-M-%=  正则替换
+- Occur 列出所有行
+  - =M-s o= 输入搜索词，Emacs 在一个新 buffer 中列出所有匹配行
+  - (可类比为 emacs 中的 grep)
+  - =M-x multi-occur= 在多个 buffer 中 occur
+- 项目级搜索 (=project.el=)
+  - =C-x p s= 普通字符串搜索
+  - =C-x p g= 在整个项目中正则搜索
+
+* Keyboard Macros
+
+Keyboard macro 是 Emacs 中一个强大的功能，允许你录制一系列按键操作并重复执行。这对于批量编辑重复性任务非常有用。
+
+** 基本操作
+
+- 录制宏
+  - =F3= 或 =C-x (= 开始录制 keyboard macro
+  - =F4= 或 =C-x )= 结束录制
+- 执行宏
+  - =F4= 或 =C-x e= 执行最近录制的 macro
+  - 执行后继续按 =e= 可以重复执行
+  - =C-u <number> F4= 执行 macro N 次
+  - =C-u 0 F4= 重复执行直到出错
+
+** 高级功能
+
+- 追加到现有宏
+  - =C-u F3= 在上一个 macro 后追加新的按键序列
+  - =C-u C-u F3= 追加但不重新执行
+- 宏管理
+  - =C-x C-k n= 给 macro 命名 (可通过 =M-x= 调用)
+  - =M-x insert-kbd-macro= 将 macro 保存为 Elisp 代码
+  - =C-x C-k b= 将 macro 绑定到快捷键
+- 应用到区域
+  - =C-x C-k r= 对 region 中每一行执行 macro
+
+根据 [[https://www.gnu.org/software/emacs/manual/html_node/emacs/Keyboard-Macros.html][GNU Emacs Manual]]，keyboard macro 的定义在录制时就会被执行一次，所以你可以立即看到效果。这比在脑中构想命令序列要直观得多。
+
+* Help
+
+| 按键         | 名称 (概念)                          | 调用函数                                              | 描述                                               |
+|--------------+-------------------------------------+------------------------------------------------------+----------------------------------------------------|
+| *=C-h=* / *=F1=* | Help 前缀键                          | =help-command=                                         | 所有 help 命令的前缀 (Gateway to Elisp documentation) |
+| *=C-h a=*      | Apropos (按名称搜索命令)               | =apropos-command=                                      | 模糊搜索包含关键字的命令/函数名字                        |
+| *=C-h b=*      | Describe Key Bindings               | =describe-bindings=                                    | 列出当前所有可用的键绑定                                |
+| *=C-h c=*      | Describe Key (简版)                 | =describe-key-briefly=                                 | 显示某个快捷键的命令 (简短说明)                          |
+| *=C-h d=*      | Apropos Documentation               | =apropos-documentation=                                | 按文档内容模糊搜索命令/变量/函数                         |
+| *=C-h f=*      | Describe Function                   | =describe-function=                                    | 查看某个函数的文档与源代码位置 (若可用)                   |
+| *=C-h k=*      | Describe Key                        | =describe-key=                                         | 查看某快捷键的完整说明 (推荐)                           |
+| *=C-h m=*      | Describe Modes                      | =describe-mode=                                        | 查看当前 buffer 的 major 与 minor modes 文档          |
+| *=C-h n=*      | 查看 News                           | =view-emacs-news=                                      | 查看 Emacs 每个版本的 NEWS 文档                       |
+| *=C-h p=*      | 查找包 (features)                    | =finder-by-keyword=                                    | 按功能分类浏览 Emacs 内置包                            |
+| *=C-h s=*      | Describe Syntax                     | =describe-syntax=                                      | 显示当前 major-mode 的语法分类表 (syntax table)        |
+| *=C-h t=*      | Emacs Tutorial                      | =help-with-tutorial=                                   | 官方 Emacs 新手教程 (强烈建议所有人试一次)               |
+| *=C-h v=*      | Describe Variable                   | =describe-variable=                                    | 查看变量的文档、当前值、是否 buffer-local                |
+| *=C-h w=*      | Where-is                            | =where-is=                                             | 命令对应的按键是什么? (反向查找快捷键)                    |
+| *=C-h .=*      | Describe Symbol                     | =helpful-at-point= (若装 helpful) 或 =display-local-help= | 查看光标处 symbol 的帮助 (行为依实现而定)                |
+| *=C-h e=*      | 显示 =*Messages*=                     | =view-echo-area-messages=                              | 查看 echo-area 历史 (尤其在报错时有用)                  |
+| *=C-h i=*      | Info 系统                           | =info=                                                 | 进入 GNU Info 文档系统 (手册体系)                      |
+| *=C-h r=*      | Emacs Manual                        | =info-emacs-manual=                                    | 直接打开《Emacs 手册》                                |
+| *=C-h g=*      | Describe GNU General Public License | =describe-gnu-project=                                 | 查看 GNU Emacs 的 GPL 与项目历史                      |
+| *=C-h C-f=*    | EMACS FAQ                           | =view-emacs-FAQ=                                       | 查看 Emacs FAQ 文档                                 |
+| *=C-h C-k=*    | Emacs Command Index                 | =Info-goto-emacs-command-node=                         | 跳到 "按命令名索引" 的帮助页面                          |
+| *=C-h C-a=*    | Emacs About                         | =about-emacs=                                          | Emacs 关于页面                                      |
+
+** 重要快捷键优先级
+
+- =C-h k= 是最重要的
+- =C-h f= / =C-h v= 是第二重要的
+- =C-h m= 查 modes 行为解释很爽
+- =C-h e= 查 Messages debug 时非常常用

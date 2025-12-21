@@ -1,0 +1,10 @@
+#+title: Formatter
+
+C/C++: clang-format
+C#: csharpier
+Python: ruff
+JS/TS: prettier
+Go: gofumpt
+Rust (deprecated)
+Lua: stylua
+Bash: shfmt

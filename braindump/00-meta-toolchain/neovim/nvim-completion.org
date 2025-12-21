@@ -1,0 +1,675 @@
+#+title: Neovim Completion Systems: A Deep Dive into blink.cmp
+#+author: SOV710
+#+date: 2025-12-21
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 补全插件的选择: blink.cmp vs nvim-cmp
+
+目前的方案有 nvim-cmp 和 blink.cmp，这两者的对比和选型就没必要了，由于我现在用的是 blink.cmp 所以下面讲述的都是 blink.cmp 的配置。
+
+** 为什么选择 blink.cmp？
+
+blink.cmp 是一个相对较新的补全插件 (2024 年开始流行)，相比 nvim-cmp 有以下特点:
+
+- *性能优势*: 每次按键的开销仅 *0.5-4ms* (异步, 单核)，而 nvim-cmp 默认有 60ms 的 debounce，处理时还有 2-50ms 的卡顿
+- *开箱即用*: 内置 LSP, buffer, path, snippets 等多个 source，无需额外配置
+- *Rust 实现的模糊匹配器*: 使用 SIMD 加速，性能约为 fzf 的 6 倍，并且支持 *拼写容错* (typo resistance)
+- *Frecency 评分*: 结合使用频率 (frequency) 和最近使用时间 (recency) 对补全项评分，更智能地排序
+- *被主流配置采纳*: kickstart.nvim 和 LazyVim 都已加入 blink.cmp 支持
+
+值得注意的是，blink.cmp 在 GitHub 上的 star 数增长迅速 (截至 2025 年 12 月已超过 5,400 star)，社区活跃度很高。
+
+** nvim-cmp 的现状
+
+nvim-cmp 依然是成熟稳定的选择:
+
+- 生态更完善，有大量第三方 source 插件
+- 配置灵活性更高
+- 社区文档和教程更丰富
+
+但性能瓶颈在大型项目中会比较明显。有个 fork 叫 magazine.nvim 包含了许多性能补丁，部分已合并回 nvim-cmp 主线。
+
+* 自动补全负责了什么任务？
+
+包括 Ex 命令的补全在内的，基于语法的补全。
+
+注意: 是基于语法的补全，其实就是基于 LSP 的补全，别跟 AI 弄混; 另外既然是基于 LSP 补全，那么自动补全之前请配好 LSP，详见 (放一篇文章链接)。
+
+** LSP 配置前置要求
+
+在配置 blink.cmp 之前，*必须先配置好 LSP*。基本流程如下:
+
+1. 安装 =nvim-lspconfig= 插件
+2. 安装需要的 Language Server (如 =lua_ls=, =rust_analyzer=, =clangd= 等)
+3. 在 Neovim 配置中启用 LSP
+
+*** Neovim 0.11+ 的新 API
+
+从 Neovim 0.11 开始，推荐使用新的原生 LSP API:
+
+#+begin_src lua
+-- 创建 LSP 配置文件: ~/.config/nvim/lsp/<name>.lua
+-- 例如 ~/.config/nvim/lsp/lua_ls.lua
+return {
+  cmd = { 'lua-language-server' },
+  root_markers = { '.luarc.json', '.luarc.jsonc', '.git' },
+}
+#+end_src
+
+然后通过 =vim.lsp.enable()= 启用:
+
+#+begin_src lua
+vim.lsp.enable('lua_ls')
+vim.lsp.enable('rust_analyzer')
+#+end_src
+
+*** Neovim 0.10 及更早版本
+
+使用传统的 =lspconfig.setup()= 方式:
+
+#+begin_src lua
+local lspconfig = require('lspconfig')
+
+lspconfig.lua_ls.setup({})
+lspconfig.rust_analyzer.setup({})
+#+end_src
+
+*** 与 blink.cmp 集成
+
+配置 LSP 时需要告知 capabilities:
+
+#+begin_src lua
+local capabilities = require('blink.cmp').get_lsp_capabilities()
+
+lspconfig.lua_ls.setup({
+  capabilities = capabilities,
+})
+#+end_src
+
+这样 LSP 就知道 Neovim 支持 blink.cmp 提供的补全特性 (如 snippets, label details 等)。
+
+** 补全的来源 (Sources)
+
+blink.cmp 支持多种补全来源:
+
+- *lsp*: 从 Language Server 获取 (函数, 变量, 类型等)
+- *buffer*: 从当前和其他打开的 buffer 中提取关键字
+- *path*: 文件路径补全
+- *snippets*: 代码片段 (需要 =friendly-snippets= 或自定义 snippets)
+- *cmdline*: Ex 命令补全 (=:=, =/=, =?= 模式)
+
+可以通过配置控制每个 filetype 使用哪些 source:
+
+#+begin_src lua
+sources = {
+  default = { 'lsp', 'path', 'snippets', 'buffer' },
+  per_filetype = {
+    lua = { 'lsp', 'path', 'lazydev' },  -- 为 Lua 添加 lazydev source
+    markdown = { 'buffer', 'path' },     -- Markdown 只用 buffer 和 path
+  },
+}
+#+end_src
+
+* 如何进行补全的？
+
+整个补全的机制是这样的:
+
+首先 blink 会从 LSP 那里得到一系列关键字 (keywords)，当用户输入字符时，nvim 将其和 keywords 进行模糊匹配。
+
+需要注意的是这里有一个可配置的变量 =range=，准确来说是 =completion.keyword.range=，其值为 ='prefix'= 或 ='full'=，可以决定 nvim 是将光标前的字符进行匹配，还是将整个字符进行匹配。举个例子，假设 =|= 是用户的光标，而现在有个 nvim 中有 =foo|bar=，那么 ='prefix'= 是将 =foo= 进行匹配，而 ='full'= 是将 =foobar= 进行匹配。
+
+** 关键字范围的影响
+
+=completion.keyword.range= 的选择会显著影响补全体验:
+
+- ='prefix'= (默认): 只匹配光标前的文本
+  - 适合大多数场景
+  - 当你在已有单词中间编辑时，不会因为后面的字符干扰补全
+
+- ='full'=: 匹配整个单词
+  - 适合重构场景 (rename 时补全整个标识符)
+  - 在某些语言中 (如 Lisp) 更符合习惯
+
+示例:
+
+#+begin_example
+光标位置: getUserN|ame
+candidates: getUserName, getUserNickname, getUserNotification
+
+range = 'prefix':  匹配 "getUserN"
+  → getUserName, getUserNickname, getUserNotification (全部匹配)
+
+range = 'full':    匹配 "getUserName"
+  → getUserName (精确匹配优先), getUserNickname (部分匹配)
+#+end_example
+
+然后是 blink 会控制用户何时显示补全菜单，并从源完成请求触发 (trigger)。
+
+需要提及一个概念，LSP 会将某些字符列为触发字符，常见的比如 =. /=。
+
+** 补全菜单的触发条件
+
+*** 显示补全菜单
+
+- =completion.trigger.show_on_keyword=: 在输入关键字时就显示，比如，我切换进 Insert 模式，输入特定字符时 (特定字符指字母, 短横线 =-= 和下划线 =_=)，显示补全菜单
+- =completion.trigger.show_on_trigger_character=: 输入触发字符后显示，触发字符由 LSP 给出，因语言而异，常见的触发字符有 =.=, =/= 这些; 比如说: 输入 =os.=，当我输入 =.= 的时候，显示补全菜单
+- =completion.trigger.show_on_insert_on_trigger_character=: 在触发字符后面切换为 Insert 模式后显示
+- =completion.trigger.show_on_accept_on_trigger_character=: 在接受补全后，在补全里还有的触发字符后显示，最常见的如路径，=foo/= 这些是补全后在末尾还带着触发字符的
+
+以上均默认为 =true=，并且后三者都有独立的对触发字符的屏蔽组。
+
+*** 触发字符的语言差异
+
+不同语言的 LSP 会定义不同的触发字符:
+
+| 语言         | 常见触发字符           | 说明                       |
+|------------+----------------------+----------------------------|
+| C/C++      | =.=, =->=, =::=        | 成员访问, 作用域解析           |
+| Python     | =.=, =/=               | 属性访问, 路径补全             |
+| Rust       | =.=, =::=, =/=         | 方法调用, 模块路径, 文件路径     |
+| JavaScript | =.=, =/=, =@=          | 属性, 路径, JSDoc 标签        |
+| Go         | =.=, =/=               | 成员访问, import 路径         |
+| LaTeX      =\=, ={=               | 命令, 环境开始               |
+
+可以通过配置屏蔽某些触发字符:
+
+#+begin_src lua
+completion = {
+  trigger = {
+    show_on_blocked_trigger_characters = { ' ', '\n', '\t' },
+  },
+}
+#+end_src
+
+*** 是否预选中菜单中第一个选项
+
+- =completion.trigger.prefetch_on_insert=
+
+这个选项控制是否在进入 Insert 模式时就预先选中第一个补全项。
+
+为了配置这个鸟菜单有 14 个变量，有点恐怖。
+
+** 补全菜单的完整配置
+
+确实，=completion.menu= 和 =completion.list= 的配置项非常多。核心配置包括:
+
+*** 菜单行为
+
+#+begin_src lua
+completion = {
+  menu = {
+    enabled = true,
+    min_width = 15,
+    max_height = 10,
+    border = 'rounded',           -- 边框样式
+    direction_priority = { 's', 'n' },  -- 优先向下显示
+    auto_show = true,             -- 自动显示菜单
+
+    -- 绘制配置
+    draw = {
+      columns = {
+        { "kind_icon" },
+        { "label", "label_description", gap = 1 },
+      },
+      treesitter = { 'lsp' },     -- 对 LSP 补全项使用 treesitter 高亮
+    },
+  },
+
+  list = {
+    selection = {
+      preselect = true,           -- 预选第一项
+      auto_insert = true,         -- 选中时自动插入
+    },
+    cycle = {
+      from_bottom = true,         -- 在底部时按 next 循环到顶部
+      from_top = true,            -- 在顶部时按 prev 循环到底部
+    },
+  },
+}
+#+end_src
+
+*** 文档窗口
+
+#+begin_src lua
+completion = {
+  documentation = {
+    auto_show = true,             -- 自动显示文档
+    auto_show_delay_ms = 200,     -- 延迟 200ms 显示
+    window = {
+      border = 'rounded',
+      max_width = 80,
+      max_height = 20,
+    },
+  },
+}
+#+end_src
+
+*** Ghost Text (幽灵文本)
+
+Ghost text 会在光标后以虚拟文本形式显示当前选中补全项的内容:
+
+#+begin_src lua
+completion = {
+  ghost_text = {
+    enabled = true,
+  },
+}
+#+end_src
+
+效果类似于 GitHub Copilot 的内联建议，但这是基于普通补全的。
+
+* 怎么自定义快捷键？
+
+我觉得这才是所有人最关注的点……
+
+** 预设 (Preset)
+
+开发者准备了三种配置好的预设，开箱即用:
+
+- =default=: =Ctrl-y= 补全
+- =super-tab=: =Tab= 补全
+- =enter=: =Enter= 补全 (需谨慎，会影响换行)
+
+*** default preset 的快捷键
+
+#+begin_example
+<C-space>: 手动触发补全
+<C-e>:     取消补全
+<C-y>:     接受当前项 (确认补全)
+<C-n>:     下一项
+<C-p>:     上一项
+<C-b>:     文档向上滚动
+<C-f>:     文档向下滚动
+#+end_example
+
+*** super-tab preset 的快捷键
+
+#+begin_example
+<Tab>:     插入下一项 / 如果有 snippet, 跳到下一个占位符
+<S-Tab>:   插入上一项 / 如果有 snippet, 跳到上一个占位符
+<C-space>: 手动触发补全
+<C-e>:     取消补全
+#+end_example
+
+这是很多从 VSCode 转过来的用户习惯的方案。
+
+** 自定义快捷键
+
+如果预设不满足需求，可以完全自定义:
+
+#+begin_src lua
+keymap = {
+  preset = 'none',  -- 禁用预设
+
+  -- 手动触发补全
+  ['<C-space>'] = { 'show', 'hide' },
+
+  -- 接受补全
+  ['<CR>'] = { 'accept', 'fallback' },
+  ['<C-y>'] = { 'select_and_accept' },
+
+  -- 导航
+  ['<Tab>'] = { 'select_next', 'fallback' },
+  ['<S-Tab>'] = { 'select_prev', 'fallback' },
+
+  -- 文档滚动
+  ['<C-d>'] = { 'scroll_documentation_down' },
+  ['<C-u>'] = { 'scroll_documentation_up' },
+
+  -- Snippet 跳转
+  ['<C-j>'] = { 'snippet_forward' },
+  ['<C-k>'] = { 'snippet_backward' },
+}
+#+end_src
+
+*** 快捷键命令说明
+
+常用的 keymap 命令:
+
+- =show=: 显示补全菜单
+- =hide=: 隐藏补全菜单
+- =accept=: 接受当前选中项
+- =select_and_accept=: 选中并接受 (如果没选中则选中第一项再接受)
+- =select_next= / =select_prev=: 选择下 / 上一项
+- =insert_next= / =insert_prev=: 插入下 / 上一项 (会触发补全)
+- =scroll_documentation_up= / =down=: 滚动文档窗口
+- =snippet_forward= / =backward=: Snippet 占位符跳转
+- =fallback=: 执行原本的按键行为 (非常重要！)
+
+*** fallback 的重要性
+
+=fallback= 确保在补全菜单未显示时，按键保持原有行为:
+
+#+begin_src lua
+['<Tab>'] = { 'select_next', 'fallback' }
+-- 如果补全菜单显示: 选择下一项
+-- 如果补全菜单未显示: 执行原本的 Tab (插入 tab 或缩进)
+#+end_src
+
+没有 =fallback=，这些按键在补全菜单不存在时会失效。
+
+** 条件化的快捷键
+
+可以使用函数来实现更复杂的逻辑:
+
+#+begin_src lua
+keymap = {
+  ['<Tab>'] = {
+    function(cmp)
+      -- 如果有选中项, 接受它
+      if cmp.is_visible() then
+        return cmp.accept()
+      end
+
+      -- 如果光标前有字符, 触发补全
+      local col = vim.api.nvim_win_get_cursor(0)[2]
+      if col > 0 then
+        local line = vim.api.nvim_get_current_line()
+        if line:sub(col, col):match('%S') then
+          return cmp.show()
+        end
+      end
+
+      -- 否则插入 tab
+      return false  -- 继续执行下一个命令 (fallback)
+    end,
+    'fallback',
+  },
+}
+#+end_src
+
+然后是配置补全菜单，令人难绷的是 =completion.list.selection= 中也有一个 =preselect=。
+
+** preselect 的多重含义
+
+确实容易混淆，这里有两个不同的 =preselect=:
+
+1. =completion.trigger.prefetch_on_insert=: 控制进入 Insert 模式时是否 *预加载* 补全
+2. =completion.list.selection.preselect=: 控制补全菜单显示时是否 *预选中* 第一项
+
+示例:
+
+#+begin_src lua
+completion = {
+  trigger = {
+    prefetch_on_insert = false,  -- 进入 Insert 模式不预加载
+  },
+  list = {
+    selection = {
+      preselect = true,          -- 但菜单显示时预选第一项
+      auto_insert = false,       -- 选中但不自动插入 (需手动确认)
+    },
+  },
+}
+#+end_src
+
+推荐配置:
+
+- 如果习惯 VSCode 风格: =preselect = true, auto_insert = false=
+- 如果习惯 IntelliJ 风格: =preselect = true, auto_insert = true=
+- 如果习惯传统 Vim: =preselect = false, auto_insert = false=
+
+* 命令行补全
+
+当你输入 Ex 命令的时候同样会进行补全。示例配置:
+
+#+begin_src lua
+cmdline = {
+  keymap = { preset = 'inherit' },
+  completion = { menu = { auto_show = true } },
+},
+#+end_src
+
+其中 =preset = 'inherit'= 表示继承默认 preset。
+
+** cmdline 的特殊性
+
+命令行模式 (=:=, =/=, =?=) 的补全行为与 Insert 模式不同:
+
+- 补全来源是 =cmdline= source，而非 =lsp=
+- 支持 Ex 命令, 选项, 文件路径等
+- 可以配置不同的快捷键
+
+*** 独立配置 cmdline keymap
+
+#+begin_src lua
+cmdline = {
+  keymap = {
+    preset = 'none',
+    ['<Tab>'] = { 'select_next', 'fallback' },
+    ['<S-Tab>'] = { 'select_prev', 'fallback' },
+    ['<CR>'] = { 'accept_and_enter' },  -- 接受并执行命令
+  },
+  completion = {
+    menu = {
+      auto_show = true,
+      border = 'single',
+    },
+  },
+}
+#+end_src
+
+*** cmdline 补全的高级用法
+
+可以为不同的 cmdline 模式设置不同的 source:
+
+#+begin_src lua
+sources = {
+  cmdline = {
+    [':'] = { 'cmdline' },           -- Ex 命令
+    ['/'] = { 'buffer' },            -- 搜索使用 buffer source
+    ['?'] = { 'buffer' },
+    ['@'] = { 'cmdline' },           -- 寄存器
+  },
+}
+#+end_src
+
+** 禁用某些命令的补全
+
+在某些场景下可能不希望补全 (如 =:substitute= 时):
+
+#+begin_src lua
+sources = {
+  providers = {
+    buffer = {
+      -- 在 Ex 命令中禁用 buffer source
+      enable_in_ex_commands = false,
+    },
+  },
+}
+#+end_src
+
+注意: 启用 =enable_in_ex_commands= 会暂时禁用 Neovim 的 =inccommand= 特性 (实时预览替换效果)，这是已知的 redraw 问题。
+
+* 注意: neocmake 目前的支持还是依托史, 需要更多的 snippets 支持
+
+** CMake 项目的补全困境
+
+确实，CMake 的 LSP 支持一直比较薄弱:
+
+- =neocmake= (CMake LSP) 功能有限，主要提供语法检查
+- 缺少函数, 变量, 宏的智能补全
+- Snippet 支持不足
+
+*** 当前的解决方案
+
+1. *使用 snippet 插件*
+
+   配置 CMake 专用的 snippets:
+
+   #+begin_src lua
+   -- ~/.config/nvim/snippets/cmake.json
+   {
+     "cmake_minimum_required": {
+       "prefix": "cmr",
+       "body": [
+         "cmake_minimum_required(VERSION ${1:3.10})",
+         "$0"
+       ]
+     },
+     "project": {
+       "prefix": "proj",
+       "body": [
+         "project(${1:ProjectName}",
+         "  VERSION ${2:1.0}",
+         "  LANGUAGES ${3:CXX}",
+         ")",
+         "$0"
+       ]
+     }
+   }
+   #+end_src
+
+2. *buffer source 作为后备*
+
+   在 CMakeLists.txt 中，buffer source 可以提取已有的变量名:
+
+   #+begin_src lua
+   sources = {
+     per_filetype = {
+       cmake = { 'lsp', 'snippets', 'buffer', 'path' },
+     },
+   }
+   #+end_src
+
+3. *社区期待 cmake-language-server 改进*
+
+   [[https://github.com/regen100/cmake-language-server][cmake-language-server]] 项目在持续改进，但距离成熟还需时间。
+
+*** 替代工具
+
+- *CMake Tools* (VSCode extension): 如果你在 Neovim 中使用 VSCode 的 LSP bridge
+- *手动维护 snippet 库*: 针对常用的 CMake 模式创建 snippet
+
+** 其他语言的 LSP 成熟度
+
+作为对比，各语言 LSP 的成熟度:
+
+| 语言         | LSP 名称           | 成熟度 | 补全质量      |
+|------------+--------------------+--------+---------------|
+| Rust       | rust_analyzer      | ★★★★★  | 极佳 (类型推导) |
+| TypeScript | tsserver           | ★★★★★  | 极佳 (智能感知) |
+| Python     | pyright / pylsp    | ★★★★☆  | 很好          |
+| Go         | gopls              | ★★★★★  | 极佳          |
+| C/C++      | clangd             | ★★★★☆  | 很好          |
+| Lua        | lua_ls             | ★★★★☆  | 很好 (Neovim) |
+| CMake      | neocmake           | ★★☆☆☆  | 基础          |
+| Bash       | bash-language-srv  | ★★★☆☆  | 一般          |
+
+Rust 和 TypeScript 的 LSP 是目前补全体验最好的，CMake 确实还有很大改进空间。
+
+* 总结与最佳实践
+
+** 推荐的基础配置
+
+对于大多数用户，推荐的 blink.cmp 配置:
+
+#+begin_src lua
+{
+  'saghen/blink.cmp',
+  version = '1.*',
+  dependencies = { 'rafamadriz/friendly-snippets' },
+
+  opts = {
+    keymap = { preset = 'default' },  -- 或 'super-tab'
+
+    completion = {
+      accept = { auto_brackets = { enabled = true } },
+      menu = { auto_show = true },
+      documentation = { auto_show = true, auto_show_delay_ms = 200 },
+      ghost_text = { enabled = false },  -- 看个人喜好
+    },
+
+    sources = {
+      default = { 'lsp', 'path', 'snippets', 'buffer' },
+    },
+  },
+}
+#+end_src
+
+** 性能优化建议
+
+1. *大型项目中限制 buffer source*
+
+   #+begin_src lua
+   sources = {
+     providers = {
+       buffer = {
+         max_items = 5,           -- 限制 buffer 补全数量
+         min_keyword_length = 3,  -- 至少 3 个字符才触发
+       },
+     },
+   }
+   #+end_src
+
+2. *禁用不需要的 source*
+
+   #+begin_src lua
+   sources = {
+     per_filetype = {
+       gitcommit = { 'buffer' },  -- Git commit 只需要 buffer
+       markdown = { 'buffer', 'path' },  -- Markdown 不需要 LSP
+     },
+   }
+   #+end_src
+
+3. *调整触发延迟*
+
+   #+begin_src lua
+   completion = {
+     trigger = {
+       show_on_keyword = false,  -- 禁用自动触发
+       -- 只在按 <C-space> 时手动触发
+     },
+   }
+   #+end_src
+
+** 故障排查
+
+*** 补全不显示
+
+1. 检查 LSP 是否已连接: =:LspInfo=
+2. 检查 blink.cmp 是否加载: =:lua =require('blink.cmp')=
+3. 查看日志: =:lua vim.lsp.set_log_level('debug')= 然后 =:LspLog=
+
+*** 补全很慢
+
+1. 检查是否是 buffer source 的问题 (buffer 过大)
+2. 尝试使用 Lua 实现的 fuzzy matcher: =fuzzy = { implementation = 'lua' }=
+3. 限制补全项数量: =completion.list.max_items = 20=
+
+*** 快捷键不工作
+
+1. 检查是否有其他插件映射了相同按键
+2. 尝试 =:verbose map <Tab>= 查看按键绑定
+3. 确保 =fallback= 正确配置
+
+** 从 nvim-cmp 迁移
+
+如果你之前用 nvim-cmp，迁移步骤:
+
+1. 移除 nvim-cmp 及其 source 插件
+2. 安装 blink.cmp
+3. 修改 LSP capabilities:
+
+   #+begin_src lua
+   -- 旧的 nvim-cmp
+   local capabilities = require('cmp_nvim_lsp').default_capabilities()
+
+   -- 新的 blink.cmp
+   local capabilities = require('blink.cmp').get_lsp_capabilities()
+   #+end_src
+
+4. 调整快捷键 (blink.cmp 的命令名称不同)
+
+** 未来展望
+
+blink.cmp 的发展方向:
+
+- 更多内置 source (如 Git commit, Copilot 集成)
+- 更强的 fuzzy matching 算法
+- 更好的 snippet 引擎集成
+- 移动端 (Termux / iSH) 性能优化
+
+社区活跃，值得长期关注。如果遇到问题，可以到 [[https://github.com/saghen/blink.cmp/issues][GitHub Issues]] 反馈，开发者响应很快。

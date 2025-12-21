@@ -1,0 +1,1060 @@
+#+title: Neovim DAP API Reference: Deep Dive into Debug Adapter Protocol
+#+author: SOV710
+#+date: 2025-12-21
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 什么是 DAP (Debug Adapter Protocol)
+
+Debug Adapter Protocol 是 Microsoft 在 2016 年提出的调试协议标准，类似于 Language Server Protocol (LSP) 对语言服务器的标准化，DAP 标准化了编辑器与调试器之间的通信方式。
+
+** 为什么需要 DAP
+
+在 DAP 出现之前，每个编辑器/IDE 都需要为每种语言的调试器单独实现集成:
+
+#+begin_example
+Vim × GDB → 需要 vim-gdb 插件
+Emacs × GDB → 需要 gdb-mi.el
+VSCode × GDB → 需要 C++ extension
+VSCode × lldb → 又需要单独的适配
+
+N 个编辑器 × M 个调试器 = N×M 种实现
+#+end_example
+
+DAP 引入了 *调试适配器* (Debug Adapter) 作为中间层:
+
+#+begin_example
+┌─────────────┐          ┌───────────────┐          ┌──────────┐          ┌──────────┐
+│   Neovim    │◄────────►│ Debug Adapter │◄────────►│ Debugger │◄────────►│ Debugee  │
+│  (nvim-dap) │   DAP    │  (codelldb)   │  Native  │  (lldb)  │  ptrace  │ (your app)│
+└─────────────┘          └───────────────┘          └──────────┘          └──────────┘
+     客户端                   适配器                    调试器               被调试程序
+#+end_example
+
+有了 DAP，实现变为:
+
+- N 个编辑器各自实现一次 DAP 客户端
+- M 个调试器各自提供一个 DAP 适配器
+- 总复杂度: N + M (而非 N × M)
+
+** nvim-dap 的角色
+
+nvim-dap 是 Neovim 的 *DAP 客户端实现*，它:
+
+1. *不是调试器*: 它自己不能调试任何程序
+2. *不自动配置*: 你需要手动为每种语言配置对应的 debug adapter
+3. *提供 API*: 暴露 Lua API 供用户和插件调用
+
+这就是为什么安装 nvim-dap 后什么都不会发生——你还需要:
+
+1. 安装语言对应的 debug adapter (如 =codelldb=, =debugpy=, =delve=)
+2. 配置 =dap.adapters.*= 告诉 nvim-dap 如何启动适配器
+3. 配置 =dap.configurations.*= 定义如何启动/附加到程序
+
+* Lua module: dap
+
+** Session 管理: 启动和控制调试会话
+
+*** =continue({opts})=
+
+=continue()= 是 *用户调试的主入口*，行为取决于当前状态:
+
+*当没有活跃会话时*:
+
+1. 查找当前文件类型的配置 (=dap.configurations.<filetype>=)
+2. 如果有多个配置，提示用户选择
+3. 调用 =dap.run()= 启动选中的配置
+
+*当有活跃会话且线程已停止时* (如命中断点):
+
+- 恢复程序执行 (相当于 GDB 的 =continue= 命令)
+- 支持 =[count]= 参数: =:lua require'dap'.continue(5)= 会连续恢复 5 次
+
+*参数*:
+
+- =opts.new=: =boolean=, 强制启动新会话 (即使已有会话存在)
+
+#+begin_src lua
+-- 最常见用法: 开始调试或继续执行
+require'dap'.continue()
+
+-- 强制启动新会话 (用于调试多个进程)
+require'dap'.continue({new = true})
+#+end_src
+
+*典型工作流*:
+
+#+begin_example
+1. 用户按下 <F5> (映射到 dap.continue)
+2. nvim-dap 检测到没有活跃会话
+3. 读取 dap.configurations.python (假设当前文件是 .py)
+4. 显示配置选择器: "Launch file", "Attach to process"
+5. 用户选择 "Launch file"
+6. nvim-dap 启动 debugpy 适配器
+7. 发送 launch 请求到适配器
+8. 程序开始运行，遇到断点后停止
+9. 用户再次按 <F5>
+10. nvim-dap 发送 continue 请求，程序继续运行
+#+end_example
+
+*** =run({config}, {opts})=
+
+=run()= 是底层 API，直接运行指定配置。大部分用户不需要直接调用，但对于动态生成配置的插件很有用 (如 neotest 动态生成测试用例的调试配置)。
+
+*如果同名会话已存在，会重启该会话*。
+
+*参数*:
+
+- =config=: 配置表 (见 |dap-configuration|)
+- =opts.new=: 强制启动新会话
+
+#+begin_src lua
+-- 动态生成配置并运行 (用于测试框架集成)
+local config = {
+  type = 'python',
+  request = 'launch',
+  name = 'Test: test_foo',
+  program = '${file}',
+  args = {'-m', 'pytest', 'tests/test_foo.py::test_bar'},
+}
+require'dap'.run(config)
+#+end_src
+
+*** =run_last()=
+
+重新运行上次执行的配置。在反复测试同一场景时很有用。
+
+#+begin_src lua
+-- Keymap 示例
+vim.keymap.set('n', '<F6>', function() require'dap'.run_last() end)
+#+end_src
+
+*** =restart({config})=
+
+重启当前会话。如果没有活跃会话，什么都不做。
+
+*参数*:
+
+- =config=: 可选的新配置，默认使用当前会话的配置
+
+#+begin_src lua
+-- 使用原配置重启
+require'dap'.restart()
+
+-- 使用修改后的配置重启 (如改变命令行参数)
+local new_config = vim.deepcopy(current_config)
+new_config.args = {'--verbose'}
+require'dap'.restart(new_config)
+#+end_src
+
+*** =terminate(opts)=
+
+终止调试会话。这是 *优雅关闭* 的方式。
+
+*行为*:
+
+1. 如果适配器支持 =terminateRequest= 能力: 发送 terminate 请求
+2. 否则: 回退到 =disconnect= 并设置 =terminateDebugee = true=
+
+*参数*:
+
+- =terminate_args=: 传递给 terminate 请求
+  - =restart=: =boolean?= 终止后重启
+
+- =disconnect_args=: 传递给 disconnect 请求 (回退时)
+  - =restart=: =boolean?=
+  - =terminateDebugee=: =boolean?= 终止被调试程序
+  - =suspendDebugee=: =boolean?= 挂起被调试程序
+
+- =on_done=: =function= 完成时回调
+
+- =all=: =boolean= 终止所有根会话 (默认 =false=)
+
+- =hierarchy=: =boolean= 终止当前会话及其父子会话
+
+#+begin_src lua
+-- 简单终止
+require'dap'.terminate()
+
+-- 终止所有会话
+require'dap'.terminate({all = true})
+
+-- 终止并执行清理
+require'dap'.terminate({
+  on_done = function()
+    print('调试会话已结束')
+  end
+})
+#+end_src
+
+*Session Hierarchy 说明*:
+
+某些调试场景会创建 *父子会话* (parent-child sessions):
+
+- 父会话启动主进程
+- 子会话附加到子进程 (如 fork 出的进程)
+
+使用 =hierarchy = true= 可以一次性终止整个会话树。
+
+** 断点管理
+
+*** =set_breakpoint({condition}, {hit_condition}, {log_message})=
+
+设置断点，*覆盖* 当前行的已有断点 (如果存在)。
+
+*参数*:
+
+- =condition=: 条件表达式 (如 =x > 10=)
+- =hit_condition=: 命中次数条件 (如 =">5"= 表示第 6 次命中时才停止)
+- =log_message=: 日志消息，设置后断点变为 *log point* (不停止，只打印)
+
+#+begin_src lua
+-- 简单断点
+require'dap'.set_breakpoint()
+
+-- 条件断点
+require'dap'.set_breakpoint('i == 42', nil, nil)
+
+-- 命中次数断点 (循环中第 100 次才停)
+require'dap'.set_breakpoint(nil, '100', nil)
+
+-- Log point (用于调试但不想停下来)
+require'dap'.set_breakpoint(nil, nil, 'Value of x: {x}')
+#+end_src
+
+*Log message 变量插值*:
+
+使用 ={variable}= 语法引用变量:
+
+#+begin_src lua
+require'dap'.set_breakpoint(nil, nil, 'Loop iteration {i}, sum = {total}')
+-- 输出: Loop iteration 5, sum = 15
+#+end_src
+
+*** =toggle_breakpoint({condition}, {hit_condition}, {log_message})=
+
+切换断点: 如果当前行没有断点则创建，有则删除。
+
+*注意*: 如果已有断点，再次调用会删除而非更新。要更新断点参数，使用 =set_breakpoint=。
+
+#+begin_src lua
+-- 最常见用法: 快速切换
+vim.keymap.set('n', '<F9>', function() require'dap'.toggle_breakpoint() end)
+
+-- 切换条件断点
+vim.keymap.set('n', '<leader>db', function()
+  local condition = vim.fn.input('Breakpoint condition: ')
+  require'dap'.toggle_breakpoint(condition)
+end)
+#+end_src
+
+*** =list_breakpoints()=
+
+在 quickfix 窗口列出所有断点和 log points。
+
+#+begin_src lua
+require'dap'.list_breakpoints()
+-- 然后可以用 :cnext, :cprev 跳转到断点位置
+#+end_src
+
+*** =clear_breakpoints()=
+
+删除所有断点。
+
+#+begin_src lua
+require'dap'.clear_breakpoints()
+#+end_src
+
+*** =set_exception_breakpoints({filters}, {exceptionOptions})=
+
+设置异常断点。不同语言的调试器支持不同的过滤器。
+
+*参数*:
+
+- =filters=: 异常类型列表 (如 ={"uncaught", "raised"}=) 或 ="default"=
+- =exceptionOptions=: 高级选项 (见 DAP 规范)
+
+#+begin_src lua
+-- 提示用户选择异常类型
+require'dap'.set_exception_breakpoints()
+
+-- 不在任何异常处停止
+require'dap'.set_exception_breakpoints({})
+
+-- Python: 只在未捕获异常处停止
+require'dap'.set_exception_breakpoints({'uncaught'})
+
+-- Python: 所有异常都停止
+require'dap'.set_exception_breakpoints({'raised', 'uncaught'})
+
+-- 使用适配器推荐的默认设置
+require'dap'.set_exception_breakpoints('default')
+#+end_src
+
+*设置默认值*:
+
+#+begin_src lua
+-- 全局默认 (回退值)
+require('dap').defaults.fallback.exception_breakpoints = {'raised'}
+
+-- 针对特定语言
+require('dap').defaults.python.exception_breakpoints = {'uncaught'}
+#+end_src
+
+这里 =python= 是配置中的 =type= 字段。
+
+** 单步执行
+
+*** =step_over([{opts}])=
+
+单步跳过 (step over): 执行当前行，如果是函数调用则不进入函数内部。
+
+相当于 GDB 的 =next= 命令。
+
+*** =step_into([{opts}])=
+
+单步进入 (step into): 如果当前行是函数调用，进入函数内部; 否则等同于 =step_over=。
+
+*参数*:
+
+- =steppingGranularity=: 步进粒度
+  - ="statement"= (默认): 按语句
+  - ="line"=: 按行
+  - ="instruction"=: 按汇编指令
+
+- =askForTargets=: =boolean=, 如果当前行有多个可进入的函数，提示用户选择
+
+#+begin_src lua
+-- 普通 step into
+require'dap'.step_into()
+
+-- 提示选择进入哪个函数 (当一行有多个函数调用时)
+require'dap'.step_into({askForTargets = true})
+
+-- 按汇编指令步进
+require'dap'.step_into({steppingGranularity = 'instruction'})
+#+end_src
+
+*Step Into Targets 示例*:
+
+#+begin_src python
+result = foo(bar(baz()))  # 这一行有 3 个函数调用
+#+end_src
+
+如果 =askForTargets = true=，nvim-dap 会弹出选择器:
+
+#+begin_example
+Step into which function?
+1. baz()
+2. bar()
+3. foo()
+#+end_example
+
+*** =step_out([{opts}])=
+
+跳出当前函数 (step out)，执行到调用者的下一行。
+
+相当于 GDB 的 =finish= 命令。
+
+*** =step_back([{opts}])=
+
+反向单步 (step back): 回退到上一步。
+
+*需要调试适配器支持反向调试* (reverse debugging)，如 rr (Record and Replay) 或 gdb 的 record 模式。
+
+** 高级执行控制
+
+*** =pause({thread_id})=
+
+暂停线程。如果有多个线程，会提示选择。
+
+#+begin_src lua
+-- 暂停当前线程
+require'dap'.pause()
+
+-- 暂停指定线程
+require'dap'.pause(123)
+#+end_src
+
+*** =reverse_continue()=
+
+反向继续执行，直到上一个断点。
+
+*需要调试适配器支持反向调试*。
+
+*** =up()= 和 =down()=
+
+在调用栈中上下移动，*不执行代码*。
+
+#+begin_src lua
+-- 向上一层 (到调用者)
+require'dap'.up()
+
+-- 向下一层 (到被调用者)
+require'dap'.down()
+#+end_src
+
+*典型场景*:
+
+#+begin_example
+调用栈:
+  Frame 0: some_function() at line 42  <- 当前帧
+  Frame 1: caller() at line 10
+  Frame 2: main() at line 5
+
+执行 dap.up() 后:
+  Frame 0: some_function() at line 42
+  Frame 1: caller() at line 10         <- 当前帧
+  Frame 2: main() at line 5
+#+end_example
+
+光标会跳转到 =caller()= 的 line 10，可以查看该帧的局部变量。
+
+*** =goto_({line})=
+
+跳转到指定行 (或光标所在行)，*跳过中间代码*。
+
+*可选特性*，并非所有调试适配器都支持。
+
+#+begin_src lua
+-- 跳转到光标行
+require'dap'.goto_()
+
+-- 跳转到指定行号
+require'dap'.goto_(100)
+#+end_src
+
+*警告*: 跳过的代码不会执行，可能导致程序状态不一致!
+
+*** =focus_frame()=
+
+跳转到当前帧对应的源文件位置。
+
+*行为受 =switchbuf= 设置影响* (见 =:h switchbuf=)。
+
+*** =restart_frame()=
+
+重新执行当前帧 (从函数开头重新运行)。
+
+*可选特性*，并非所有调试适配器都支持。
+
+*** =run_to_cursor()=
+
+执行到光标位置。
+
+*实现原理*:
+
+1. 临时移除所有断点
+2. 在光标行设置临时断点
+3. =continue()=
+4. 恢复所有断点
+
+#+begin_src lua
+vim.keymap.set('n', '<leader>dc', function() require'dap'.run_to_cursor() end)
+#+end_src
+
+** REPL (Read-Eval-Print Loop)
+
+*** =repl.open({winopts}, {wincmd})=
+
+打开 REPL/调试控制台。
+
+*参数*:
+
+- =winopts=: 窗口选项
+  - =height=: 窗口高度
+  - =width=: 窗口宽度
+  - 其他 =:h win_getid()= 支持的选项
+
+- =wincmd=: 创建窗口的命令 (默认 ="belowright split"=)
+
+#+begin_src lua
+-- 默认打开
+require'dap.repl'.open()
+
+-- 自定义高度
+require'dap.repl'.open({height = 20})
+
+-- 在右侧垂直分割
+require'dap.repl'.open({width = 80}, 'vertical botright')
+#+end_src
+
+*** REPL 特殊命令
+
+REPL 支持求值表达式 (如 =print(x)=) 和以下特殊命令:
+
+| 命令                       | 等价 API                                 | 说明                  |
+|----------------------------+------------------------------------------+-----------------------|
+| =.exit=                    | 关闭 REPL                                | 退出 REPL             |
+| =.c=, =.continue=          | =dap.continue()=                         | 继续执行              |
+| =.n=, =.next=              | =dap.step_over()=                        | 单步跳过              |
+| =.into=                    | =dap.step_into()=                        | 单步进入              |
+| =.into_target=             | =dap.step_into({askForTargets = true})=  | 选择函数进入          |
+| =.out=                     | =dap.step_out()=                         | 跳出函数              |
+| =.up=                      | =dap.up()=                               | 调用栈上移            |
+| =.down=                    | =dap.down()=                             | 调用栈下移            |
+| =.goto=                    | =dap.goto_()=                            | 跳转到光标            |
+| =.scopes=                  | 打印当前作用域变量                       |                       |
+| =.threads=                 | 打印所有线程                             |                       |
+| =.frames=                  | 打印调用栈                               |                       |
+| =.capabilities=            | 打印适配器能力                           |                       |
+| =.b=, =.back=              | =dap.step_back()=                        | 反向单步              |
+| =.rc=, =.reverse-continue= | =dap.reverse_continue()=                 | 反向继续              |
+
+*自定义 REPL 命令*:
+
+#+begin_src lua
+local repl = require 'dap.repl'
+repl.commands = vim.tbl_extend('force', repl.commands, {
+  -- 为已有命令添加别名
+  exit = {'exit', '.exit', '.bye'},
+
+  -- 自定义命令
+  custom_commands = {
+    ['.echo'] = function(text)
+      dap.repl.append(text)
+    end,
+
+    -- 绑定到已有 API
+    ['.restart'] = function()
+      require'dap'.restart()
+    end,
+  },
+})
+#+end_src
+
+*REPL 的补全*:
+
+REPL 自动设置 =omnifunc= 以支持表达式补全 (通过 =<C-x><C-o>=)。
+
+*** =repl.toggle({winopts}, {wincmd})=
+
+切换 REPL: 如果已打开则关闭，否则打开。
+
+*** =repl.close()=
+
+关闭 REPL (如果已打开)。
+
+*** =repl.execute({text})=
+
+在 REPL 中执行文本，就像用户手动输入一样。
+
+#+begin_src lua
+-- 自动执行命令
+require'dap.repl'.execute('.scopes')
+#+end_src
+
+** 会话查询和状态
+
+*** =session()=
+
+返回当前聚焦的会话，如果没有会话则返回 =nil=。
+
+#+begin_src lua
+local session = require'dap'.session()
+if session then
+  print('Active session: ' .. session.id)
+end
+#+end_src
+
+*Session 对象* (见 |dap-session|) 包含:
+
+- =id=: 会话 ID
+- =adapter=: 适配器信息
+- =config=: 启动配置
+- =threads=: 线程列表
+- =stopped_thread_id=: 当前停止的线程 ID
+- ...
+
+*** =sessions()=
+
+返回所有顶层会话的表，键为会话 ID，值为 Session 对象。
+
+#+begin_src lua
+local sessions = require'dap'.sessions()
+for id, session in pairs(sessions) do
+  print(string.format('Session %s: %s', id, session.config.name))
+end
+#+end_src
+
+*顶层会话 (top-level sessions)*:
+
+如果有父子会话 (parent-child hierarchy)，只返回根会话。
+
+*** =status()=
+
+返回当前会话状态的文本描述，用于 statusline。
+
+#+begin_src lua
+-- 在 lualine 中显示调试状态
+require('lualine').setup {
+  sections = {
+    lualine_x = {
+      function()
+        return require'dap'.status()
+      end
+    }
+  }
+}
+#+end_src
+
+如果没有活跃会话，返回空字符串。
+
+** 底层 API: 连接管理
+
+*** =disconnect(opts, cb)=
+
+断开与调试适配器的连接，并请求适配器终止。
+
+*与 =terminate()= 的区别*:
+
+- =terminate()=: 终止被调试程序 (debuggee)
+- =disconnect()=: 断开连接，*可能不终止* debuggee (取决于参数)
+
+*参数*:
+
+- =opts=: 断开选项
+  - =restart=: =boolean= (默认 =false=)
+  - =terminateDebuggee=: =boolean?= 是否终止被调试程序
+
+- =cb=: 断开完成后的回调
+
+#+begin_src lua
+-- 断开但不终止程序 (程序继续运行)
+require'dap'.disconnect({terminateDebuggee = false})
+
+-- 断开并终止程序
+require'dap'.disconnect({terminateDebuggee = true}, function()
+  print('已断开连接')
+end)
+#+end_src
+
+*注意*: 即使调用 =disconnect()=，客户端会话可能仍然存在。要确保会话关闭，额外调用 =close()=。
+
+*** =close()=
+
+关闭客户端会话。
+
+*不会* 终止调试适配器或被调试程序，只是清理客户端状态。
+
+通常你应该使用 =terminate()= 或 =disconnect()= 而非直接调用此函数。
+
+*** =launch({adapter}, {config})=
+
+启动新的调试适配器并初始化。
+
+*通常不直接调用*，应使用 =continue()= 或 =run()=。
+
+*参数*:
+
+- =adapter=: 适配器定义 (见 |dap-adapter|)，=type= 字段不需要
+- =config=: 配置 (见 |dap-configuration|)
+
+*** =attach({adapter}, {config})=
+
+附加到已运行的调试适配器并初始化。
+
+*通常不直接调用*，应使用 =continue()= 或 =run()=。
+
+** 日志和调试
+
+*** =set_log_level(level)=
+
+设置日志级别，默认 =INFO=。
+
+*可用级别*:
+
+- =TRACE=: 最详细
+- =DEBUG=
+- =INFO=
+- =WARN=
+- =ERROR=: 只记录错误
+
+#+begin_src lua
+-- 开启详细日志 (调试 nvim-dap 自身时有用)
+require('dap').set_log_level('TRACE')
+#+end_src
+
+*日志文件位置*:
+
+#+begin_src lua
+-- 查看日志路径
+print(vim.fn.stdpath('cache') .. '/dap.log')
+
+-- macOS/Linux: ~/.cache/nvim/dap.log
+-- Windows: ~/AppData/Local/nvim-data/dap.log
+#+end_src
+
+* DAP 配置详解
+
+** Adapter 定义
+
+适配器 (adapter) 告诉 nvim-dap 如何启动调试适配器进程。
+
+*** 可执行适配器 (Executable)
+
+最常见的类型，nvim-dap 启动一个子进程:
+
+#+begin_src lua
+require('dap').adapters.python = {
+  type = 'executable',
+  command = 'python',  -- 或 '/usr/bin/python3'
+  args = {'-m', 'debugpy.adapter'},
+}
+#+end_src
+
+*** 服务器适配器 (Server)
+
+适配器作为服务器运行，nvim-dap 作为客户端连接:
+
+#+begin_src lua
+require('dap').adapters.delve = {
+  type = 'server',
+  host = '127.0.0.1',
+  port = 38697,
+}
+#+end_src
+
+*** 管道适配器 (Pipe)
+
+通过命名管道通信:
+
+#+begin_src lua
+require('dap').adapters.lldb = {
+  type = 'pipe',
+  pipe = '${pipe}',  -- 会被 nvim-dap 替换为实际路径
+  executable = {
+    command = 'lldb-vscode',
+    args = {'--port', '${port}'},
+  },
+}
+#+end_src
+
+*** 动态适配器 (Function)
+
+适配器可以是返回配置的函数，用于运行时决定配置:
+
+#+begin_src lua
+require('dap').adapters.go = function(callback, config)
+  if config.mode == 'remote' then
+    callback({
+      type = 'server',
+      host = config.host or '127.0.0.1',
+      port = config.port or 38697,
+    })
+  else
+    callback({
+      type = 'server',
+      port = '${port}',
+      executable = {
+        command = 'dlv',
+        args = {'dap', '-l', '127.0.0.1:${port}'},
+      },
+    })
+  end
+end
+#+end_src
+
+** Configuration 定义
+
+配置 (configuration) 定义如何启动或附加到被调试程序。
+
+*** 基本字段
+
+所有配置必须包含:
+
+- =type=: 对应的 adapter 名称
+- =request=: ="launch"= (启动) 或 ="attach"= (附加)
+- =name=: 显示给用户的名称
+
+#+begin_src lua
+require('dap').configurations.python = {
+  {
+    type = 'python',
+    request = 'launch',
+    name = 'Launch file',
+    program = '${file}',  -- 当前文件
+    pythonPath = function()
+      return '/usr/bin/python3'
+    end,
+  },
+  {
+    type = 'python',
+    request = 'attach',
+    name = 'Attach to process',
+    processId = require('dap.utils').pick_process,
+  },
+}
+#+end_src
+
+*** 变量替换
+
+配置中可以使用以下变量:
+
+- =${file}=: 当前文件的绝对路径
+- =${fileBasename}=: 当前文件名 (不含路径)
+- =${fileBasenameNoExtension}=: 文件名 (不含扩展名)
+- =${fileDirname}=: 当前文件所在目录
+- =${fileExtname}=: 当前文件扩展名
+- =${relativeFile}=: 相对于 =workspaceFolder= 的路径
+- =${relativeFileDirname}=: 相对目录
+- =${workspaceFolder}=: 工作目录 (通常是项目根目录)
+- =${workspaceFolderBasename}=: 工作目录的 basename
+- =${cwd}=: 启动时的工作目录
+- =${env:HOME}=: 环境变量
+
+*** 使用 =.vscode/launch.json=
+
+nvim-dap 原生支持 VSCode 的 =launch.json=:
+
+#+begin_src json
+// .vscode/launch.json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "python",
+      "request": "launch",
+      "name": "Python: Current File",
+      "program": "${file}",
+      "console": "integratedTerminal"
+    }
+  ]
+}
+#+end_src
+
+nvim-dap 会自动读取并合并到 =dap.configurations= 中。
+
+* 实战配置示例
+
+** Python (debugpy)
+
+#+begin_src lua
+-- 安装: pip install debugpy
+
+local dap = require('dap')
+
+dap.adapters.python = {
+  type = 'executable',
+  command = 'python',
+  args = {'-m', 'debugpy.adapter'},
+}
+
+dap.configurations.python = {
+  {
+    type = 'python',
+    request = 'launch',
+    name = 'Launch file',
+    program = '${file}',
+    pythonPath = function()
+      -- 优先使用 virtualenv 中的 python
+      local cwd = vim.fn.getcwd()
+      if vim.fn.executable(cwd .. '/venv/bin/python') == 1 then
+        return cwd .. '/venv/bin/python'
+      else
+        return '/usr/bin/python3'
+      end
+    end,
+  },
+  {
+    type = 'python',
+    request = 'launch',
+    name = 'Launch file with arguments',
+    program = '${file}',
+    args = function()
+      local args_string = vim.fn.input('Arguments: ')
+      return vim.split(args_string, " +")
+    end,
+  },
+}
+#+end_src
+
+** Go (delve)
+
+#+begin_src lua
+-- 安装: go install github.com/go-delve/delve/cmd/dlv@latest
+
+local dap = require('dap')
+
+dap.adapters.delve = {
+  type = 'server',
+  port = '${port}',
+  executable = {
+    command = 'dlv',
+    args = {'dap', '-l', '127.0.0.1:${port}'},
+  }
+}
+
+dap.configurations.go = {
+  {
+    type = "delve",
+    name = "Debug",
+    request = "launch",
+    program = "${file}"
+  },
+  {
+    type = "delve",
+    name = "Debug test",
+    request = "launch",
+    mode = "test",
+    program = "${file}"
+  },
+  {
+    type = "delve",
+    name = "Debug Package",
+    request = "launch",
+    program = "${fileDirname}"
+  },
+}
+#+end_src
+
+** C/C++/Rust (codelldb)
+
+#+begin_src lua
+-- 安装: 通过 mason.nvim 或从 https://github.com/vadimcn/codelldb/releases
+
+local dap = require('dap')
+
+dap.adapters.codelldb = {
+  type = 'server',
+  port = "${port}",
+  executable = {
+    command = '/absolute/path/to/codelldb',  -- 或 'codelldb' 如果在 PATH 中
+    args = {"--port", "${port}"},
+  }
+}
+
+dap.configurations.cpp = {
+  {
+    name = "Launch file",
+    type = "codelldb",
+    request = "launch",
+    program = function()
+      return vim.fn.input('Path to executable: ', vim.fn.getcwd() .. '/', 'file')
+    end,
+    cwd = '${workspaceFolder}',
+    stopOnEntry = false,
+  },
+}
+
+-- C 和 Rust 复用相同配置
+dap.configurations.c = dap.configurations.cpp
+dap.configurations.rust = dap.configurations.cpp
+#+end_src
+
+** JavaScript/TypeScript (vscode-js-debug)
+
+#+begin_src lua
+-- 安装: 从 https://github.com/microsoft/vscode-js-debug/releases
+-- 下载 js-debug-dap-*.tar.gz 并解压
+
+local dap = require('dap')
+
+dap.adapters['pwa-node'] = {
+  type = 'server',
+  host = 'localhost',
+  port = '${port}',
+  executable = {
+    command = 'node',
+    args = {'/path/to/js-debug/src/dapDebugServer.js', '${port}'},
+  }
+}
+
+dap.configurations.javascript = {
+  {
+    type = 'pwa-node',
+    request = 'launch',
+    name = 'Launch file',
+    program = '${file}',
+    cwd = '${workspaceFolder}',
+  },
+}
+
+dap.configurations.typescript = dap.configurations.javascript
+#+end_src
+
+* 键位绑定建议
+
+#+begin_src lua
+local dap = require('dap')
+
+-- 启动/继续
+vim.keymap.set('n', '<F5>', dap.continue, { desc = 'Debug: Start/Continue' })
+
+-- 单步
+vim.keymap.set('n', '<F10>', dap.step_over, { desc = 'Debug: Step Over' })
+vim.keymap.set('n', '<F11>', dap.step_into, { desc = 'Debug: Step Into' })
+vim.keymap.set('n', '<F12>', dap.step_out, { desc = 'Debug: Step Out' })
+
+-- 断点
+vim.keymap.set('n', '<leader>b', dap.toggle_breakpoint, { desc = 'Debug: Toggle Breakpoint' })
+vim.keymap.set('n', '<leader>B', function()
+  dap.set_breakpoint(vim.fn.input('Breakpoint condition: '))
+end, { desc = 'Debug: Set Conditional Breakpoint' })
+
+-- REPL
+vim.keymap.set('n', '<leader>dr', dap.repl.open, { desc = 'Debug: Open REPL' })
+
+-- 终止
+vim.keymap.set('n', '<leader>dt', dap.terminate, { desc = 'Debug: Terminate' })
+#+end_src
+
+* 与 nvim-dap-ui 集成
+
+nvim-dap 只提供 API，没有 UI。推荐安装 nvim-dap-ui 获得可视化界面:
+
+#+begin_src lua
+-- 安装 nvim-dap-ui 和依赖
+require('lazy').setup({
+  'mfussenegger/nvim-dap',
+  {
+    'rcarriga/nvim-dap-ui',
+    dependencies = {'nvim-neotest/nvim-nio'},
+    config = function()
+      local dap, dapui = require('dap'), require('dapui')
+      dapui.setup()
+
+      -- 自动打开/关闭 UI
+      dap.listeners.after.event_initialized['dapui_config'] = function()
+        dapui.open()
+      end
+      dap.listeners.before.event_terminated['dapui_config'] = function()
+        dapui.close()
+      end
+      dap.listeners.before.event_exited['dapui_config'] = function()
+        dapui.close()
+      end
+    end,
+  },
+})
+#+end_src
+
+* 总结
+
+nvim-dap 的设计哲学:
+
+1. *协议优先*: 基于 DAP 标准，理论上支持所有实现了 DAP 的调试器
+2. *最小核心*: nvim-dap 只提供 API，UI 和语言支持由其他插件扩展
+3. *手动配置*: 不做任何假设，用户需要显式配置每种语言
+
+这意味着:
+
+- 初次配置较复杂 (需要理解 adapter 和 configuration 的区别)
+- 但配置完成后非常灵活和强大
+- 可以精确控制每个调试场景的行为
+
+如果你使用 Mason 管理工具，可以用 =mason-nvim-dap= 自动安装和配置常见语言的调试适配器，降低配置门槛。
+
+*核心概念回顾*:
+
+- *Adapter*: 如何与调试适配器通信 (executable/server/pipe)
+- *Configuration*: 如何启动/附加到被调试程序 (launch/attach)
+- *Session*: 一次调试会话，可以有父子关系
+- *REPL*: 交互式表达式求值和命令执行
+
+更多信息请参考:
+
+- =:help dap.txt=
+- =:help dap-api=
+- [[https://github.com/mfussenegger/nvim-dap][nvim-dap GitHub]]
+- [[https://microsoft.github.io/debug-adapter-protocol/][DAP 官方规范]]

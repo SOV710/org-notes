@@ -1,0 +1,865 @@
+#+title: Fundamentals of Analog Circuits: From Signals to Semiconductor Devices
+#+author: SOV710
+#+date: 2025-12-21
+#+startup: showall, inlineimages
+#+options: toc:2 num:nil
+
+* 信号的基础概念
+
+** 信号 (Signal)
+
+信号是信息的物理表现形式，用于在系统之间传递信息。在电子系统中，信号通常表现为随时间变化的电压或电流。
+
+信号的数学表示:
+
+- 时域表示: $v(t)$ 或 $i(t)$，描述信号随时间的变化
+- 频域表示: $V(f)$ 或 $I(f)$，描述信号的频率成分
+
+** 信号的频谱 (Signal Spectrum)
+
+频谱是信号在频域中的表示，通过傅里叶变换 (Fourier Transform) 从时域转换得到。
+
+傅里叶变换:
+
+$$V(f) = \int_{-\infty}^{\infty} v(t) e^{-j2\pi ft} dt$$
+
+频谱分析的意义:
+
+1. *频率成分识别*: 确定信号包含哪些频率分量
+2. *带宽确定*: 信号占用的频率范围
+3. *滤波器设计*: 根据频谱选择或抑制特定频率成分
+
+典型信号的频谱特性:
+
+- 正弦波: 单一频率分量 (冲激函数)
+- 方波: 基频及奇次谐波分量
+- 脉冲: 连续频谱，带宽与脉冲宽度成反比
+
+** 模拟信号和数字信号
+
+*** 模拟信号 (Analog Signal)
+
+模拟信号在时间和幅度上都是连续的。
+
+特点:
+
+- 时间连续: 在任意时刻都有定义
+- 幅度连续: 可以取值范围内的任意值
+- 易受噪声干扰: 噪声会叠加在信号上，难以完全去除
+
+典型应用:
+
+- 音频信号 (麦克风输出)
+- 温度传感器输出
+- 模拟通信系统
+
+*** 数字信号 (Digital Signal)
+
+数字信号在时间和幅度上都是离散的。
+
+特点:
+
+- 时间离散: 只在特定时刻采样
+- 幅度量化: 只能取有限个离散值
+- 抗干扰能力强: 通过阈值判决可以恢复原始信号
+
+从模拟到数字的转换过程 (ADC):
+
+1. 采样 (Sampling): 时间离散化
+2. 量化 (Quantization): 幅度离散化
+3. 编码 (Encoding): 转换为二进制数字
+
+采样定理 (Nyquist-Shannon Theorem): 采样频率必须至少是信号最高频率的两倍，才能无失真地重建原始信号。
+
+$$f_s \geq 2f_{max}$$
+
+* 放大电路的基础理论
+
+** 放大电路模型
+
+放大电路可以用四种等效模型表示，取决于输入输出信号的类型 (电压或电流)。
+
+*** 电压放大器 (Voltage Amplifier)
+
+输入: 电压信号，输出: 电压信号
+
+等效电路:
+
+- 输入阻抗 $R_i$ (理想情况: $R_i \to \infty$)
+- 输出阻抗 $R_o$ (理想情况: $R_o \to 0$)
+- 受控电压源: $A_v \cdot v_i$
+
+电压增益:
+
+$$A_v = \frac{v_o}{v_i}$$
+
+#+begin_src
+信号源                 放大器内部                    负载
+
+  Vs    Rs              Ri                  Ro       RL
+  ~  ----+----    +------||------+    +-----[]-----+----+
+         |        |              |    |            |    |
+         |        |   Av·vi      |    |   vo       |    |
+         +--------+     ⊕--------+----+------------+----+
+                  |              |                  |
+                  +--------------+------------------+
+                        GND
+#+end_src
+
+*** 电流放大器 (Current Amplifier)
+
+输入: 电流信号，输出: 电流信号
+
+等效电路:
+
+- 输入阻抗 $R_i$ (理想情况: $R_i \to 0$)
+- 输出阻抗 $R_o$ (理想情况: $R_o \to \infty$)
+- 受控电流源: $A_i \cdot i_i$
+
+电流增益:
+
+$$A_i = \frac{i_o}{i_i}$$
+
+*** 跨导放大器 (Transconductance Amplifier)
+
+输入: 电压信号，输出: 电流信号
+
+跨导:
+
+$$G_m = \frac{i_o}{v_i}$$ (单位: S, Siemens)
+
+*** 互阻放大器 (Transimpedance Amplifier)
+
+输入: 电流信号，输出: 电压信号
+
+互阻:
+
+$$R_m = \frac{v_o}{i_i}$$ (单位: Ω)
+
+** 放大电路的主要性能指标
+
+*** 1. 增益 (Gain)
+
+*电压增益* $A_v$:
+
+$$A_v = \frac{v_o}{v_i}$$
+
+通常用分贝 (dB) 表示:
+
+$$A_v(dB) = 20 \log_{10} |A_v|$$
+
+*电流增益* $A_i$:
+
+$$A_i = \frac{i_o}{i_i}$$
+
+*功率增益* $A_p$:
+
+$$A_p = \frac{P_o}{P_i} = A_v \cdot A_i$$
+
+$$A_p(dB) = 10 \log_{10} A_p$$
+
+*** 2. 输入阻抗 (Input Impedance) $Z_i$
+
+输入阻抗定义为输入端的电压与电流之比:
+
+$$Z_i = \frac{v_i}{i_i}$$
+
+理想放大器的输入阻抗:
+
+- 电压放大器: $Z_i \to \infty$ (避免从信号源吸取电流)
+- 电流放大器: $Z_i \to 0$ (作为理想电流源的负载)
+
+实际放大器:
+
+- 高输入阻抗 (典型值 $> 1 M\Omega$): 减小对信号源的加载效应
+- FET 输入级可实现 $> 10^{12} \Omega$ 的输入阻抗
+
+*** 3. 输出阻抗 (Output Impedance) $Z_o$
+
+输出阻抗是从输出端向放大器内部看的等效阻抗。
+
+理想放大器的输出阻抗:
+
+- 电压放大器: $Z_o \to 0$ (理想电压源)
+- 电流放大器: $Z_o \to \infty$ (理想电流源)
+
+输出阻抗的影响:
+
+当连接负载 $R_L$ 时，实际输出电压:
+
+$$v_o(loaded) = v_o(open) \cdot \frac{R_L}{R_L + Z_o}$$
+
+输出阻抗越小，负载变化对输出的影响越小。
+
+*** 4. 带宽 (Bandwidth) BW
+
+带宽是放大器能够有效放大的频率范围。
+
+定义: 增益下降到中频增益的 $0.707$ 倍 (即 -3 dB) 时对应的频率范围。
+
+$$BW = f_H - f_L$$
+
+其中:
+
+- $f_L$: 下限截止频率 (低频 -3 dB 点)
+- $f_H$: 上限截止频率 (高频 -3 dB 点)
+
+*增益带宽积* (Gain-Bandwidth Product, GBW):
+
+对于运算放大器，增益与带宽的乘积是常数:
+
+$$GBW = A_v \cdot BW = constant$$
+
+这意味着增益越高，带宽越窄。
+
+*** 5. 频率响应 (Frequency Response)
+
+描述增益随频率变化的特性，通常用 Bode 图表示。
+
+Bode 图包含两部分:
+
+- 幅频特性: $20 \log_{10} |A_v(f)|$ vs. $\log_{10} f$
+- 相频特性: $\angle A_v(f)$ vs. $\log_{10} f$
+
+*** 6. 非线性失真 (Nonlinear Distortion)
+
+理想放大器的输出应与输入成正比: $v_o = A_v \cdot v_i$
+
+实际放大器存在非线性，可用泰勒级数展开:
+
+$$v_o = a_1 v_i + a_2 v_i^2 + a_3 v_i^3 + \cdots$$
+
+*总谐波失真* (Total Harmonic Distortion, THD):
+
+$$THD = \frac{\sqrt{V_2^2 + V_3^2 + V_4^2 + \cdots}}{V_1} \times 100\%$$
+
+其中 $V_1$ 是基波幅度，$V_2, V_3, \ldots$ 是各次谐波幅度。
+
+*** 7. 噪声 (Noise)
+
+放大器内部的随机电压/电流波动。
+
+主要噪声源:
+
+- 热噪声 (Thermal Noise): 由电阻的热运动产生
+- 散粒噪声 (Shot Noise): 由载流子随机运动产生
+- 闪烁噪声 (Flicker Noise, 1/f Noise): 低频噪声
+
+*信噪比* (Signal-to-Noise Ratio, SNR):
+
+$$SNR = 10 \log_{10} \frac{P_{signal}}{P_{noise}} \quad (dB)$$
+
+* 运算放大器 (Operational Amplifier)
+
+** 集成电路运算放大器
+
+运算放大器 (Op-Amp) 是一种高增益的差分放大器，最初设计用于模拟计算机中执行数学运算 (加法、积分、微分等)。
+
+*** 运算放大器的结构
+
+典型的集成运算放大器包含以下级:
+
+1. *差分输入级*: 高输入阻抗，低失调
+2. *中间增益级*: 提供大部分电压增益
+3. *输出级*: 低输出阻抗，大电流驱动能力
+
+*** 典型参数 (以 LF353 为例)
+
+根据搜索结果，典型运算放大器参数:
+
+- 开环增益 (Open-Loop Gain): $10^5 \sim 10^6$ (100 dB ~ 120 dB)
+- 输入阻抗: $10^{12} \Omega$ (JFET 输入)
+- 输出阻抗: $100 \sim 20k\Omega$
+- 输入偏置电流 (Input Bias Current): 约 50 pA (JFET 输入型)
+- 增益带宽积 (GBW): 典型值 1~10 MHz
+
+** 理想运算放大器
+
+为了简化分析，引入理想运算放大器模型。
+
+*** 理想运算放大器的特性
+
+1. *无穷大的开环增益*: $A_{OL} \to \infty$
+2. *无穷大的输入阻抗*: $Z_i \to \infty$ (输入端不吸取电流)
+3. *零输出阻抗*: $Z_o \to 0$ (理想电压源)
+4. *无穷大的带宽*: BW $\to \infty$ (所有频率增益相同)
+5. *零失调电压*: $V_{OS} = 0$ (输入为零时输出为零)
+6. *无穷大的共模抑制比* (CMRR): 只放大差模信号
+
+*** 理想运算放大器的分析原则
+
+由于 $A_{OL} \to \infty$，在负反馈条件下:
+
+1. *虚短* (Virtual Short): 两输入端电压相等
+   $$v^+ = v^-$$
+
+2. *虚断* (Virtual Open): 两输入端电流为零
+   $$i^+ = i^- = 0$$
+
+这两个原则是分析运放电路的核心。
+
+** 基本线性运放电路
+
+*** 反相放大器 (Inverting Amplifier)
+
+[[file:assets/inverting-amplifier.svg]]
+
+电路配置:
+
+- 信号加在反相输入端 (通过 $R_1$)
+- 同相输入端接地
+- 反馈电阻 $R_f$ 连接输出到反相输入端
+
+分析 (利用虚短和虚断):
+
+由于 $v^+ = 0$ (接地)，所以 $v^- = 0$ (虚短，虚地)。
+
+根据 KCL (虚断，$i^- = 0$):
+
+$$\frac{v_i - 0}{R_1} = \frac{0 - v_o}{R_f}$$
+
+解得:
+
+$$A_v = \frac{v_o}{v_i} = -\frac{R_f}{R_1}$$
+
+特点:
+
+- 增益由外部电阻决定，与运放参数无关
+- 输出与输入反相 (负号)
+- 输入阻抗: $Z_i = R_1$ (较低)
+
+*** 同相放大器 (Non-inverting Amplifier)
+
+电路配置:
+
+- 信号加在同相输入端
+- 反相输入端通过 $R_1$ 接地
+- 反馈电阻 $R_f$ 连接输出到反相输入端
+
+分析:
+
+由于 $v^- = v^+ = v_i$ (虚短)。
+
+根据 KCL:
+
+$$\frac{v^- - 0}{R_1} = \frac{v_o - v^-}{R_f}$$
+
+$$\frac{v_i}{R_1} = \frac{v_o - v_i}{R_f}$$
+
+解得:
+
+$$A_v = \frac{v_o}{v_i} = 1 + \frac{R_f}{R_1}$$
+
+特点:
+
+- 输出与输入同相
+- 输入阻抗: $Z_i \approx 10^{12} \Omega$ (极高)
+- 增益最小值为 1 (当 $R_f = 0$ 时，成为电压跟随器)
+
+*电压跟随器* (Voltage Follower):
+
+令 $R_f = 0$, $R_1 \to \infty$ (或直接连接输出到反相输入):
+
+$$A_v = 1$$
+
+应用: 阻抗变换 (高输入阻抗，低输出阻抗)
+
+** 同相输入和反相输入放大电路的其他应用
+
+*** 求和电路 (Summing Amplifier)
+
+反相求和器:
+
+多个输入 $v_1, v_2, v_3$ 通过电阻 $R_1, R_2, R_3$ 连接到反相输入端。
+
+根据 KCL (虚地):
+
+$$\frac{v_1}{R_1} + \frac{v_2}{R_2} + \frac{v_3}{R_3} = -\frac{v_o}{R_f}$$
+
+当所有输入电阻相等 ($R_1 = R_2 = R_3 = R$):
+
+$$v_o = -\frac{R_f}{R}(v_1 + v_2 + v_3)$$
+
+应用: 数模转换器 (DAC)，音频混音器
+
+*** 求差电路 (Difference Amplifier)
+
+配置:
+
+- $v_1$ 通过 $R_1$ 连接到反相输入端
+- $v_2$ 通过 $R_3$ 连接到同相输入端
+- 反馈电阻 $R_f$ 和接地电阻 $R_4$
+
+当 $R_1 = R_3$ 且 $R_f = R_4$ 时:
+
+$$v_o = \frac{R_f}{R_1}(v_2 - v_1)$$
+
+应用: 差分信号放大，共模噪声抑制
+
+*** 仪用放大器 (Instrumentation Amplifier)
+
+仪用放大器是一种高精度的差分放大器，具有:
+
+- 极高的输入阻抗 (两个输入端)
+- 高共模抑制比 (CMRR > 100 dB)
+- 可调增益
+- 低失调和漂移
+
+典型结构: 三运放结构
+
+- 前级: 两个同相放大器 (提供高输入阻抗)
+- 后级: 一个差分放大器 (提取差模信号)
+
+增益:
+
+$$A_v = \left(1 + \frac{2R_2}{R_G}\right) \frac{R_4}{R_3}$$
+
+其中 $R_G$ 是增益调节电阻。
+
+应用: 生物医学信号放大 (ECG, EEG)，应变片信号调理，温度测量
+
+*** 积分电路 (Integrator)
+
+将反馈电阻 $R_f$ 替换为电容 $C$:
+
+根据虚地和虚断:
+
+$$i_C = C \frac{dv_o}{dt} = -\frac{v_i}{R}$$
+
+解得:
+
+$$v_o(t) = -\frac{1}{RC} \int v_i(t) dt + v_o(0)$$
+
+频域表示:
+
+$$H(j\omega) = \frac{V_o(j\omega)}{V_i(j\omega)} = -\frac{1}{j\omega RC}$$
+
+特点:
+
+- 低频增益高，高频增益低 (低通特性)
+- 对直流输入会导致输出饱和 (需加限幅措施)
+
+应用: 波形变换 (方波→三角波)，模拟计算，滤波器
+
+*** 微分电路 (Differentiator)
+
+将输入电阻 $R_1$ 替换为电容 $C$:
+
+$$v_o = -R_f C \frac{dv_i}{dt}$$
+
+频域表示:
+
+$$H(j\omega) = -j\omega R_f C$$
+
+特点:
+
+- 高频增益高 (高通特性)
+- 容易放大高频噪声
+- 实际应用中需加限流电阻
+
+应用: 边缘检测，脉冲整形
+
+* 半导体的基本知识
+
+** 半导体材料
+
+半导体是导电性介于导体和绝缘体之间的材料。
+
+*** 常见半导体材料
+
+- *硅 (Si)*: 最常用，带隙 $E_g = 1.12$ eV (300 K)
+- *锗 (Ge)*: 早期使用，$E_g = 0.66$ eV
+- *砷化镓 (GaAs)*: 高频应用，$E_g = 1.43$ eV
+- *碳化硅 (SiC)*: 高温、高压应用
+
+*** 本征半导体 (Intrinsic Semiconductor)
+
+纯净的半导体材料，载流子浓度:
+
+$$n_i = p_i = \sqrt{N_c N_v} e^{-E_g / 2kT}$$
+
+其中:
+
+- $n_i$: 本征电子浓度
+- $p_i$: 本征空穴浓度
+- $N_c, N_v$: 导带和价带的有效态密度
+- $E_g$: 带隙能量
+- $k$: 玻尔兹曼常数
+- $T$: 绝对温度
+
+对于硅，室温下 $n_i \approx 1.5 \times 10^{10}$ cm$^{-3}$
+
+*** 掺杂半导体 (Extrinsic Semiconductor)
+
+通过掺入杂质改变载流子浓度。
+
+*N 型半导体* (N-type):
+
+掺入施主杂质 (如磷 P, 砷 As)，提供自由电子。
+
+- 多数载流子: 电子 ($n \approx N_D$)
+- 少数载流子: 空穴 ($p \approx n_i^2 / N_D$)
+
+*P 型半导体* (P-type):
+
+掺入受主杂质 (如硼 B, 铝 Al)，提供空穴。
+
+- 多数载流子: 空穴 ($p \approx N_A$)
+- 少数载流子: 电子 ($n \approx n_i^2 / N_A$)
+
+质量作用定律:
+
+$$n \cdot p = n_i^2$$
+
+** 载流子的运动机制
+
+半导体中的载流子通过两种主要机制运动: *漂移* 和 *扩散*。
+
+*** 漂移 (Drift)
+
+在电场作用下，载流子定向移动。
+
+*漂移电流密度*:
+
+$$J_{drift} = q n \mu_n E + q p \mu_p E = \sigma E$$
+
+其中:
+
+- $q$: 电子电荷量 ($1.6 \times 10^{-19}$ C)
+- $n, p$: 电子和空穴浓度
+- $\mu_n, \mu_p$: 电子和空穴迁移率
+- $E$: 电场强度
+- $\sigma$: 电导率
+
+迁移率 $\mu$ 定义为:
+
+$$\mu = \frac{v_d}{E}$$
+
+其中 $v_d$ 是漂移速度。
+
+*** 扩散 (Diffusion)
+
+由于浓度梯度，载流子从高浓度区向低浓度区移动。
+
+*扩散电流密度*:
+
+$$J_{diff,n} = q D_n \frac{dn}{dx}$$
+
+$$J_{diff,p} = -q D_p \frac{dp}{dx}$$
+
+其中 $D_n, D_p$ 是电子和空穴的扩散系数。
+
+Einstein 关系:
+
+$$\frac{D}{\mu} = \frac{kT}{q} = V_T$$
+
+其中 $V_T$ 是热电压 (室温下约 26 mV)。
+
+* PN 结的形成与特性
+
+** 载流子的漂移与扩散
+
+在 PN 结中，漂移和扩散同时存在并达到平衡。
+
+*** 平衡态的 PN 结
+
+总电流密度:
+
+$$J_{total} = J_{drift} + J_{diff} = 0$$
+
+对于电子:
+
+$$q n \mu_n E + q D_n \frac{dn}{dx} = 0$$
+
+对于空穴:
+
+$$q p \mu_p E - q D_p \frac{dp}{dp} = 0$$
+
+** PN 结的形成
+
+当 P 型和 N 型半导体接触时:
+
+1. *扩散过程*:
+   - N 区的电子向 P 区扩散
+   - P 区的空穴向 N 区扩散
+   - 在结附近留下电离的施主离子 ($N_D^+$) 和受主离子 ($N_A^-$)
+
+2. *空间电荷区形成*:
+   - N 侧: 正电荷区 (失去电子)
+   - P 侧: 负电荷区 (失去空穴)
+   - 形成内建电场，方向从 N 指向 P
+
+3. *漂移过程*:
+   - 内建电场驱动少数载流子漂移
+   - 电子从 P 区漂移到 N 区
+   - 空穴从 N 区漂移到 P 区
+
+4. *平衡态*:
+   - 扩散电流 = 漂移电流
+   - 净电流为零
+
+*** 内建电势 (Built-in Potential)
+
+$$V_{bi} = V_T \ln\left(\frac{N_A N_D}{n_i^2}\right)$$
+
+对于硅，典型值 $V_{bi} \approx 0.6 \sim 0.7$ V
+
+*** 耗尽区宽度 (Depletion Width)
+
+$$W = \sqrt{\frac{2\epsilon_s}{q} \left(\frac{1}{N_A} + \frac{1}{N_D}\right) V_{bi}}$$
+
+其中 $\epsilon_s$ 是半导体的介电常数。
+
+** PN 结的单向导电性
+
+*** 正向偏置 (Forward Bias)
+
+P 区接正极，N 区接负极，$V_A > 0$。
+
+效果:
+
+- 外加电场与内建电场方向相反
+- 势垒降低: $V_{bi} - V_A$
+- 扩散电流 >> 漂移电流
+- 大量载流子注入，形成正向电流
+
+正向电流 (指数增长):
+
+$$I = I_S \left(e^{qV_A / kT} - 1\right) \approx I_S e^{V_A / V_T}$$
+
+*** 反向偏置 (Reverse Bias)
+
+P 区接负极，N 区接正极，$V_A < 0$。
+
+效果:
+
+- 外加电场与内建电场方向相同
+- 势垒升高: $V_{bi} + |V_A|$
+- 扩散电流 << 漂移电流
+- 主要是少数载流子的漂移，形成反向饱和电流
+
+反向电流 (饱和):
+
+$$I \approx -I_S$$
+
+其中 $I_S$ 是反向饱和电流 (典型值 $10^{-12} \sim 10^{-9}$ A)。
+
+*** 理想二极管方程 (Shockley Equation)
+
+$$I = I_S \left(e^{qV_A / \eta kT} - 1\right)$$
+
+其中 $\eta$ 是理想因子 (理想情况 $\eta = 1$，实际约 1~2)。
+
+** PN 结的反向击穿
+
+当反向电压超过一定值时，反向电流急剧增加。
+
+*** 雪崩击穿 (Avalanche Breakdown)
+
+机制:
+
+- 载流子在强电场中加速
+- 碰撞晶格原子，产生新的电子-空穴对
+- 雪崩式倍增效应
+
+特点:
+
+- 发生在轻掺杂、宽耗尽区的 PN 结
+- 击穿电压较高 (> 6~7 V)
+
+*** 齐纳击穿 (Zener Breakdown)
+
+机制:
+
+- 强电场直接将价带电子激发到导带 (场致电离)
+- 不需要载流子碰撞
+
+特点:
+
+- 发生在重掺杂、窄耗尽区的 PN 结
+- 击穿电压较低 (< 6 V)
+
+** PN 结的电容效应
+
+*** 势垒电容 (Depletion Capacitance) $C_j$
+
+由耗尽区电荷随电压变化产生:
+
+$$C_j = \frac{dQ}{dV} = \frac{C_{j0}}{\sqrt{1 - V_A / V_{bi}}}$$
+
+其中 $C_{j0}$ 是零偏置时的势垒电容。
+
+特点:
+
+- 反向偏置时主要电容
+- 随反向电压增大而减小
+
+*** 扩散电容 (Diffusion Capacitance) $C_d$
+
+由少数载流子存储效应产生:
+
+$$C_d = \frac{\tau_T}{V_T} I$$
+
+其中 $\tau_T$ 是少数载流子渡越时间。
+
+特点:
+
+- 正向偏置时主要电容
+- 与正向电流成正比
+
+* 二极管
+
+二极管是最基本的半导体器件，基于单个 PN 结。
+
+** 二极管的伏安特性
+
+*** 理想特性
+
+$$I = I_S \left(e^{V/\eta V_T} - 1\right)$$
+
+*** 实际特性的修正
+
+1. *串联电阻* $r_s$: 体电阻和接触电阻
+2. *并联电阻* $r_p$: 表面漏电流
+3. *温度效应*: $I_S$ 随温度指数增长
+
+实际电压:
+
+$$V_{actual} = V_{ideal} + I \cdot r_s$$
+
+** 二极管的主要参数
+
+1. *正向压降* $V_F$: 额定电流下的正向电压
+   - 硅二极管: 0.6~0.7 V
+   - 锗二极管: 0.2~0.3 V
+
+2. *反向饱和电流* $I_S$: 反向偏置时的漏电流
+
+3. *最大反向电压* $V_{RRM}$: 不发生击穿的最大反向电压
+
+4. *最大正向电流* $I_{FM}$: 允许的最大正向电流
+
+5. *开关时间*:
+   - 正向恢复时间 $t_{fr}$
+   - 反向恢复时间 $t_{rr}$
+
+** 二极管的基本电路及其分析方法
+
+*** 理想模型
+
+- 正向导通: $V_D = 0$, $R_D = 0$
+- 反向截止: $I_D = 0$, $R_D = \infty$
+
+*** 恒压降模型
+
+- 正向导通: $V_D = V_{D,on}$ (0.7 V for Si)
+- 反向截止: $I_D = 0$
+
+*** 小信号模型
+
+在工作点附近线性化:
+
+$$r_d = \frac{dV}{dI} = \frac{\eta V_T}{I_Q}$$
+
+其中 $I_Q$ 是静态工作点电流。
+
+*** 图解法
+
+在 $I$​-​$V$ 坐标上:
+
+1. 画出二极管特性曲线
+2. 画出外电路负载线
+3. 交点即为工作点
+
+*** 迭代法
+
+对于复杂电路，假设二极管导通/截止状态，计算验证，迭代直到一致。
+
+** 特殊二极管 (较不重要)
+
+*** 齐纳二极管 (Zener Diode)
+
+利用反向击穿特性工作的二极管。
+
+特点:
+
+- 反向击穿电压稳定 (温度系数小)
+- 可作为电压基准
+
+应用: 稳压电路，电压箝位
+
+稳压电路:
+
+- 反向偏置，工作在击穿区
+- 输出电压 $V_o \approx V_Z$ (齐纳电压)
+
+*** 变容二极管 (Varactor Diode)
+
+利用 PN 结势垒电容随电压变化的特性。
+
+$$C_j(V) = \frac{C_{j0}}{\sqrt{1 - V/V_{bi}}}$$
+
+应用: 电压控制振荡器 (VCO)，自动频率控制 (AFC)
+
+*** 肖特基二极管 (Schottky Diode)
+
+金属-半导体结 (而非 PN 结)。
+
+特点:
+
+- 正向压降低 (0.2~0.4 V)
+- 开关速度快 (无少数载流子存储效应)
+- 反向漏电流较大
+
+应用: 高频整流，低压降整流，高速开关电路
+
+*** 光电器件
+
+*发光二极管* (LED):
+
+- 正向偏置时，电子-空穴复合发光
+- 发光波长取决于半导体材料的带隙
+
+$$\lambda = \frac{hc}{E_g}$$
+
+*光电二极管* (Photodiode):
+
+- 反向偏置工作
+- 光照产生光生载流子，增大反向电流
+- 光电流与光强成正比
+
+应用: 光检测，光通信接收
+
+*太阳能电池* (Solar Cell):
+
+- 光照下的 PN 结产生光生电压 (光伏效应)
+- 可将光能转换为电能
+
+* 参考文献与资料来源
+
+本笔记基于以下权威资料编写:
+
+1. Sergio Franco, /Design with Operational Amplifiers and Analog Integrated Circuits/, McGraw-Hill Education
+   - [[https://zakerhaghighi.ir/wp-content/uploads/2017/09/Sergio-Franco-Design-With-Operational-Amplifiers-And-Analog-Integrated-Circuits-McGraw-Hill-Series-in-Electrical-and-Computer-Engineering-c2015.pdf]]
+
+2. Texas Instruments, /Op Amps for Everyone Design Guide/
+   - [[https://web.mit.edu/6.101/www/reference/op_amps_everyone.pdf]]
+
+3. Analog Devices, /Basic Linear Design Handbook/
+   - [[https://www.analog.com/media/en/training-seminars/design-handbooks/basic-linear-design/chapter1.pdf]]
+
+4. University of Oxford, /Semiconductor Devices Lecture Notes/, R.A. Taylor
+   - [[https://users.physics.ox.ac.uk/~rtaylor/teaching/devices/Lecture1&2.pdf]]
+
+5. PVEducation.org, /PN Junction Physics/
+   - [[https://www.pveducation.org/pvcdrom/pn-junctions]]
+
+6. Wikipedia: Diffusion Current, Drift Current
+   - [[https://en.wikipedia.org/wiki/Diffusion_current]]
+   - [[https://en.wikipedia.org/wiki/Drift_current]]
+
+7. AllAboutCircuits.com, /Precision Diode Circuits/
+   - [[https://www.allaboutcircuits.com/worksheets/precise-diode-circuits/]]
+
+8. Electronics-Tutorials.ws, /Operational Amplifier Basics/
+   - [[https://www.electronics-tutorials.ws/opamp/opamp_1.html]]

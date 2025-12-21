@@ -1,0 +1,1075 @@
+#+title: Git Commit Message Standards: From Conventional Commits to Automated Releases
+#+author: SOV710
+#+date: 2025-12-21
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 核心概念: Conventional Commits 规范
+
+Conventional Commits 是一个 *轻量级的约定*​，定义了 commit message 的标准格式。它由 [[https://www.conventionalcommits.org][Conventional Commits 规范]] 正式定义，灵感来自 Angular 团队的 commit guidelines。
+
+** 为什么需要规范化 commit message？
+
+考虑以下两种 commit 历史:
+
+#+begin_example
+# 糟糕的示例
+a896f446e Fixed lint issues
+0d451df6a Fixed build issue
+d48e6d7e5 Update vcp mobile
+0d9c922a3 Fixed lint issue
+5085b3ac9 Removed logs
+0aa1b7acf Tests for use
+
+# 规范的示例
+feat(auth): add OAuth2 login flow
+fix(ui): correct button alignment on dashboard
+docs(readme): update installation instructions
+test(auth): add unit tests for token validation
+perf(db): optimize user query with composite index
+#+end_example
+
+第二种方式让你 *一眼就能看出*:
+- 哪个 commit 引入了新功能 (=feat=)
+- 哪个修复了 bug (=fix=)
+- 哪个影响了哪个模块 (=auth=, =ui=, =db=)
+
+更重要的是，这种结构化的格式可以被 *机器解析*，用于:
+- *自动生成 CHANGELOG* (不再手写发布说明)
+- *自动计算版本号* (根据 Semantic Versioning)
+- *自动触发 CI/CD 流程* (比如 =feat= 触发部署到 staging)
+
+** 基本结构
+
+Conventional Commits 的完整格式:
+
+#+begin_example
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+#+end_example
+
+*** 必需部分
+
+1. *=type=*: commit 的类型 (见下节)
+2. *=description=*: 简短描述，使用 *祈使句* (如 "add feature"，不是 "added" 或 "adds")
+
+*** 可选部分
+
+1. *=scope=*: 影响范围，放在括号中 (如 =feat(parser)=)
+   - 在 monorepo 中标识包名 (=feat(api)=, =fix(ui)=)
+   - 标识子系统 (=refactor(auth)=, =perf(cache)=)
+
+2. *=body=*: 详细说明，用空行与 description 分隔
+   - 解释 *为什么* 做这个修改
+   - 提供实现细节
+   - 列出副作用
+
+3. *=footer=*: 元数据，用于:
+   - 引用 issue: =Fixes #123=, =Closes #456=
+   - 标识 breaking change: =BREAKING CHANGE: description=
+   - 标注合作者: =Co-authored-by: Name <email>=
+
+*** 示例: 完整的 commit message
+
+#+begin_example
+feat(api): add rate limiting to user endpoints
+
+Implement token bucket algorithm to prevent API abuse.
+Rate limit is set to 100 requests per minute per user.
+
+This change affects all authenticated endpoints and may
+require clients to implement exponential backoff.
+
+BREAKING CHANGE: API now returns 429 status code instead
+of 503 when rate limit is exceeded.
+
+Refs: #789
+Co-authored-by: Alice <alice@example.com>
+#+end_example
+
+* Commit Message 类型 (Types)
+
+以下类型基于 [[https://github.com/conventional-changelog/commitlint/tree/master/@commitlint/config-conventional][@commitlint/config-conventional]] 规范 (Angular 约定):
+
+** 核心类型表
+
+| Type     | Description                                                  | Example                               | 版本影响 |
+|----------+--------------------------------------------------------------+---------------------------------------+---------|
+| =feat=     | A new feature                                                | =feat: add login endpoint=              | MINOR   |
+| =fix=      | A bug fix                                                    | =fix: correct token expiration logic=   | PATCH   |
+| =docs=     | Documentation only changes                                   | =docs: update README with usage info=   | -       |
+| =style=    | Code style changes (formatting, whitespace, no code changes) | =style: reformat with Black=            | -       |
+| =refactor= | Code change that neither fixes a bug nor adds a feature      | =refactor: simplify conditionals=       | -       |
+| =perf=     | Code change that improves performance                        | =perf: optimize query with index=       | PATCH   |
+| =test=     | Adding or updating tests                                     | =test: add unit test for auth flow=     | -       |
+| =chore=    | Maintenance tasks (e.g., build process, dependency updates)  | =chore: update dependencies=            | -       |
+| =build=    | Changes affecting the build system or external dependencies  | =build: switch to webpack 5=            | -       |
+| =ci=       | Changes to CI/CD configuration                               | =ci: add GitHub Actions workflow=       | -       |
+| =revert=   | Reverts a previous commit                                    | =revert: fix: correct token expiration= | 视情况   |
+
+** 类型详解
+
+*** =feat=: 新功能
+
+*触发 MINOR 版本更新* (如 =1.2.3= → =1.3.0=)。
+
+#+begin_src text
+feat(auth): implement OAuth2 authorization code flow
+feat(ui): add dark mode toggle
+feat(api): support GraphQL subscriptions
+#+end_src
+
+*使用场景*:
+- 用户可见的新功能
+- 新的 API endpoint
+- 新的命令行选项
+
+*** =fix=: Bug 修复
+
+*触发 PATCH 版本更新* (如 =1.2.3= → =1.2.4=)。
+
+#+begin_src text
+fix(parser): handle null values in JSON arrays
+fix(ui): prevent double-click on submit button
+fix(db): close connection pool on shutdown
+#+end_src
+
+*使用场景*:
+- 修复已知 bug
+- 处理 edge case
+- 安全补丁
+
+*** =docs=: 文档更新
+
+*不触发版本更新*。
+
+#+begin_src text
+docs(api): add examples for authentication endpoints
+docs(readme): fix broken links in installation guide
+docs(contributing): update code style guidelines
+#+end_src
+
+*使用场景*:
+- README, CONTRIBUTING, API 文档
+- 代码注释修改
+- JSDoc/Javadoc/docstring 更新
+
+*** =style=: 代码风格
+
+*不触发版本更新*。代码 *语义* 没有改变，只是格式调整。
+
+#+begin_src text
+style: run prettier on all source files
+style(tests): add missing semicolons
+style: fix indentation in config files
+#+end_src
+
+*使用场景*:
+- 自动格式化 (Prettier, Black, rustfmt)
+- 修复 linter warnings (未使用的 import, 空格)
+- 不影响运行时行为
+
+*** =refactor=: 重构
+
+*不触发版本更新*。既不修 bug，也不加功能，只是改进代码结构。
+
+#+begin_src text
+refactor(auth): extract token validation into separate module
+refactor: replace callbacks with async/await
+refactor(ui): migrate class components to hooks
+#+end_src
+
+*使用场景*:
+- 提取重复代码
+- 简化复杂逻辑
+- 改进命名
+
+*** =perf=: 性能优化
+
+*可能触发 PATCH 版本更新*。
+
+#+begin_src text
+perf(db): add index on user_id column
+perf(render): memoize expensive calculations
+perf: reduce bundle size by lazy loading routes
+#+end_src
+
+*使用场景*:
+- 算法优化
+- 数据库查询优化
+- 减少内存分配
+
+*** =test=: 测试
+
+*不触发版本更新*。
+
+#+begin_src text
+test(auth): add integration tests for login flow
+test: increase code coverage to 90%
+test(api): add property-based tests for validation
+#+end_src
+
+*使用场景*:
+- 添加新测试
+- 修复 flaky test
+- 更新测试配置
+
+*** =chore=: 杂务
+
+*不触发版本更新*。维护性任务，不影响生产代码。
+
+#+begin_src text
+chore: update dependencies to latest versions
+chore: add .gitignore for IDE files
+chore(release): bump version to 2.0.0
+#+end_src
+
+*使用场景*:
+- 依赖更新
+- 配置文件修改
+- 工具链升级
+
+*** =build=: 构建系统
+
+*不触发版本更新*。影响构建过程或外部依赖。
+
+#+begin_src text
+build: migrate from webpack to vite
+build(docker): optimize multi-stage build
+build: add esbuild for faster development builds
+#+end_src
+
+*使用场景*:
+- 构建工具配置 (webpack, rollup, vite)
+- Docker/Makefile 修改
+- 依赖管理 (package.json, Cargo.toml)
+
+*** =ci=: 持续集成
+
+*不触发版本更新*。
+
+#+begin_src text
+ci: add automated release workflow
+ci(github): enable dependabot for security updates
+ci: cache node_modules in CI pipeline
+#+end_src
+
+*使用场景*:
+- GitHub Actions, GitLab CI, Jenkins 配置
+- 测试矩阵修改
+- Deploy 脚本
+
+*** =revert=: 回滚
+
+*版本影响视被回滚的 commit 而定*。
+
+#+begin_src text
+revert: feat(auth): implement OAuth2
+
+This reverts commit 1234567.
+Reason: OAuth2 integration causing timeout issues in production.
+#+end_src
+
+*注意*: Angular 规范要求特定格式:
+
+#+begin_example
+revert: <header of reverted commit>
+
+This reverts commit <hash>.
+#+end_example
+
+如果用 =git revert= 自动生成，记得用 =--edit= 修改为符合规范的格式。
+
+* BREAKING CHANGE: 不兼容变更
+
+*触发 MAJOR 版本更新* (如 =1.2.3= → =2.0.0=)。
+
+有两种标识方式:
+
+** 方式 1: 类型后加 =!=
+
+#+begin_src text
+feat!: drop support for Node.js 12
+
+Node.js 12 reached end-of-life. Minimum version is now 14.
+#+end_src
+
+或带 scope:
+
+#+begin_src text
+refactor(api)!: rename /users endpoint to /accounts
+#+end_src
+
+** 方式 2: Footer 中声明
+
+#+begin_src text
+feat(api): add pagination to user list endpoint
+
+BREAKING CHANGE: /users endpoint now requires `page` and
+`limit` query parameters. Default page size is 20.
+#+end_src
+
+** 为什么需要显式标记？
+
+Breaking change 意味着:
+- API 接口变更 (删除参数, 改变返回值)
+- 配置文件格式改变
+- 删除已废弃的功能
+- 行为变更 (如默认值修改)
+
+用户升级时 *必须修改代码*，所以需要在 MAJOR 版本号上体现。
+
+** 示例: 多个 breaking change
+
+#+begin_src text
+feat(auth)!: redesign authentication system
+
+- Replace JWT with session-based auth
+- Remove `/auth/token` endpoint
+- Add `/auth/login` and `/auth/logout` endpoints
+
+BREAKING CHANGE: JWT authentication is no longer supported.
+Migrate to session-based auth by calling `/auth/login`.
+
+BREAKING CHANGE: Token refresh is now automatic via cookies,
+manual refresh endpoint `/auth/refresh` has been removed.
+
+Refs: #456
+#+end_src
+
+* 与 Semantic Versioning 的关系
+
+Conventional Commits *完美契合* [[https://semver.org][Semantic Versioning (SemVer)]]。
+
+** SemVer 规则回顾
+
+版本号格式: =MAJOR.MINOR.PATCH= (如 =2.3.5=)
+
+- *MAJOR*: 不兼容的 API 变更
+- *MINOR*: 向后兼容的新功能
+- *PATCH*: 向后兼容的 bug 修复
+
+** Commit 类型与版本号映射
+
+| Commit 类型                    | 版本影响 | 示例                |
+|-------------------------------+----------+---------------------|
+| =fix:= 类型                    | PATCH    | =1.0.0= → =1.0.1=   |
+| =feat:= 类型                   | MINOR    | =1.0.1= → =1.1.0=   |
+| 任何类型 + =BREAKING CHANGE=   | MAJOR    | =1.1.0= → =2.0.0=   |
+| =docs:=, =style:=, =test:= 等  | -        | 不发布新版本        |
+
+** 自动化版本管理
+
+工具可以通过扫描 commit 历史 *自动计算下一个版本号*:
+
+#+begin_example
+上一版本: 1.2.3
+新增 commits:
+  - fix(ui): correct button color        → PATCH
+  - feat(api): add user search endpoint  → MINOR
+  - docs: update API reference           → (忽略)
+
+计算结果: 1.3.0 (MINOR 优先级高于 PATCH)
+#+end_example
+
+如果有 =BREAKING CHANGE=:
+
+#+begin_example
+上一版本: 1.3.0
+新增 commits:
+  - refactor(api)!: remove deprecated endpoints
+
+计算结果: 2.0.0
+#+end_example
+
+* 工具链: 从规范到自动化
+
+** Commitizen: 交互式 commit 工具
+
+[[https://github.com/commitizen/cz-cli][Commitizen]] 提供一个向导式界面，帮你填写符合规范的 commit message。
+
+*** 安装
+
+#+begin_src bash
+# 全局安装
+npm install -g commitizen
+
+# 项目初始化 (使用 conventional-changelog 适配器)
+commitizen init cz-conventional-changelog --save-dev --save-exact
+#+end_src
+
+*** 使用
+
+#+begin_src bash
+# 替代 git commit
+git add .
+git cz  # 或 cz commit
+#+end_src
+
+交互式提示:
+
+#+begin_example
+? Select the type of change that you're committing: (Use arrow keys)
+❯ feat:     A new feature
+  fix:      A bug fix
+  docs:     Documentation only changes
+  style:    Changes that do not affect the meaning of the code
+  refactor: A code change that neither fixes a bug nor adds a feature
+  perf:     A code change that improves performance
+  test:     Adding missing tests
+
+? What is the scope of this change (e.g. component or file name): (press enter to skip)
+  api
+
+? Write a short, imperative tense description of the change:
+  add rate limiting to user endpoints
+
+? Provide a longer description of the change: (press enter to skip)
+  Implement token bucket algorithm with 100 req/min limit
+
+? Are there any breaking changes?
+  Yes
+
+? Describe the breaking changes:
+  API now returns 429 instead of 503 for rate limit errors
+
+? Does this change affect any open issues?
+  Yes
+
+? Add issue references (e.g. "fix #123", "re #123".):
+  Refs #789
+#+end_example
+
+最终生成:
+
+#+begin_src text
+feat(api): add rate limiting to user endpoints
+
+Implement token bucket algorithm with 100 req/min limit
+
+BREAKING CHANGE: API now returns 429 instead of 503 for rate limit errors
+
+Refs #789
+#+end_src
+
+** Commitlint: Commit Message 校验
+
+[[https://commitlint.js.org][commitlint]] 用于 *检查* commit message 是否符合规范。
+
+*** 安装
+
+#+begin_src bash
+npm install --save-dev @commitlint/cli @commitlint/config-conventional
+#+end_src
+
+*** 配置
+
+创建 =commitlint.config.js=:
+
+#+begin_src javascript
+module.exports = {
+  extends: ['@commitlint/config-conventional'],
+  rules: {
+    'type-enum': [
+      2,
+      'always',
+      [
+        'feat', 'fix', 'docs', 'style', 'refactor',
+        'perf', 'test', 'chore', 'build', 'ci', 'revert'
+      ]
+    ],
+    'subject-case': [2, 'always', 'lower-case'],
+    'header-max-length': [2, 'always', 72]
+  }
+};
+#+end_src
+
+*** 手动测试
+
+#+begin_src bash
+echo "fix: correct typo" | npx commitlint
+# ✔   found 0 problems, 0 warnings
+
+echo "totally wrong commit" | npx commitlint
+# ⧗   input: totally wrong commit
+# ✖   subject may not be empty [subject-empty]
+# ✖   type may not be empty [type-empty]
+# ✖   found 2 problems, 0 warnings
+#+end_src
+
+** Husky: Git Hooks 管理
+
+[[https://typicode.github.io/husky][Husky]] 让你轻松设置 Git hooks (在 commit/push 前执行脚本)。
+
+*** 安装
+
+#+begin_src bash
+npm install --save-dev husky
+npx husky init
+#+end_src
+
+*** 添加 commit-msg hook
+
+#+begin_src bash
+# 创建 .husky/commit-msg
+npx husky add .husky/commit-msg 'npx --no -- commitlint --edit $1'
+#+end_src
+
+或手动创建 =.husky/commit-msg=:
+
+#+begin_src bash
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+npx --no -- commitlint --edit $1
+#+end_src
+
+*** 添加 prepare-commit-msg hook (集成 Commitizen)
+
+#+begin_src bash
+npx husky add .husky/prepare-commit-msg 'exec < /dev/tty && git cz --hook || true'
+#+end_src
+
+现在 =git commit= 会自动触发 Commitizen 向导！
+
+*** 完整工作流
+
+#+begin_src bash
+git add .
+git commit  # 自动启动 Commitizen 向导
+            # 填写完毕后, commitlint 自动校验
+            # 如果不符合规范, 拒绝 commit
+#+end_src
+
+** Standard-Version: 自动化版本管理
+
+[[https://github.com/conventional-changelog/standard-version][Standard-Version]] 根据 commit 历史 *自动*:
+1. 计算下一个版本号
+2. 更新 =package.json=
+3. 生成 =CHANGELOG.md=
+4. 创建 Git tag
+
+*** 安装
+
+#+begin_src bash
+npm install --save-dev standard-version
+#+end_src
+
+在 =package.json= 中添加:
+
+#+begin_src json
+{
+  "scripts": {
+    "release": "standard-version"
+  }
+}
+#+end_src
+
+*** 使用
+
+#+begin_src bash
+# 假设当前版本: 1.2.3
+# 新增 commits:
+#   - fix(ui): button color
+#   - feat(api): search endpoint
+
+npm run release
+
+# 自动执行:
+#   1. 分析 commits → 确定版本号为 1.3.0 (MINOR)
+#   2. 更新 package.json 的 version 字段
+#   3. 生成 CHANGELOG.md
+#   4. git add package.json CHANGELOG.md
+#   5. git commit -m "chore(release): 1.3.0"
+#   6. git tag v1.3.0
+#+end_src
+
+*** 生成的 CHANGELOG.md
+
+#+begin_example
+# Changelog
+
+## [1.3.0](https://github.com/user/repo/compare/v1.2.3...v1.3.0) (2025-12-21)
+
+### Features
+
+* **api:** add search endpoint ([a1b2c3d](https://github.com/user/repo/commit/a1b2c3d))
+
+### Bug Fixes
+
+* **ui:** correct button color ([e4f5g6h](https://github.com/user/repo/commit/e4f5g6h))
+#+end_example
+
+*** 高级用法
+
+#+begin_src bash
+# 预发布版本
+npm run release -- --prerelease alpha
+# 1.2.3 → 1.3.0-alpha.0
+
+# 强制指定版本类型
+npm run release -- --release-as minor
+# 1.2.3 → 1.3.0 (即使只有 fix commits)
+
+# 首次发布
+npm run release -- --first-release
+# 生成 CHANGELOG 但不更新版本号
+
+# 干运行 (查看会发生什么)
+npm run release -- --dry-run
+#+end_src
+
+** Semantic-Release: 完全自动化发布
+
+[[https://semantic-release.gitbook.io][semantic-release]] 是更激进的自动化方案，在 CI/CD 中 *自动发布* 新版本。
+
+*** 与 Standard-Version 的区别
+
+| 特性           | Standard-Version              | semantic-release              |
+|----------------+-------------------------------+-------------------------------|
+| 版本计算       | ✅ 自动                       | ✅ 自动                       |
+| CHANGELOG 生成 | ✅ 自动                       | ✅ 自动                       |
+| Git tag        | ✅ 创建 (本地)                 | ✅ 创建并推送                 |
+| npm publish    | ❌ 需手动                     | ✅ 自动发布到 npm registry    |
+| GitHub Release | ❌ 需手动                     | ✅ 自动创建 release notes     |
+| 适用场景       | 本地开发, 手动审查             | CI/CD, 完全自动化             |
+
+*** 安装
+
+#+begin_src bash
+npm install --save-dev semantic-release
+#+end_src
+
+*** 配置 (.releaserc.json)
+
+#+begin_src json
+{
+  "branches": ["main"],
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    "@semantic-release/changelog",
+    "@semantic-release/npm",
+    "@semantic-release/github",
+    "@semantic-release/git"
+  ]
+}
+#+end_src
+
+*** GitHub Actions 集成
+
+=.github/workflows/release.yml=:
+
+#+begin_src yaml
+name: Release
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # 获取完整 Git 历史
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+      - run: npm ci
+      - run: npx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+#+end_src
+
+*** 工作流程
+
+1. 开发者 push commits 到 =main= 分支
+2. GitHub Actions 触发
+3. semantic-release 分析 commits
+4. 如果有 =feat= 或 =fix=:
+   - 计算新版本号
+   - 生成 CHANGELOG
+   - 更新 =package.json=
+   - 创建 Git tag
+   - *发布到 npm*
+   - *创建 GitHub Release*
+5. 如果只有 =docs=, =chore= 等: 不发布
+
+*** Commit 类型与版本映射 (默认)
+
+#+begin_example
+Commit                                    | Release Type
+------------------------------------------+--------------
+fix(ui): button color                     | Patch (1.0.1)
+feat(api): new endpoint                   | Minor (1.1.0)
+perf(db): optimize query                  | Patch (1.0.1)
+BREAKING CHANGE: remove old API           | Major (2.0.0)
+docs(readme): fix typo                    | No Release
+style, refactor, test, chore              | No Release
+#+end_example
+
+可以通过 =releaseRules= 自定义:
+
+#+begin_src json
+{
+  "plugins": [
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "releaseRules": [
+          { "type": "docs", "scope": "README", "release": "patch" },
+          { "type": "refactor", "release": "patch" },
+          { "type": "perf", "release": "patch" }
+        ]
+      }
+    ]
+  ]
+}
+#+end_src
+
+* 最佳实践
+
+** 1. 原子性 Commit
+
+*每个 commit 只做一件事*。
+
+❌ 不好:
+
+#+begin_src text
+feat: add login, fix bug, update docs
+
+- Implement OAuth2 login
+- Fix button color in dashboard
+- Update README
+#+end_src
+
+✅ 好:
+
+#+begin_src text
+feat(auth): implement OAuth2 login
+fix(ui): correct dashboard button color
+docs(readme): add OAuth2 setup guide
+#+end_src
+
+** 2. 描述使用祈使句
+
+*用 "add"，不是 "added" 或 "adds"*。
+
+这遵循 Git 本身的约定 (如 =git merge= 生成的 commit: "Merge branch 'feature'"，而不是 "Merged")。
+
+❌ 不好:
+
+#+begin_src text
+feat: added user search
+fix: fixed login bug
+#+end_src
+
+✅ 好:
+
+#+begin_src text
+feat: add user search
+fix: correct login token validation
+#+end_src
+
+** 3. Header 长度限制
+
+*保持 header (第一行) 在 50-72 字符以内*。
+
+这是 Git 的传统 (源自 Linux 内核团队)，原因:
+- =git log --oneline= 显示完整
+- GitHub/GitLab UI 不会截断
+- 强迫你写简洁的描述
+
+如果需要更多细节，写在 body 中。
+
+** 4. Body 解释 "为什么"
+
+Header 说 "做了什么"，body 说 "为什么这样做"。
+
+#+begin_src text
+refactor(cache): replace Redis with in-memory LRU cache
+
+Redis dependency adds 50MB to Docker image and requires
+separate service deployment. For our use case (session
+storage with <1000 concurrent users), in-memory cache
+is sufficient and reduces operational complexity.
+
+Benchmark shows equivalent performance for our load.
+#+end_src
+
+** 5. Scope 保持一致
+
+在团队内统一 scope 的命名:
+
+#+begin_example
+# 单体应用
+feat(auth): ...
+feat(ui): ...
+feat(db): ...
+
+# Monorepo
+feat(api): ...      # packages/api
+feat(web): ...      # packages/web
+feat(mobile): ...   # packages/mobile
+
+# 微服务
+feat(user-service): ...
+feat(payment-service): ...
+#+end_example
+
+可以在 =commitlint.config.js= 中强制:
+
+#+begin_src javascript
+module.exports = {
+  rules: {
+    'scope-enum': [
+      2,
+      'always',
+      ['auth', 'ui', 'db', 'api', 'docs']
+    ]
+  }
+};
+#+end_src
+
+** 6. 善用 Footer
+
+*** 关联 Issue
+
+#+begin_src text
+fix(api): prevent race condition in user creation
+
+Fixes #123
+Refs #456, #789
+#+end_src
+
+GitHub/GitLab 会:
+- 在 issue 中显示关联的 commit
+- =Fixes/Closes= 会在 PR 合并时 *自动关闭 issue*
+
+*** 标注协作者
+
+#+begin_src text
+feat(search): implement fuzzy matching
+
+Co-authored-by: Alice <alice@example.com>
+Co-authored-by: Bob <bob@example.com>
+#+end_src
+
+** 7. Squash vs Merge 策略
+
+*PR 合并策略* 影响 commit 历史:
+
+*** Squash Merge (推荐用于 Conventional Commits)
+
+所有 commits 合并为一个:
+
+#+begin_example
+PR 中的 commits:
+  - WIP: start feature
+  - fix typo
+  - address review comments
+
+Squash 后:
+  feat(search): implement fuzzy matching
+#+end_example
+
+*优点*:
+- 主分支历史干净，一个 PR = 一个 commit
+- 方便 semantic-release 分析
+
+*缺点*:
+- 丢失 PR 内部的详细历史
+
+*** Merge Commit
+
+保留所有 commits:
+
+#+begin_example
+  feat(search): start implementation
+  fix: correct regex pattern
+  docs: add usage example
+  Merge pull request #123 from user/feature
+#+end_example
+
+*优点*:
+- 保留完整历史
+
+*缺点*:
+- 主分支历史混乱，包含 "fix typo" 等噪音
+
+*** Rebase Merge
+
+将 PR commits 线性应用到主分支:
+
+#+begin_example
+feat(search): start implementation
+fix: correct regex pattern
+docs: add usage example
+#+end_example
+
+*优点*:
+- 线性历史
+- 保留所有 commits
+
+*缺点*:
+- 如果 PR 中有不符合规范的 commits，会污染主分支
+
+*建议*:
+- 如果使用 semantic-release/standard-version: 用 *Squash Merge*
+- 如果团队严格遵守规范: Rebase Merge 也可以
+
+** 8. 处理 WIP Commits
+
+开发过程中可能有很多 "WIP" commits:
+
+#+begin_example
+WIP: start feature
+WIP: add tests
+WIP: fix linter
+#+end_example
+
+*PR 合并前* 用 interactive rebase 整理:
+
+#+begin_src bash
+git rebase -i HEAD~5
+
+# 在编辑器中:
+pick a1b2c3d feat(search): implement fuzzy matching
+squash e4f5g6h WIP: add tests
+squash h7i8j9k WIP: fix linter
+#+end_src
+
+** 9. Breaking Change 的沟通
+
+如果要做 breaking change:
+
+1. *先标记为 deprecated* (MINOR 版本):
+
+#+begin_src text
+feat(api): add new /accounts endpoint
+
+The old /users endpoint is now deprecated and will be
+removed in v3.0.0. Please migrate to /accounts.
+
+Refs: #migration-guide
+#+end_src
+
+2. *等一段时间* (如 1-2 个 MINOR 版本)
+
+3. *再删除* (MAJOR 版本):
+
+#+begin_src text
+feat(api)!: remove deprecated /users endpoint
+
+BREAKING CHANGE: /users endpoint has been removed.
+Use /accounts instead. See migration guide: ...
+#+end_src
+
+** 10. Monorepo 的 Scope 策略
+
+在 monorepo 中，用 scope 标识包名:
+
+#+begin_example
+feat(api): add rate limiting
+feat(web): update dashboard UI
+fix(mobile): correct navigation bug
+chore(root): update shared dependencies
+#+end_example
+
+配合工具如 [[https://github.com/lerna/lerna][Lerna]] 或 [[https://github.com/changesets/changesets][changesets]]，可以 *独立发布* 各个包的版本。
+
+* 实际案例
+
+** Angular
+
+Angular 团队是 Conventional Commits 的先驱，他们的 commit 历史堪称典范:
+
+#+begin_example
+feat(core): add standalone components API (#45897)
+fix(router): prevent memory leak in route reuse (#45901)
+perf(compiler): optimize template parsing by 15% (#45888)
+docs(forms): clarify reactive forms validation (#45905)
+refactor(common): simplify DatePipe implementation (#45890)
+test(http): add interceptor edge case tests (#45903)
+build: update to TypeScript 4.9 (#45912)
+#+end_example
+
+查看: [[https://github.com/angular/angular/commits/main]]
+
+** Rust 项目: git-cliff
+
+[[https://github.com/orhun/git-cliff][git-cliff]] 是一个用 Rust 写的 CHANGELOG 生成工具，完全遵循 Conventional Commits:
+
+#+begin_example
+feat(changelog): add template variable for git tags (#234)
+fix(parser): handle commits with multiple footers (#236)
+perf(git): reduce memory usage by streaming commits (#238)
+docs(config): add examples for custom scopes (#240)
+#+end_example
+
+他们的 [[https://github.com/orhun/git-cliff/blob/main/CHANGELOG.md][CHANGELOG.md]] 完全由 git-cliff 自动生成。
+
+** Linux Kernel (非 Conventional Commits)
+
+有趣的是，Linux 内核 *不使用* Conventional Commits，但他们有 [[https://www.kernel.org/doc/html/latest/process/submitting-patches.html][自己的严格规范]]:
+
+#+begin_example
+x86/boot: Fix memremap() for unaligned sizes
+
+memremap() would fail for sizes that are not aligned to
+PAGE_SIZE. This patch rounds up the size to fix the issue.
+
+Reported-by: Alice <alice@example.com>
+Tested-by: Bob <bob@example.com>
+Signed-off-by: Charlie <charlie@kernel.org>
+#+end_example
+
+虽然格式不同，但核心思想相同: *结构化、可追溯*。
+
+* 总结
+
+#+begin_quote
+Conventional Commits 不是银弹，但它是 *最广泛采用* 的 commit message 规范。
+#+end_quote
+
+** 核心价值
+
+1. *人类可读*: 清晰的历史，方便 code review 和 git bisect
+2. *机器可解析*: 自动化版本管理、CHANGELOG 生成
+3. *团队协作*: 统一规范降低沟通成本
+
+** 推荐工具链
+
+| 工具             | 用途               | 必需程度 |
+|------------------+--------------------+---------|
+| Commitizen       | 辅助写 commit       | 推荐    |
+| commitlint       | 校验 commit 格式    | *必需*    |
+| Husky            | 自动运行 commitlint | *必需*    |
+| Standard-Version | 本地版本管理         | 中小项目 |
+| semantic-release | CI/CD 自动发布      | 大型项目 |
+
+** 渐进式采用
+
+如果团队还没用 Conventional Commits:
+
+1. *Week 1*: 安装 commitlint + husky (拒绝不规范的 commit)
+2. *Week 2*: 推广 Commitizen (降低书写难度)
+3. *Month 1*: 手动用 standard-version 生成 CHANGELOG
+4. *Month 3*: 在 CI/CD 中集成 semantic-release
+
+*关键*: 让工具 *自动执行*，而不是依赖人的自律。
+
+** 进一步阅读
+
+- [[https://www.conventionalcommits.org][Conventional Commits 官方规范]]
+- [[https://semver.org][Semantic Versioning 规范]]
+- [[https://chris.beams.io/posts/git-commit/][How to Write a Git Commit Message]] (经典文章)
+- [[https://github.com/conventional-changelog/commitlint][commitlint 文档]]
+- [[https://semantic-release.gitbook.io][semantic-release 文档]]
+
+*记住*: 好的 commit message 是给 *6 个月后的自己* 和 *素未谋面的队友* 写的，不是给今天的自己写的。

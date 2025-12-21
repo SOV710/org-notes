@@ -1,0 +1,1126 @@
+#+title: Gentoo Linux Installation Guide with ZFS and Niri
+#+author: SOV710
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 虚拟机部分
+
+- 下载 ISO =https://www.gentoo.org/downloads/=
+
+- 做虚拟盘
+
+#+begin_src bash
+qemu-img create -f qcow2 gentoo.qcow2 128G
+#+end_src
+
+- 确认做盘信息
+
+#+begin_src bash
+qemu-img info gentoo.qcow2
+#+end_src
+
+- 复制 OVMF 固件
+
+#+begin_src bash
+/usr/share/OVMF
+#+end_src
+
+- 从 LiveCD 启动
+
+#+begin_src bash
+qemu-system-x86_64 \
+  -name gentoo \
+  -m 8192 -smp 8 \
+  -enable-kvm -cpu host \
+  -machine type=q35 \
+  -drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE \
+  -drive if=pflash,format=raw,file=OVMF_VARS_gentoo.fd \
+  -drive file=gentoo.qcow2,if=virtio,format=qcow2 \
+  -cdrom install-amd64-minimal-2025xxxx.iso \
+  -boot order=d \
+  -nic user,model=virtio-net-pci \
+  -device virtio-vga-gl \
+  -display gtk,gl=on
+#+end_src
+
+#+begin_src bash
+OVMF_CODE =
+OVMF_VARS =
+ISO =
+DISK =
+#+end_src
+
+* 物理机部分
+
+- 下载 ISO =https://www.gentoo.org/downloads/=
+
+* LiveCD 部分
+
+- 开启 SSH
+
+#+begin_src bash
+rc-service sshd start
+#+end_src
+
+- 开启 dhcp
+
+#+begin_src bash
+ip route
+ip link
+ip address
+dhcpcd xxx
+#+end_src
+
+- 测试网络
+
+#+begin_src bash
+curl baidu.com
+curl google.com
+#+end_src
+
+- 写盘
+
+#+begin_src bash
+gdisk /dev/nvme*
+p \ n \ w
+#+end_src
+
+- 虚拟机磁盘布局
+
+| 分区号 | 起始扇区 (Start) | 结束扇区 (End) | 大小 (Size) | 代码 (Code) | 名称 (Name)              |
+|-----+------------+----------+---------+---------+----------------------|
+|   1 | 2048       | 1050623  | 512.0 MiB | EF00    | EFI system partition |
+|   2 | 1050624    | 9439231  | 4.0 GiB | 8200    | Linux swap           |
+|   3 | 9439232    | 134215679 | 59.5 GiB | BF01    | Solaris /usr & Mac ZFS |
+
+- 制作文件系统
+
+#+begin_src bash
+mkfs.vfat -F 32 /dev/nvme0n1p1
+mkswap /dev/nvme0n1p2
+swapon /dev/nvme0n1p2
+#+end_src
+
+- 制作文件系统 (zfs)
+
+#+begin_src bash
+zgenhostid -f 0x0093abf4
+modprobe zfs
+
+zpool create -f \
+-o ashift=12 \
+-o autotrim=on \
+-o compatibility=openzfs-2.1-linux \
+-O acltype=posixacl \
+-O xattr=sa \
+-O relatime=on \
+-O compression=lz4 \
+-m none soz /dev/sda3
+#+end_src
+
+(如果不使用 GRUB 的话, 可以把 =compatibility=openzfs-2.1-linux= 这一条删掉)
+
+#+begin_src bash
+zpool create -f \
+-o ashift=12 \
+-o autotrim=on \
+-o compatibility=openzfs-2.1-linux \
+-O acltype=posixacl \
+-O xattr=sa \
+-O relatime=on \
+-O compression=lz4 \
+-m none soz /dev/sda3
+#+end_src
+
+#+begin_src bash
+zfs create -o mountpoint=none soz/os
+zfs create -o mountpoint=/ -o canmount=noauto soz/os/gentoo
+zfs create -o mountpoint=/home soz/home
+zpool set bootfs=soz/os/gentoo soz
+zpool export soz
+zpool import -N -R /mnt/gentoo soz
+zfs mount soz/os/gentoo
+zfs mount soz/home
+
+mount -t zfs
+udevadm trigger
+
+mkdir /mnt/gentoo/etc
+cp /etc/hostid /mnt/gentoo/etc/
+#+end_src
+
+#+begin_src bash
+mkdir -p /mnt/gentoo/efi
+#+end_src
+
+- 校准时钟
+
+#+begin_src bash
+cd /mnt/gentoo
+date
+chronyd -d
+#+end_src
+
+- 安装 stage file (从镜像站, 这里选择了 TUNA)
+
+#+begin_src bash
+wget https://mirrors.tuna.tsinghua.edu.cn/gentoo/releases/amd64/autobuilds/current-stage3-amd64-openrc/stage3-amd64-openrc-20251012T165136Z.tar.xz
+
+mv stage3-amd64-openrc-20251012T165136Z.tar.xz stage-amd64-openrc.tar.xz
+tar xpvf stage3-*.tar.xz --xattrs-include='*.*' --numeric-owner -C /mnt/gentoo
+#+end_src
+
+- 配置编译选项
+
+#+begin_src bash
+COMMON_FLAGS="-O2 -pipe -march=native"
+CFLAGS="${COMMON_FLAGS}"
+CXXFLAGS="${COMMON_FLAGS}"
+FCFLAGS="${COMMON_FLAGS}"
+FFLAGS="${COMMON_FLAGS}"
+MAKEOPTS="-j8"
+VIDEO_CARDS="intel"
+ACCEPT_LICENSE="*"
+ACCEPT_KEYWORDS="amd64"
+
+L10N="en en-US zh-CN"
+
+LC_MESSAGES=C.utf8
+
+ABI_X86="64 32"
+
+USE="openrc elogind dist-kernel btrfs zfs dracut refind zfsbootmenu -grub -systemd -gnome -kde alsa pipewire wireplumber wayland opengl vulkan"
+
+GENTOO_MIRRORS="https://mirrors.tuna.tsinghua.edu.cn/gentoo/
+https://mirrors.ustc.edu.cn/gentoo/
+https://mirrors.aliyun.edu.cn/gentoo/"
+#+end_src
+
+- 复制 DNS 信息
+
+#+begin_src bash
+cp --dereference /etc/resolv.conf /mnt/gentoo/etc/
+#+end_src
+
+- 挂载必要的文件系统
+
+#+begin_src bash
+mount --types proc /proc /mnt/gentoo/proc
+mount --rbind /sys /mnt/gentoo/sys
+mount --rbind /dev /mnt/gentoo/dev
+mount --bind /run /mnt/gentoo/run
+mount --make-slave /mnt/gentoo/run
+#+end_src
+
+- 进入 chroot 环境
+
+#+begin_src bash
+chroot /mnt/gentoo /bin/bash
+source /etc/profile
+#+end_src
+
+- 挂载 ESP
+
+#+begin_src bash
+mount /dev/vda1 /efi
+#+end_src
+
+- 先对 Gentoo 快照进行全量拷贝
+
+#+begin_src bash
+emerge-webrsync
+#+end_src
+
+- 先装个 vim, 和 cpuid2cpuflags
+
+#+begin_src bash
+emerge -av app-editors/vim
+#emerge -av app-editors/neovim
+emerge -av app-portage/cpuid2cpuflags
+#+end_src
+
+- 编辑 =/etc/portage/make.conf=
+
+#+begin_src bash
+COMMON_FLAGS="-O2 -pipe -march=native"
+CFLAGS="${COMMON_FLAGS}"
+CXXFLAGS="${COMMON_FLAGS}"
+FCFLAGS="${COMMON_FLAGS}"
+FFLAGS="${COMMON_FLAGS}"
+MAKEOPTS="-j8"
+VIDEO_CARDS="intel"
+ACCEPT_LICENSE="*"
+ACCEPT_KEYWORDS="amd64"
+
+L10N="en en-US zh-CN"
+
+LC_MESSAGES=C.utf8
+
+USE="elogind dist-kernel btrfs zfs dracut refind -grub -systemd -gnome -kde alsa pipewire wayland opengl vulkan"
+
+GENTOO_MIRRORS="https://mirrors.tuna.tsinghua.edu.cn/gentoo/
+https://mirrors.ustc.edu.cn/gentoo/
+https://mirrors.aliyun.edu.cn/gentoo/"
+
+CPU_FLAGS_X86="aes avx avx2 avx_vmi bmi1 bmi2 f16c fma3 mmx mmxext pclmul popcnt rdrand sha sse sse2 sse3 sse4_1 sse4_2 ssse3 vpclmulqdq"
+#+end_src
+
+- 更新全局
+
+#+begin_src bash
+emerge --ask --verbose --update --deep --changed-use @world
+#+end_src
+
+- 接着移除过时的软件包
+
+#+begin_src bash
+emerge --ask --pretend --depclean
+emerge --ask --depclean
+#+end_src
+
+- 选择正确的配置文件
+
+#+begin_src bash
+eselect profile list
+eselect profile set <number>
+#+end_src
+
+- 区域设置
+
+#+begin_src bash
+vim /etc/locale.gen
+locale-gen
+
+eselect locale list
+eselect locale set <number> # choose C.utf8
+env-update
+source /etc/profile
+#+end_src
+
+- 装点 Linux 固件
+
+#+begin_src bash
+emerge -a sys-kernel/linux-firmware sys-firmware/intel-microcode sys-firmware/sof-firmware
+#+end_src
+
+- 装点启动配件
+
+#+begin_src bash
+emerge -a sys-kernel/installkernel sys-kernel/dracut
+#+end_src
+
+- ZFS 准备事项
+
+#+begin_src bash
+emerge --ask sys-fs/zfs sys-fs/zfs-kmod
+
+mkdir -p /etc/dracut.conf.d
+vim /etc/dracut.conf.d/zol.conf
+#+end_src
+
+#+begin_src bash
+nofsck="yes"
+add_dracutmodules+=" zfs "
+#+end_src
+
+- 内核, 编译!
+
+#+begin_src bash
+emerge -a sys-kernel/gentoo-kernel
+#+end_src
+
+- 清理旧内核
+
+#+begin_src bash
+emerge --depclean
+#+end_src
+
+- 重建模块
+
+#+begin_src bash
+emerge -a @module-rebuild
+emerge --config sys-kernel/gentoo-kernel
+#+end_src
+
+- 配置 fstab
+
+#+begin_src bash
+blkid >> /etc/fstab
+vim /etc/fstab
+#+end_src
+
+#+begin_src bash
+#fstab
+
+UUID=xxx  /efi  vfat  umask=0077,noatime  0  2
+UUID=yyy  none  swap  sw                  0  0
+#+end_src
+
+- 配置网络信息
+
+#+begin_src bash
+echo sov710 > /etc/hostname
+
+emerge -a net-misc/dhcpcd
+rc-update add dhcpcd default
+rc-service dhcpcd start
+
+emerge --ask --noreplace net-misc/netifrc
+ip link
+vim /etc/conf.d/net
+#+end_src
+
+#+begin_src bash
+config_enp0s1="dhcp"
+#+end_src
+
+#+begin_src bash
+cd /etc/init.d
+ln -s net.lo net.enp0s1
+rc-update add net.enp0s1 default
+
+vim /etc/hosts
+#+end_src
+
+#+begin_src bash
+# IPv4 and IPv6 localhost aliases
+127.0.0.1       localhost
+127.0.1.1       sov710
+::1             localhost
+#+end_src
+
+- 给 root 账户设密码
+
+#+begin_src bash
+passwd
+#+end_src
+
+- 配置 openrc
+
+#+begin_src bash
+# /etc/rc.conf
+
+10  rc_parallel="NO"
+16  rc_interactive="YES"
+27  rc_shell=/sbin/sulogin
+35  rc_depend_strict="YES"
+56  rc_logger="YES"
+60  rc_log_path="/var/log/rc.log"
+64  rc_verbose="NO"
+90  rc_nocolor="NO"
+
+97  unicode="YES"
+101 rc_fuser_timeout=60
+#+end_src
+
+#+begin_src bash
+# /etc/conf.d/hwclock
+
+clock="UTC"
+#+end_src
+
+#+begin_src bash
+hwclock --verbose
+
+# 若成功, 则正常; 若失败, 将clock改回"local"
+#+end_src
+
+- 配置日志工具
+
+#+begin_src bash
+emerge -av app-admin/metalog
+rc-update add metalog default
+rc-service metalog start
+#+end_src
+
+- 配置 cron 工具
+
+#+begin_src bash
+emerge --ask sys-process/cronie
+rc-update add cronie default
+#+end_src
+
+- 配置一大堆乱七八糟的小工具
+- 如果要连 WiFi, =wpa_supplicant= 是必装的
+
+#+begin_src bash
+emerge --ask sys-apps/mlocate
+
+rc-update add sshd default
+
+emerge --ask net-misc/chrony
+rc-update add chronyd default
+
+emerge --ask net-misc/dhcpcd
+emerge --ask net-wireless/iw net-wireless/wpa_supplicant
+emerge --ask sys-block/io-scheduler-udev-rules
+#+end_src
+
+- 添加 GURU overlay
+
+#+begin_src bash
+emerge -av app-eselect/eselect-repository
+eselect repository enable guru
+emerge --sync
+
+vim /etc/portage/repos.conf/eselect-repo.conf
+#+end_src
+
+#+begin_src bash
+[guru]
+location = /var/db/repos/guru
+sync-type = git
+sync-uri  = https://anongit.gentoo.org/git/repo/proj/guru.git
+auto-sync = yes
+masters = gentoo
+#+end_src
+
+#+begin_src bash
+emaint sync -r guru
+#+end_src
+
+- bootloader (需解锁 zfsbootmenu 的 ~amd64 标签)
+
+#+begin_src bash
+vim /etc/portage/package.accept_keywords/zfsbootmenu
+#+end_src
+
+#+begin_src bash
+sys-boot/zfsbootmenu ~amd64
+#+end_src
+
+#+begin_src bash
+emerge --ask sys-boot/refind sys-boot/zfsbootmenu sys-boot/efibootmgr
+#+end_src
+
+#+begin_src bash
+refind-install
+
+emerge -av app-text/tree
+tree -L 3 /efi/
+#+end_src
+
+#+begin_src bash
+vim /etc/zfsbootmenu/config.yaml
+#+end_src
+
+#+begin_src yaml
+Global:
+  ManageImages: true
+  BootMountPoint: /efi
+
+Components:
+  Enabled: true
+  ImageDir: /efi/EFI/zbm
+  Versions: 3
+
+EFI:
+  Path: /boot/vmlinuz-<version>-gentoo-dist
+  Version: <version>-gentoo-dist
+  Enabled: false    # ← Key: Close it
+#+end_src
+
+具体的发行版内核版本号见 =/lib/modules/=
+
+#+begin_src bash
+generate-zbm
+tree -L 3 /efi/
+
+vim /efi/EFI/refind/refind.conf
+#+end_src
+
+#+begin_src bash
+menuentry "ZFSBootMenu Gentoo" {
+	icon /EFI/refind/icons/os_gentoo.png
+    loader  EFI/zbm/vmlinuz-<ZBM Version>
+    initrd  EFI/zbm/initramfs-<ZBM Version>.img
+    options ro quiet loglevel=0 zbm.import_policy=hostid zbm.set_hostid
+}
+#+end_src
+
+- 检查 rEFInd 是否在用
+
+#+begin_src bash
+efibootmgr -v
+#+end_src
+
+检查 rEFInd 是否在启动项中
+如果没有出现:
+
+#+begin_src bash
+efibootmgr --create --disk /dev/vda --part 1 --label "rEFInd" --loader '\EFI\refind\refind_x64.efi'
+#+end_src
+
+#+begin_quote
+替换 =/dev/vda1= 为你的 ESP 实际所在设备。
+#+end_quote
+
+- 重启
+
+#+begin_src bash
+exit
+cd
+umount -l /mnt/gentoo/dev{/shm,/pts,}
+umount -l /mnt/gentoo/run
+umount -n -R /mnt/gentoo
+zpool export soz
+reboot
+#+end_src
+
+* 安装之后
+
+- 联网
+
+第一种方案, 可以先 USB 连手机然后开 USB 共享网络, 先用手机流量撑着
+
+第二种方案, 自己写 =wpa_supplicant= 的配置文件, 然后连上网络
+
+简单科普以下 WiFi 协议的基础知识, 用第二种方案的话会用到
+
+- 大概二十多年前, WiFi 的基础协议是 WEP 密码, 但是因为太容易被破解所以弃用了, WPA (Wi-Fi Protected Access) 就是为了替代它而诞生的
+- WPA 分为三代, WPA (2001), WPA2 (2004), WPA3 (2018)
+- WPA 是可以兼容 WEP 的过渡性解决方案, 核心算法是 WEP 的改进版, 后来被发现也有安全漏洞; WPA2 是目前最广泛使用的 WiFi 版本; WPA3 是最新标准, 几乎无法被攻破
+
+连 WiFi 前最好在手机或其他什么地方看看 WiFi 是什么协议的
+
+(占位符)
+
+#+begin_src sh
+ip link
+# 记录自己的无限网卡名称, 替换后续的wlo1
+
+ip link set wlo1 up
+wpa_supplicant -B -i wlo1 -c /etc/wpa_supplicant/wlo1.conf -D nl80211
+dhcpcd wlo1
+
+# 检测是否连上
+wpa_cli -i wlo1 status
+curl baidu.com
+#+end_src
+
+- 看看 fetch 吧!
+
+#+begin_src bash
+emerge -av app-misc/fastfetch
+
+fastfetch
+#+end_src
+
+- 为日常使用添加用户
+
+#+begin_src bash
+getent group
+
+useradd -m -G users,wheel,audio,render,kvm,dialout,uucp,locate \
+  -s /bin/bash sov710
+passwd sov710
+
+rm /stage3-*
+#+end_src
+
+- 补个全量更新吧
+
+#+begin_src bash
+emerge -avud --changed-use @world
+#+end_src
+
+- 安装 sudo
+
+#+begin_src bash
+emerge -a app-admin/sudo
+nvim /etc/sudoers
+
+visudo
+# Uncomment wheel line, with gnu nano
+#+end_src
+
+- 设置并启动 elogind
+
+#+begin_src bash
+sudo rc-update add elogind boot
+sudo rc-service elogind start
+loginctl
+#+end_src
+
+- 安装 zsh
+
+#+begin_src bash
+emerge -a app-shells/zsh
+
+chsh -s /bin/zsh sov710
+sudo chsh -s /bin/zsh root
+#+end_src
+
+- 安装 git & 配置 zsh
+
+#+begin_src bash
+emerge -av dev-vcs/git
+
+mkdir proj
+cd proj
+git clone https://gitee.com/sov710/dotfiles.git
+cd dotfiles/zsh
+chmod +x install.sh
+./install.sh
+#+end_src
+
+- 安装 starship & zoxide & eza. (zoxide 需开启 ~amd64 标签)
+
+#+begin_src bash
+emerge -av app-shells/zoxide app-shells/starship sys-apps/eza sys-apps/ripgrep
+#+end_src
+
+- 安装 zsh-syntax-highlighting
+
+#+begin_src bash
+emerge -av app-shells/zsh-syntax-highlighting
+
+nvim ~/.config/zsh/tools.zsh
+#+end_src
+
+#+begin_src bash
+source /usr/share/zsh/site-functions/zsh-syntax-highlighting.zsh
+#+end_src
+
+* 准备桌面
+
+- time to +hyprland+ niri!
+
+- 修改部分依赖
+
+#+begin_src bash
+# /etc/portage/package.use/cairo
+x11-libs/cairo X svg glib
+dev-python/pycairo X
+#+end_src
+
+#+begin_src bash
+# /etc/portage/package.usr/font
+media-libs/freetype harfbuzz
+#+end_src
+
+#+begin_src bash
+# /etc/portage/package.use/niri
+media-libs/libglvnd X
+gui-wm/niri screencast
+#+end_src
+
+- 开始编译 niri!
+- (如果内存较小的话, 记得把 MAKEOPTS 的核数调小一点, 编译 clang 的时候可能会 OOM)
+
+#+begin_src bash
+emerge --ask gui-wm/niri
+#+end_src
+
+- 为 niri 准备好上下文
+
+#+begin_src bash
+sudo emerge -av media-video/wireplumber # 音频前端
+sudo emerge -av xdg-desktop-portal xdg-desktop-portal-gnome # XDG portal
+sudo emerge -av x11-terms/ghostty
+#+end_src
+
+- 字体管理
+
+#+begin_src bash
+git clone --depth=1 https://gitee.com/sov710/unified-nerdfonts.git ~/proj
+
+sudo mkdir -p /usr/local/share/fonts
+sudo mv ~/proj/unified-nerdfonts/smile/SmileNerdFontMono-* /usr/local/share/fonts/
+fc-cache -fv
+#+end_src
+
+- 编辑 =config.kdl=
+
+#+begin_src kdl
+input {
+    keyboard {
+        xkb {
+            layout "us"
+        }
+    }
+}
+binds {
+    Alt+T cooldown-ms=500 { spawn "ghostty"; }
+}
+#+end_src
+
+- niri, 启动!
+
+#+begin_src sh
+dbus-run-session niri --session
+#+end_src
+
+- 没问题的话, 按 =alt+t= 应该会出现 =ghostty=
+- 接着在 ghostty 里继续操作
+
+* 桌面中
+
+- 安装 =wev=, 后面好配键盘映射
+
+#+begin_src bash
+sudo nvim /etc/portage/package.accept_keywords/wev
+
+# …/package.accept_keywords/wev
+gui-apps/wev ~amd64
+#+end_src
+
+#+begin_src bash
+sudo emerge -av gui-apps/wev
+#+end_src
+
+- 安装 =config.kdl=
+
+#+begin_src bash
+mkdir -p ~/.config/niri
+cp ~/proj/dotfiles/niri/config.kdl ~/.config/niri/
+#+end_src
+
+niri 配置完成
+
+---
+
+接着, 我们先理一下关系:
+
+我们目前的最终目标就是, 成功用在浏览器中登上 ChatGPT
+
+要达成这个目标, 第一要有浏览器, 第二要能成功翻墙, 第三要有中文输入法
+
+首先, 我选择的浏览器是 vivaldi, 这个浏览器虽然在 gentoo 的 ebuilds 和 guru 中找得到, 但是实际上是通过解包 vivaldi 官网提供的 deb 包来安装的, 而访问 vivaldi 需要翻墙, 所以: 如果要安装浏览器, 则需要翻墙
+
+如果要翻墙, 有几条技术路线可以选择:
+
+1. clash-verge + 机场提供的 profile
+2. sing-box + 机场提供的 profile 转成的 config.json
+3. sing-box + 自建节点 + 自己写的 config.json
+4. mihomo 直出, 用 clash api + curl 手动换节点
+
+二三是我未来的构想, 一四是我现在的实现
+
+下面叙述怎么魔法上网
+
+* 魔法
+
+从 gitee 为镜像移植我自己的私有 clash git 包, 其架构是这样的
+
+#+begin_src bash
+zzz
+├── clash
+│   ├── bin
+│   ├── lib
+│   └── share
+├── converter
+│   ├── ctos
+│   ├── ctos.d
+│   ├── ctos-web
+│   └── ctos-web.d
+├── mihomo
+├── provider
+│   ├── config.yaml
+│   ├── provider-source.txt
+│   └── provider-url.txt
+└── verge-lib
+    ├── cache.db
+    ├── clash-verge-check.yaml
+    ├── clash-verge.yaml
+    ├── config.yaml
+    ├── Country.mmdb
+    ├── geoip.dat
+    ├── geosite.dat
+    ├── profiles
+    ├── profiles.yaml
+    ├── verge.yaml
+    └── ……
+#+end_src
+
+- =clash= 是直接从 =clash-verge-rev= 的 release 解包出来的, 是 =clash-verge= 的所有可执行文件, 属于一号方案的核心组件
+- =converter= 是一年前最后一次更新的一个把 clash 规则转 singbox config.json 的项目, 在 singbox 多次 breaking changing 后已经接近不可用, 弃用状态
+- =mihomo= 是 github 上下的内核, 属于四号方案的核心组件
+- =provider= 是订阅方的订阅网址和从自己买的机场上 curl 下来的规则, 如果直接 copy =io.github.clash-verge-rev……= 的话其实用不到这个
+- =verge-lib= 是从本地 =~/.local/share/io.github.clash-verge-rev……= 扒下来的整套运行时 profile, 四号方案要用
+
+clone 到本地
+
+#+begin_src bash
+z workspace
+git clone https://gitee.com/sov710/zzz.git
+z zzz
+#+end_src
+
+** 一号方案
+
+安装 =clash-verge-rev= 的依赖
+
+#+begin_src bash
+sudo emerge -av dev-libs/openssl x11-libs/gtk+:3 net-libs/webkit-gtk:4/gtk-4.1 dev-libs/libayatana-appindicator
+#+end_src
+
+安装 =clash-verge=
+
+#+begin_src sh
+sudo mkdir -p /opt/clash-verge
+sudo cp clash/* /opt/clash-verge/
+
+sudo mkdir -p /usr/lib
+sudo ln -sfn /opt/clash-verge/lib/clash-verge "/usr/lib/Clash Verge"
+
+sudo cp /opt/clash-verge/bin/* /usr/local/bin/
+#+end_src
+
+允许内核使用 TUN
+
+#+begin_src bash
+sudo emerge -av sys-libs/libcap
+
+sudo setcap cap_net_admin,cap_net_bind_service+ep /usr/local/bin/verge-mihomo
+sudo setcap cap_net_admin,cap_net_bind_service+ep /usr/local/bin/verge-mihomo-alpha
+
+getcap /usr/local/bin/verge-mihomo
+#+end_src
+
+使用一个终端先拉起来 =clash-verge-service= (后续用 openrc 实现一下)
+
+#+begin_src bash
+sudo clash-verge-service
+#+end_src
+
+再使用一个服务拉起来 =clash-verge= 前端
+
+#+begin_src bash
+clash-verge
+#+end_src
+
+** 四号方案
+
+安装 =mihomo=
+
+#+begin_src sh
+sudo mv ./mihomo /usr/local/bin/
+
+mihomo --version
+#+end_src
+
+将整个 =verge-lib= copy 到 =~/.lcoal/share/=
+
+然后这样启动 =mihomo=
+
+#+begin_src sh
+sudo mihomo -d /home/<username>/.local/share/verge-lib -f /home/<username>/.local/share/verge-lib/clash-verge.yaml
+#+end_src
+
+这时屏幕上应该出现的都是 INFO 和 WARN 的日志, 没出 ERROR 就不用管
+
+然后测试以下能不能通 google.com 就 OK 了
+
+#+begin_src bash
+curl google.com
+#+end_src
+
+* 升级工具链
+
+将 rust 升级到 nightly
+
+#+begin_src bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+#+end_src
+
+然后它会弹出来几个 warning 和一个 error, 不用管它, 因为 gentoo 编译系统包的工具链包含 rustc stable, 所以电脑上是自带一个 =/usr/bin/rustc= 的, 所以 rustup 安装脚本会提醒你你已经装了一个 rust 了。但是因为我主力编辑器 neovim 的 blink.cmp 插件依赖 rust nightly 的一些特性进行编译, 然而 gentoo 官方包是不支持 rust nightly 的, 所以还是从官方的包管理器 rustup 拉包吧
+
+当 path 中有多个同名可执行文件时, linux 会优先选择先匹配到的那一个, 所以我们只要把 =~/.cargo/bin= 放在 =/usr/bin= 之前即可
+
+#+begin_src sh
+export PATH="~/.cargo/bin:$PATH"
+#+end_src
+
+#+begin_src bash
+rustup --version
+which rustc
+
+rustup default nightly
+#+end_src
+
+安装 npm
+
+#+begin_src bash
+sudo nvim /etc/portage/package.use/nodejs
+
+# net-libs/nodejs npm corepack
+#+end_src
+
+#+begin_src bash
+sudo emerge -av net-libs/nodejs
+#+end_src
+
+安装 pnpm
+
+#+begin_src bash
+curl -fsSL https://get.pnpm.io/install.sh | sh -
+#+end_src
+
+neovim 完全体, 启动!
+
+#+begin_src bash
+nvim
+#+end_src
+
+* 字体
+
+libre
+noto
+cantarell
+tex-gyre
+
+* 打字
+
+接下来需要配置输入法, 我的选择是 fcitx5 + fcitx5-rime + rime-frost
+
+科普以下 fcitx5 的基础知识哈
+
+- fcitx5 本身芝士一个框架, 是一个 daemon 进程, 不包含任何输入法模块, 只负责接受用户和输入法模块的输出
+- fcitx5-rime, rime 是算法目前最好的中文输入法框架, fcitx5-rime 其在 fcitx5 框架下的模块实现
+- rime-frost, 白霜拼音, 是 rime 的一个被调教好的字库, 基于 rime-ice 的历史版本开发
+
+安装这一套套件
+
+#+begin_src sh
+sudo emerge -av app-i18n/fcitx app-i18n/fcitx-rime app-i18n/fcitx-gtk app-i18n/fcitx-qt app-i18n/fcitx-configtool
+#+end_src
+
+再从 =rime-frost= github 页面 clone 到 =~/.local/share/fcitx5/rime=
+
+#+begin_src bash
+mkdir -p ~/.local/share/fcitx5
+
+git clone --depth 1 https://github.com/gaboolic/rime-frost.git ~/.local/share/fcitx5/rime
+#+end_src
+
+开 fcitx5 daemon, 并且开 configtool 打开图形化界面
+
+#+begin_src bash
+fcitx5
+#+end_src
+
+#+begin_src bash
+fcitx-configtool
+#+end_src
+
+将 rime 加入 keyboards, 保存并退出, 然后就可以 Ctrl-Space 切换输入法了
+
+* 音视频支持
+
+* Quickshell
+
+but, 翻墙之后, 浏览器依然无法启动, 需要有四个要素才能启动:
+
+1. D-Bus 的部分 well-known name 需要被注册, 例如 =org.freedesktop.portal.Desktop=, =org.freedesktop.Notifications=, =org.freedesktop.secrets=
+2. CA, =app-misc/ca-certificates=
+3. FFmpeg 和相关插件
+4. 以 wayland 模式启动 vivaldi
+
+这其中大部分内容都可以被下面的几行命令安装完全
+
+#+begin_src bash
+sudo emerge -av sys-apps/xdg-desktop-portal x11-misc/xdg-desktop-portal-wlr x11-misc/xdg-desktop-portal-gtk
+
+sudo emerge -av app-misc/ca-certificates
+sudo emerge --config app-misc/ca-certificates
+
+sudo emerge -av media-video/ffmpeg media-video/ffmpeg-chromium
+
+vivaldi --ozone-platform-hint=wayland --disable-gpu --use-gl=swiftshader
+#+end_src
+
+其中的 =org.freedesktop.Notifications=, 我希望由 quickshell 实现 =org.freedesktop.Notifications=, 所以下面开始配 quickshell
+
+- quickshell 安装
+
+#+begin_src bash
+sudo emerge -av dev-qt/qtdeclarative gui-apps/quickshell
+#+end_src
+
+* 小结
+
+- OS: Gentoo Linux
+- Arch: amd64 (x86_64)
+- kernel version: 6.12.41-gentoo-dist
+- Proflie: default/linux/amd64/23.0
+- init system: Openrc
+- filesystem: ESP (fat32) + swap + zfs (rootfs)
+- ZFS: zpool name is "soz"
+- bootloader: refind + zfsbootmenu 链式引导
+- login: elogind
+- net: netifrc + dhcpc
+- hostname: sov710
+- login shell: zsh
+- microcode: intel
+- logger: metalog
+- cron daemon: cronie
+
+- compositor: niri
+- app launcher: fuzzel
+- status bar (and more): quickshell
+- notification daemon: quickshell
+- terminal emulator: ghostty
+- browser: vivaldi
+- wallpaper: swww (awww)
+- color picker: hyprpicker
+- clipboard manager: cliphist
+- GUI file manager: thunar
+- TUI file manager: yazi
+
+* 目录管理
+
+#+begin_src bash
+$HOME/
+├── bin/               # 大量用于自动化的可执行文件/脚本
+├── proj/              # 开发项目主目录, 使用 git 进行版本管理
+├── data/              # 大型数据集/模型/实验素材 (与源码分离)
+│   ├── datasets/
+│   ├── models/
+│   └── assets/5
+├── docs/              # 文档/论文/读书笔记 (Markdown/PDF等)
+│   ├── books/
+│   ├── papers/
+│   └── notes/
+│   └── courses/
+│   └── personal/
+├── media/             # 媒体资源
+│   ├── images/
+│   ├── videos/
+│   ├── audio/
+│   └── fonts/
+├── workspace/         # 临时试验代码 (不进版本库)
+├── temp/              # 临时下载文件
+├── .config/           # 应用配置 (XDG_CONFIG_HOME)
+├── .cache/            # 缓存 (XDG_CACHE_HOME)
+├── .local/
+│   ├── bin/           # 用户级可执行 (XDG 约定; 代替 ~/bin)
+│   ├── share/         # 应用数据 (XDG_DATA_HOME)
+│   └── state/         # 运行状态/日志 (XDG_STATE_HOME, 如 logs/)
+├── .secrets/
+│   ├── keyring/ # 密钥管理器数据库(如 pass store)
+|   ├── tokens/        # API tokens, oauth tokens
+|   └── certs/         # TLS 自签证书, 开发 CA
+├── .env.d/
+├── .ssh/
+└── .gnupg/
+#+end_src
+
+* 删包流
+
+#+begin_src bash
+# 0) 看谁依赖它 (可选)
+equery d -a <包名>
+
+# 1) 从 @world 里去掉 (如果它在 world 里)
+sudo emerge --deselect <包名>
+
+# 2) 卸载这个包本身
+sudo emerge -avC <包名>
+
+# 3) 清理只被它依赖, 现在成"孤儿"的包
+sudo emerge -avc          # = --depclean
+
+# 4) 如有 preserved-libs, 按提示重建
+sudo emerge -av @preserved-rebuild
+#+end_src

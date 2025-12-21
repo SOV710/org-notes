@@ -1,0 +1,759 @@
+#+title: LuaSnip: The Modern Snippet Engine for Neovim
+#+author: SOV710
+#+date: 2025-12-21
+#+startup: showall
+#+options: toc:2 num:nil
+
+* LuaSnip: 现代 Neovim Snippet 引擎
+
+目前最主流的 snippets 引擎: LuaSnip。
+
+** 为什么是 LuaSnip？
+
+在 Neovim 生态中，snippet 引擎经历了几代演变:
+
+- *SnipMate* (2009): Vim 最早的 snippet 插件，语法简单但功能有限
+- *UltiSnips* (2011): Python 实现，功能强大但依赖外部解释器
+- *LuaSnip* (2021): 纯 Lua 实现，为 Neovim 原生优化
+
+LuaSnip 是 *当前事实标准*，主要优势:
+
+*** 1. 纯 Lua 实现，无外部依赖
+
+UltiSnips 依赖 Python 3 和 =pynvim=:
+
+#+begin_src bash
+# UltiSnips 需要
+pip3 install pynvim
+#+end_src
+
+LuaSnip 无需任何外部依赖，开箱即用。这在嵌入式系统、无 root 权限的服务器、或 Windows 环境中 *极其重要*。
+
+*** 2. 性能优势
+
+根据 [[https://cj.rs/blog/ultisnips-to-luasnip/][Clément Joly 的测试]]，LuaSnip 的启动时间比 UltiSnips 快 *数倍*:
+
+| 插件            | 启动时间   | 差异    |
+|---------------+----------+--------|
+| UltiSnips     | ~25 ms   | 基准    |
+| LuaSnip       | ~3 ms    | *8x 快* |
+
+这是因为 Lua 是 Neovim 的一等公民，而 Python 需要跨语言调用。
+
+*** 3. Tree-sitter 集成
+
+LuaSnip 可以利用 Neovim 的 Tree-sitter 进行 *上下文感知*:
+
+#+begin_src lua
+-- 仅在函数内部展开此 snippet
+s("ret", {
+    t("return "),
+    i(1),
+}, {
+    condition = function()
+        local ts = vim.treesitter.get_parser(0):parse()[1]:root()
+        local node = ts:descendant_for_range(vim.fn.line('.') - 1, 0, vim.fn.line('.'), 0)
+        return node and node:type() == "function_definition"
+    end
+})
+#+end_src
+
+UltiSnips 无法做到这一点 (Python 无法访问 Tree-sitter API)。
+
+*** 4. LSP 兼容
+
+LuaSnip 原生支持 LSP snippet 格式 (TextMate 语法)，可以直接使用来自 Language Server 的 completion snippets:
+
+#+begin_src lua
+require("luasnip.loaders.from_vscode").lazy_load()  -- 加载 VSCode 格式
+#+end_src
+
+这意味着你可以复用 VSCode 的庞大 snippet 库 (如 [[https://github.com/rafamadriz/friendly-snippets][friendly-snippets]])。
+
+*** 5. 动态生成能力
+
+LuaSnip 的 =dynamic_node= 和 =function_node= 可以 *根据用户输入实时生成代码*，这在 UltiSnips 中需要复杂的 Python 脚本才能实现。
+
+例如，自动生成 LaTeX 矩阵:
+
+#+begin_src lua
+-- 输入 "mat3x2" 自动生成 3 行 2 列的矩阵
+s({trig = "mat(%d+)x(%d+)", regTrig = true}, {
+    d(1, function(args, snip)
+        local rows = tonumber(snip.captures[1])
+        local cols = tonumber(snip.captures[2])
+        local nodes = {}
+        for i = 1, rows do
+            for j = 1, cols do
+                table.insert(nodes, i((i-1)*cols + j))
+                if j < cols then table.insert(nodes, t(" & ")) end
+            end
+            if i < rows then table.insert(nodes, t({" \\\\", ""})) end
+        end
+        return sn(nil, nodes)
+    end),
+})
+#+end_src
+
+** 构造 Snippet 的核心 API
+
+构造一个 snippet 的核心函数:
+
+#+begin_src lua
+luasnip.snippet(context, nodes, opts) -> snippet
+#+end_src
+
+*** 参数详解
+
+**** =context= (表或字符串)
+
+定义 snippet 的触发条件，可以是:
+
+***** 1. 简单字符串 (触发词)
+
+#+begin_src lua
+s("trig", { t("expanded text") })
+-- 输入 "trig" 后按 Tab 展开为 "expanded text"
+#+end_src
+
+***** 2. 详细配置表
+
+#+begin_src lua
+s({
+    trig = "fn",           -- 触发词
+    name = "Function",     -- 在补全菜单中显示的名称
+    dscr = "Create a function",  -- 描述
+    wordTrig = true,       -- 仅在单词边界触发 (默认 true)
+    regTrig = false,       -- 是否为正则表达式触发 (默认 false)
+    snippetType = "snippet",  -- 或 "autosnippet" (自动展开)
+    priority = 1000,       -- 优先级 (数字越大越优先)
+}, { ... })
+#+end_src
+
+****** 关键选项说明
+
+- =wordTrig=: 如果为 =true=，只有在 =fn= 前后是单词边界 (空格、标点) 时才触发。设为 =false= 则 =function= 中的 =fn= 也会触发。
+
+- =regTrig=: 启用正则表达式触发。例如:
+
+#+begin_src lua
+s({trig = "b(%d)", regTrig = true}, {
+    f(function(args, snip)
+        return "You typed b" .. snip.captures[1]
+    end)
+})
+-- 输入 "b5" → "You typed b5"
+#+end_src
+
+- =snippetType="autosnippet"=: 匹配后 *自动展开*，无需按 Tab。常用于 LaTeX 数学符号:
+
+#+begin_src lua
+s({trig = ";a", snippetType = "autosnippet"}, {
+    t("\\alpha")
+})
+-- 输入 ";a" 立刻变成 "\alpha"
+#+end_src
+
+- =priority=: 当多个 snippet 触发词重叠时，优先级高的生效。
+
+**** =nodes= (表)
+
+Snippet 的 *主体*，由一系列 "节点" (node) 组成。LuaSnip 中一切皆节点，常用节点类型:
+
+***** 1. =textNode= (=t=): 静态文本
+
+#+begin_src lua
+t("static text")
+t({"line 1", "line 2"})  -- 多行
+#+end_src
+
+***** 2. =insertNode= (=i=): 可编辑位置 (tabstop)
+
+#+begin_src lua
+i(1)              -- 第 1 个跳转点
+i(2, "default")   -- 第 2 个跳转点，默认文本 "default"
+i(0)              -- 最终跳转点 (必须有)
+#+end_src
+
+索引从 1 开始，=i(0)= 是特殊节点，表示 snippet 展开后的最终光标位置。
+
+***** 3. =functionNode= (=f=): 动态生成文本
+
+#+begin_src lua
+f(function(args, parent, user_args)
+    return "generated text"
+end, {1, 2})  -- 依赖 i(1) 和 i(2) 的内容
+#+end_src
+
+回调函数参数:
+
+- =args=: 依赖节点的文本内容 (表)
+- =parent=: 父 snippet 对象
+- =user_args=: 用户自定义参数
+
+示例: 自动生成当前日期
+
+#+begin_src lua
+s("date", {
+    f(function()
+        return os.date("%Y-%m-%d")
+    end)
+})
+-- 输入 "date" → "2025-12-21"
+#+end_src
+
+***** 4. =choiceNode= (=c=): 多选项
+
+#+begin_src lua
+c(1, {
+    t("option 1"),
+    t("option 2"),
+    sn(nil, {t("nested "), i(1)})
+})
+#+end_src
+
+按 =<C-e>= (或自定义键) 在选项间切换。
+
+***** 5. =dynamicNode= (=d=): 动态生成节点树
+
+与 =functionNode= 不同，=dynamicNode= 可以返回 *任意复杂的节点结构* (包括 =insertNode=)，而 =functionNode= 只能返回字符串。
+
+#+begin_src lua
+d(1, function(args)
+    local nodes = {}
+    for _, line in ipairs(vim.split(args[1][1], ",")) do
+        table.insert(nodes, t("- " .. vim.trim(line)))
+        table.insert(nodes, t({"", ""}))
+    end
+    return sn(nil, nodes)
+end, {1})
+#+end_src
+
+***** 6. =snippetNode= (=sn=): 嵌套 snippet
+
+用于在 =dynamicNode= 或 =choiceNode= 中创建子 snippet。*不需要* =i(0)=。
+
+#+begin_src lua
+sn(nil, {t("nested "), i(1), t(" content")})
+#+end_src
+
+***** 7. =restoreNode= (=r=): 恢复先前输入
+
+在 =dynamicNode= 更新时保留用户之前的输入。
+
+**** =opts= (表，可选)
+
+额外配置，常用选项:
+
+- =condition=: 展开条件函数
+#+begin_src lua
+{
+    condition = function(line_to_cursor, matched_trigger, captures)
+        return vim.bo.filetype == "lua"
+    end
+}
+#+end_src
+
+- =callbacks=: 节点进入/离开时的回调
+#+begin_src lua
+{
+    callbacks = {
+        [2] = {  -- 进入/离开节点 2 时
+            [events.enter] = function(node) print("Enter") end,
+            [events.leave] = function(node) print("Leave") end,
+        }
+    }
+}
+#+end_src
+
+*** 完整示例
+
+#+begin_src lua
+local ls = require("luasnip")
+local s = ls.snippet
+local t = ls.text_node
+local i = ls.insert_node
+local f = ls.function_node
+
+-- 简单 snippet
+s("hello", {
+    t("Hello, "),
+    i(1, "world"),
+    t("!"),
+    i(0)
+})
+
+-- 带正则捕获的 snippet
+s({trig = "(%d+)x(%d+)", regTrig = true}, {
+    t("Matrix size: "),
+    f(function(args, snip)
+        return snip.captures[1] .. " rows × " .. snip.captures[2] .. " cols"
+    end),
+})
+
+-- 自动 snippet (LaTeX)
+s({trig = ";a", snippetType = "autosnippet", wordTrig = false}, {
+    t("\\alpha")
+})
+#+end_src
+
+** Snippet 的组织和加载
+
+*** 方式 1: 直接在配置中定义 (=add_snippets=)
+
+#+begin_src lua
+local ls = require("luasnip")
+
+ls.add_snippets("all", {  -- "all" 表示所有文件类型
+    s("date", {
+        f(function() return os.date("%Y-%m-%d") end)
+    }),
+})
+
+ls.add_snippets("python", {  -- 仅 Python 文件
+    s("ifmain", {
+        t({"if __name__ == '__main__':", "    "}),
+        i(0)
+    }),
+})
+#+end_src
+
+*** 方式 2: Lua Loader (推荐)
+
+创建目录结构:
+
+#+begin_example
+~/.config/nvim/
+└── lua/
+    └── snippets/
+        ├── all.lua       -- 所有文件类型
+        ├── lua.lua       -- Lua 文件
+        └── python.lua    -- Python 文件
+#+end_example
+
+每个文件返回一个 snippet 表:
+
+#+begin_src lua
+-- ~/.config/nvim/lua/snippets/lua.lua
+local ls = require("luasnip")
+local s = ls.snippet
+local t = ls.text_node
+local i = ls.insert_node
+
+return {
+    s("req", {
+        t("local "),
+        i(1, "name"),
+        t(" = require('"),
+        i(2, "module"),
+        t("')"),
+        i(0)
+    }),
+}
+#+end_src
+
+在 =init.lua= 中加载:
+
+#+begin_src lua
+require("luasnip.loaders.from_lua").load({
+    paths = "~/.config/nvim/lua/snippets"
+})
+#+end_src
+
+*优势*:
+
+- 模块化管理
+- 支持 *热重载* (修改文件后自动更新)
+- 可以用 =:LuaSnipEdit= 快速跳转到对应文件
+
+*** 方式 3: VSCode 格式 (兼容性)
+
+使用现有的 VSCode snippet 库:
+
+#+begin_src lua
+require("luasnip.loaders.from_vscode").lazy_load()  -- 加载 rtp 中的所有 VSCode snippets
+require("luasnip.loaders.from_vscode").lazy_load({
+    paths = {"~/.config/nvim/snippets"}  -- 或指定路径
+})
+#+end_src
+
+VSCode snippet 格式 (JSON):
+
+#+begin_src json
+{
+  "Print to console": {
+    "prefix": "log",
+    "body": [
+      "console.log('$1');",
+      "$2"
+    ],
+    "description": "Log output to console"
+  }
+}
+#+end_src
+
+*** 方式 4: SnipMate 格式 (简化语法)
+
+#+begin_src lua
+require("luasnip.loaders.from_snipmate").lazy_load()
+#+end_src
+
+SnipMate 格式 (=.snippets= 文件):
+
+#+begin_example
+snippet log
+	console.log('${1}');
+	${0}
+#+end_example
+
+比 Lua 语法简洁，但功能有限 (无 =dynamicNode=、=choiceNode= 等高级特性)。
+
+** Keymap 配置: 展开和跳转
+
+LuaSnip 需要手动配置按键:
+
+*** 基础配置 (Lua)
+
+#+begin_src lua
+local ls = require("luasnip")
+
+vim.keymap.set({"i"}, "<C-K>", function()
+    ls.expand()
+end, {silent = true})
+
+vim.keymap.set({"i", "s"}, "<C-L>", function()
+    ls.jump(1)
+end, {silent = true})
+
+vim.keymap.set({"i", "s"}, "<C-J>", function()
+    ls.jump(-1)
+end, {silent = true})
+
+vim.keymap.set({"i", "s"}, "<C-E>", function()
+    if ls.choice_active() then
+        ls.change_choice(1)
+    end
+end, {silent = true})
+#+end_src
+
+- =<C-K>=: 展开 snippet
+- =<C-L>=: 跳到下一个节点
+- =<C-J>=: 跳到上一个节点
+- =<C-E>=: 在 choiceNode 中切换选项
+
+*** 与 nvim-cmp 集成 (Tab 展开)
+
+#+begin_src lua
+local cmp = require("cmp")
+local luasnip = require("luasnip")
+
+cmp.setup({
+    snippet = {
+        expand = function(args)
+            luasnip.lsp_expand(args.body)
+        end,
+    },
+    mapping = {
+        ["<Tab>"] = cmp.mapping(function(fallback)
+            if cmp.visible() then
+                cmp.select_next_item()
+            elseif luasnip.expand_or_jumpable() then
+                luasnip.expand_or_jump()
+            else
+                fallback()
+            end
+        end, {"i", "s"}),
+
+        ["<S-Tab>"] = cmp.mapping(function(fallback)
+            if cmp.visible() then
+                cmp.select_prev_item()
+            elseif luasnip.jumpable(-1) then
+                luasnip.jump(-1)
+            else
+                fallback()
+            end
+        end, {"i", "s"}),
+    },
+})
+#+end_src
+
+** 高级技巧
+
+*** 1. 使用 =fmt= 简化语法
+
+原始写法:
+
+#+begin_src lua
+s("fn", {
+    t("function "),
+    i(1, "name"),
+    t("("),
+    i(2, "args"),
+    t({") {", "    "}),
+    i(0),
+    t({"", "}"})
+})
+#+end_src
+
+使用 =fmt= 重写:
+
+#+begin_src lua
+local fmt = require("luasnip.extras.fmt").fmt
+
+s("fn", fmt([[
+function {name}({args}) {{
+    {body}
+}}
+]], {
+    name = i(1, "name"),
+    args = i(2, "args"),
+    body = i(0)
+}))
+#+end_src
+
+*更易读！* =fmt= 自动处理 ={}= 占位符 (用 =<>= 作为分隔符避免冲突):
+
+#+begin_src lua
+local fmta = require("luasnip.extras.fmt").fmta
+
+s("fn", fmta([[
+function <name>(<args>) {
+    <body>
+}
+]], {
+    name = i(1, "name"),
+    args = i(2, "args"),
+    body = i(0)
+}))
+#+end_src
+
+*** 2. 重复节点 (=rep=)
+
+自动重复其他节点的内容:
+
+#+begin_src lua
+local rep = require("luasnip.extras").rep
+
+s("env", fmt([[
+\begin{{{env}}}
+    {content}
+\end{{{env}}}
+]], {
+    env = i(1, "equation"),
+    content = i(0),
+    env = rep(1)  -- 重复第 1 个 insertNode
+}))
+#+end_src
+
+输入 "equation" 后，闭合标签自动同步。
+
+*** 3. Visual Selection Snippet
+
+选中文本后用 snippet 包裹:
+
+#+begin_src lua
+-- 配置存储键
+ls.config.set_config({
+    store_selection_keys = "<C-s>"
+})
+
+-- 创建 snippet
+s("bold", fmt("**{}**", {
+    d(1, function(_, snip)
+        local res, env = {}, snip.env
+        if #env.LS_SELECT_RAW > 0 then
+            return sn(nil, t(env.LS_SELECT_RAW))
+        else
+            return sn(nil, i(1))
+        end
+    end)
+}))
+#+end_src
+
+使用:
+
+1. Visual 模式选中文本
+2. 按 =<C-s>= 存储
+3. 输入 "bold" 展开
+
+*** 4. Tree-sitter 条件展开
+
+仅在特定语法节点展开:
+
+#+begin_src lua
+local ts_utils = require("nvim-treesitter.ts_utils")
+
+s("ret", {
+    t("return "),
+    i(0)
+}, {
+    condition = function()
+        local node = ts_utils.get_node_at_cursor()
+        while node do
+            if node:type() == "function_declaration" then
+                return true
+            end
+            node = node:parent()
+        end
+        return false
+    end
+})
+#+end_src
+
+只有在函数内部才能展开 "ret"。
+
+** 实战示例: LaTeX 环境 Snippet
+
+#+begin_src lua
+local ls = require("luasnip")
+local s = ls.snippet
+local sn = ls.snippet_node
+local t = ls.text_node
+local i = ls.insert_node
+local f = ls.function_node
+local d = ls.dynamic_node
+local fmt = require("luasnip.extras.fmt").fmt
+local fmta = require("luasnip.extras.fmt").fmta
+local rep = require("luasnip.extras").rep
+
+return {
+    -- 通用环境
+    s({trig = "beg", snippetType = "autosnippet"}, fmta([[
+        \begin{<env>}
+            <content>
+        \end{<env>}
+    ]], {
+        env = i(1, "equation"),
+        content = i(0),
+        env = rep(1)
+    })),
+
+    -- 矩阵 (动态生成)
+    s({trig = "mat(%d+)x(%d+)", regTrig = true, snippetType = "autosnippet"}, {
+        t("\\begin{bmatrix}"),
+        t({"", "    "}),
+        d(1, function(args, snip)
+            local rows = tonumber(snip.captures[1])
+            local cols = tonumber(snip.captures[2])
+            local nodes = {}
+            local idx = 1
+            for r = 1, rows do
+                for c = 1, cols do
+                    table.insert(nodes, i(idx))
+                    idx = idx + 1
+                    if c < cols then
+                        table.insert(nodes, t(" & "))
+                    end
+                end
+                if r < rows then
+                    table.insert(nodes, t({" \\\\", "    "}))
+                end
+            end
+            return sn(nil, nodes)
+        end),
+        t({"", "\\end{bmatrix}"}),
+        i(0)
+    }),
+
+    -- 希腊字母
+    s({trig = ";a", snippetType = "autosnippet", wordTrig = false}, {t("\\alpha")}),
+    s({trig = ";b", snippetType = "autosnippet", wordTrig = false}, {t("\\beta")}),
+    -- ...
+}
+#+end_src
+
+效果:
+
+- 输入 "beg" → 自动展开环境模板
+- 输入 "mat3x2" → 生成 3×2 矩阵，光标依次跳转到 6 个单元格
+- 输入 ";a" → 立刻变成 =\alpha=
+
+** 调试和优化
+
+*** 查看加载的 Snippets
+
+#+begin_src lua
+:lua print(vim.inspect(require("luasnip").get_snippets("lua")))
+#+end_src
+
+*** 热重载
+
+Lua loader 支持自动重载:
+
+#+begin_src lua
+require("luasnip.loaders.from_lua").load({
+    paths = "~/.config/nvim/lua/snippets"
+})
+
+-- 保存文件后自动重载
+vim.api.nvim_create_autocmd("BufWritePost", {
+    pattern = "*/snippets/*.lua",
+    command = "lua require('luasnip.loaders.from_lua').load({paths = '~/.config/nvim/lua/snippets'})"
+})
+#+end_src
+
+或者在 =ls.setup= 中启用:
+
+#+begin_src lua
+ls.setup({
+    update_events = "TextChanged,TextChangedI"  -- 实时更新
+})
+#+end_src
+
+*** 性能优化
+
+- *懒加载*: 使用 =lazy_load= 而不是 =load=
+- *减少 =dynamicNode=*: 复杂计算会拖慢响应
+- *禁用不需要的功能*:
+
+#+begin_src lua
+ls.setup({
+    update_events = {},  -- 禁用实时更新
+    region_check_events = {},
+})
+#+end_src
+
+** 与其他 Snippet 引擎的对比
+
+| 特性             | LuaSnip | UltiSnips | SnipMate |
+|------------------+---------+-----------+----------|
+| 语言             | Lua     | Python    | VimL     |
+| 依赖             | 无      | pynvim    | 无       |
+| 启动时间          | ~3 ms   | ~25 ms    | ~5 ms    |
+| Tree-sitter 集成 | ✓       | ✗        | ✗       |
+| LSP 兼容         | ✓       | ✗        | ✗       |
+| VSCode 格式      | ✓       | ✗        | ✗       |
+| 动态节点          | ✓       | ✓         | ✗       |
+| 正则触发          | ✓       | ✓         | ✗       |
+| 学习曲线          | 陡峭    | 中等      | 平缓     |
+
+** 总结
+
+LuaSnip 是 Neovim 最强大的 snippet 引擎，但学习曲线较陡。核心概念:
+
+1. *Snippet 是节点树*: =textNode=, =insertNode=, =functionNode=, =dynamicNode= 等
+2. *触发方式灵活*: 字符串、正则、自动展开
+3. *加载方式多样*: Lua 文件、VSCode、SnipMate
+4. *高级特性强大*: Tree-sitter 条件、visual selection、动态生成
+
+*推荐学习路径*:
+
+1. 从简单的 =textNode= + =insertNode= 开始
+2. 学习 =fmt= 简化语法
+3. 掌握 =functionNode= 生成动态内容
+4. 最后挑战 =dynamicNode= 和 =choiceNode=
+
+*资源*:
+
+- 官方文档: =:help luasnip=
+- [[https://github.com/L3MON4D3/LuaSnip/blob/master/Examples/snippets.lua][官方示例]]
+- [[https://ejmastnak.com/tutorials/vim-latex/luasnip/][ejmastnak 的 LaTeX 教程]]
+- [[https://evesdropper.dev/files/luasnip/ultisnips-to-luasnip/][从 UltiSnips 迁移指南]]
+
+构造一个 snippet 的核心:
+
+#+begin_src lua
+luasnip.snippet(context, nodes, opts) -> snippet
+#+end_src
+
+记住这个签名，你就掌握了 LuaSnip 的精髓。
