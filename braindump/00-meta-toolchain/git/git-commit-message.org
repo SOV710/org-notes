@@ -53,21 +53,21 @@ Conventional Commits 的完整格式:
 
 *** 必需部分
 
-1. *=type=*: commit 的类型 (见下节)
-2. *=description=*: 简短描述，使用 *祈使句* (如 "add feature"，不是 "added" 或 "adds")
+1. =type=: commit 的类型 (见下节)
+2. =description=: 简短描述，使用 *祈使句* (如 "add feature"，不是 "added" 或 "adds")
 
 *** 可选部分
 
-1. *=scope=*: 影响范围，放在括号中 (如 =feat(parser)=)
+1. =scope=: 影响范围，放在括号中 (如 =feat(parser)=)
    - 在 monorepo 中标识包名 (=feat(api)=, =fix(ui)=)
    - 标识子系统 (=refactor(auth)=, =perf(cache)=)
 
-2. *=body=*: 详细说明，用空行与 description 分隔
+2. =body=: 详细说明，用空行与 description 分隔
    - 解释 *为什么* 做这个修改
    - 提供实现细节
    - 列出副作用
 
-3. *=footer=*: 元数据，用于:
+3. =footer=: 元数据，用于:
    - 引用 issue: =Fixes #123=, =Closes #456=
    - 标识 breaking change: =BREAKING CHANGE: description=
    - 标注合作者: =Co-authored-by: Name <email>=
@@ -144,7 +144,7 @@ fix(db): close connection pool on shutdown
 
 *** =docs=: 文档更新
 
-*不触发版本更新*。
+*不触发版本更新*​。
 
 #+begin_src text
 docs(api): add examples for authentication endpoints
@@ -159,7 +159,7 @@ docs(contributing): update code style guidelines
 
 *** =style=: 代码风格
 
-*不触发版本更新*。代码 *语义* 没有改变，只是格式调整。
+*不触发版本更新*​。代码 *语义* 没有改变，只是格式调整。
 
 #+begin_src text
 style: run prettier on all source files
@@ -174,7 +174,7 @@ style: fix indentation in config files
 
 *** =refactor=: 重构
 
-*不触发版本更新*。既不修 bug，也不加功能，只是改进代码结构。
+*不触发版本更新*​。既不修 bug，也不加功能，只是改进代码结构。
 
 #+begin_src text
 refactor(auth): extract token validation into separate module
@@ -189,7 +189,7 @@ refactor(ui): migrate class components to hooks
 
 *** =perf=: 性能优化
 
-*可能触发 PATCH 版本更新*。
+*可能触发 PATCH 版本更新*​。
 
 #+begin_src text
 perf(db): add index on user_id column
@@ -204,7 +204,7 @@ perf: reduce bundle size by lazy loading routes
 
 *** =test=: 测试
 
-*不触发版本更新*。
+*不触发版本更新*​。
 
 #+begin_src text
 test(auth): add integration tests for login flow
@@ -219,7 +219,7 @@ test(api): add property-based tests for validation
 
 *** =chore=: 杂务
 
-*不触发版本更新*。维护性任务，不影响生产代码。
+*不触发版本更新*​。维护性任务，不影响生产代码。
 
 #+begin_src text
 chore: update dependencies to latest versions
@@ -234,7 +234,7 @@ chore(release): bump version to 2.0.0
 
 *** =build=: 构建系统
 
-*不触发版本更新*。影响构建过程或外部依赖。
+*不触发版本更新*​。影响构建过程或外部依赖。
 
 #+begin_src text
 build: migrate from webpack to vite
@@ -249,7 +249,7 @@ build: add esbuild for faster development builds
 
 *** =ci=: 持续集成
 
-*不触发版本更新*。
+*不触发版本更新*​。
 
 #+begin_src text
 ci: add automated release workflow
@@ -264,7 +264,7 @@ ci: cache node_modules in CI pipeline
 
 *** =revert=: 回滚
 
-*版本影响视被回滚的 commit 而定*。
+*版本影响视被回滚的 commit 而定*​。
 
 #+begin_src text
 revert: feat(auth): implement OAuth2
@@ -320,7 +320,7 @@ Breaking change 意味着:
 - 删除已废弃的功能
 - 行为变更 (如默认值修改)
 
-用户升级时 *必须修改代码*，所以需要在 MAJOR 版本号上体现。
+用户升级时 *必须修改代码*, 所以需要在 MAJOR 版本号上体现。
 
 ** 示例: 多个 breaking change
 
@@ -354,12 +354,12 @@ Conventional Commits *完美契合* [[https://semver.org][Semantic Versioning (S
 
 ** Commit 类型与版本号映射
 
-| Commit 类型                    | 版本影响 | 示例                |
-|-------------------------------+----------+---------------------|
-| =fix:= 类型                    | PATCH    | =1.0.0= → =1.0.1=   |
-| =feat:= 类型                   | MINOR    | =1.0.1= → =1.1.0=   |
-| 任何类型 + =BREAKING CHANGE=   | MAJOR    | =1.1.0= → =2.0.0=   |
-| =docs:=, =style:=, =test:= 等  | -        | 不发布新版本        |
+| Commit 类型               | 版本影响 | 示例          |
+|---------------------------+---------+---------------|
+| =fix:= 类型                 | PATCH   | =1.0.0= → =1.0.1= |
+| =feat:= 类型                | MINOR   | =1.0.1= → =1.1.0= |
+| 任何类型 + =BREAKING CHANGE= | MAJOR   | =1.1.0= → =2.0.0= |
+| =docs:=, =style:=, =test:= 等   | -       | 不发布新版本    |
 
 ** 自动化版本管理
 
