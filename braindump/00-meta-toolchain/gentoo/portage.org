@@ -1,0 +1,339 @@
+#+title: A Practical User Guide to Gentoo Portage (Emerge , Configuration , dispatch-conf)
+#+startup: showall
+
+* Scope , Reading Map , And How To Use This Note
+  这份笔记面向 /Gentoo end users/ , 目标是让你能用 *Portage* 进行可控 , 可重复 , 可排错的日常维护 , 包括安装 / 更新 / 清理 / 配置合并 / 二进制包工作流。Portage 的开发者接口 (PMS , ebuild internals) 只在你理解用户层行为所必需时才会提到。
+
+推荐阅读顺序:
+
+- 先读 *Portage mental model*, 建立术语与工作流的总览。
+- 再读 */etc/portage* 与 *make.conf*, 明白配置从哪里来 , 如何覆盖。
+- 然后读 *emerge recipes*, 能“稳定升级一次系统”。
+- 最后读 *dispatch-conf* 与 *troubleshooting*, 把维护闭环跑通。
+
+* Portage Mental Model (What Portage Actually Does)
+  Portage 是 Gentoo 的包管理系统与分发系统 , 其核心任务是:
+
+- 从 *repository* (ebuild 仓库) 获取软件配方 (ebuilds)。
+- 按你的 *profile* 与 *USE flags* 决定“该怎么编译与依赖什么”。
+- 用 *dependency resolver* 计算依赖闭包 , 生成可执行的安装计划。
+- 执行源码构建 (或使用二进制包) , 并把结果 *merge* 进系统。
+
+你日常直接操作 Portage 的主要入口是 =emerge= , 它是 Portage 的“权威 CLI”。
+
+* Core Vocabulary (Minimum Set You Must Know)
+** Package atom
+  Gentoo 用 *atom* 精确指代包与版本范围 , 常见形式:
+
+- =category/pkg=, 例如 =app-editors/neovim=
+- =category/pkg:slot=, 例如 =dev-lang/python:3.12=
+- 带版本约束, 例如 =>=sys-kernel/gentoo-sources-6.6.21=
+- 精确版本, 例如 ===dev-lang/python-3.12.1= (前缀 ==== 表示严格等于)
+
+atom 会出现在 =package.use= , =package.mask= , =package.accept_keywords= 等几乎所有配置入口中。
+
+** Ebuild, repository, And profile
+
+- *ebuild* 是“如何下载 , 解包 , patch , 编译 , 安装”的脚本配方 , 本质是 bash 脚本与变量集合。([Gentoo Developer Site][3])
+- *repository* 是 ebuild 的集合 (Gentoo 官方仓库 + overlays)。
+- *profile* 定义一台 Gentoo 机器的“基础行为与默认值” , 包括系统集 , 默认 USE , 工具链选择等。系统通过 =/etc/portage/make.profile= 指向当前 profile。([eMirror][1])
+
+** Sets : @world , @system
+
+- *@system* 是“系统能正常运行所需的基础软件集合” , 由 profile 定义。([eMirror][4])
+- *@world* 是“你显式选择的包 + 系统集等” , 通常用于全系统升级的目标集合。更新系统时经常运行 =emerge -avuDN @world=。([eMirror][5])
+
+* Filesystem Layout (Where Things Live)
+** /etc/portage is the control center
+  =/etc/portage= 是 Portage 的主配置目录。([eMirror][6])
+  你需要形成“读配置优先到这里找”的肌肉记忆。
+
+一个常用的 (但不是唯一) 目录结构可以是:
+
+- =/etc/portage/make.conf= : 全局变量。
+- =/etc/portage/package.use/= : 按包覆写 USE。
+- =/etc/portage/package.accept_keywords/= : 按包启用 testing / keyword。
+- =/etc/portage/package.mask/= , =package.unmask/= : 屏蔽 / 解屏蔽版本。
+- =/etc/portage/package.license/= : 按包接受 license。
+- =/etc/portage/package.env= 与 =/etc/portage/env/= : 按包设置构建环境。
+- =/etc/portage/repos.conf/= : 仓库定义 (gentoo repo , overlays)。
+- =/etc/portage/sets/= : 自定义 package sets。([eMirror][6])
+
+注:
+
+- 上述多数“文件”也可以做成“目录 + 多文件” , 便于拆分与版本管理 (尤其当你偏好 Unix Geek 风格的可维护布局)。
+- 具体可用项以 =man portage= 为准。([Gentoo Developer Site][7])
+
+** make.conf (global knobs)
+=/etc/portage/make.conf= 是全局自定义 Portage 环境的核心配置文件 , 旧路径 =/etc/make.conf= 仍兼容但不推荐 , 且两者同时存在时 =/etc/portage/make.conf= 优先。([eMirror][8])
+
+配置来源的层次化理解很重要:
+
+- Portage 自带默认值 (例如 =/usr/share/portage/config/make.globals= , 以及其它默认配置)。
+- profile 的 =make.defaults= 叠加默认值。
+- 你在 =make.conf= 做全局覆盖。
+- 你在 =/etc/portage/package.*= 做“按包覆盖”。
+- 环境变量可在一次命令中临时覆盖 (例如 =FEATURES="test" emerge ...=)。([eMirror][1])
+
+* USE Flags (Feature Model That Drives Dependencies)
+** What USE flags are
+  USE flags 用于告诉 Portage “一个包应该启用哪些可选特性” , 这会影响:
+
+- 编译期开关 (不一定一一映射到上游 configure , 由维护者决定暴露粒度)。
+- 依赖选择 (启用某特性可能引入额外库依赖)。
+- 安装内容 (例如文档是否安装)。([eMirror][9])
+
+** Where USE flags come from
+USE flags 的默认值来自仓库与 profile , 然后你可以:
+
+- 在 =make.conf= 的 =USE= 变量里全局设置。
+- 在 =/etc/portage/package.use= 里按包设置。([eMirror][9])
+
+** Practical workflow for USE changes
+当你改了 USE (全局或按包) , 典型的正确动作是:
+#+begin_src sh
+emerge -avuDN @world
+#+end_src
+其中:
+
+- =-u= 更新。
+- =-D= deep 处理依赖树更深层的更新。
+- =-N= /--newuse/ 使 USE 变化触发必要的重装。([eMirror][5])
+
+注意:
+
+- 如果你依赖二进制包工作流 , 文档建议更倾向使用 =--newuse= 而不是 =--changed-use= , 因为后者在某些“禁用 USE”场景不会触发重装 , 可能导致二进制一致性问题。([eMirror][5])
+
+* Keywording , Masking , And Licenses (Controlling Availability)
+  你会频繁碰到三类“为什么装不上”的原因:
+
+- 关键词 (stable vs testing) 不允许。
+- 版本被 mask。
+- license 未被接受。
+
+** Keywords (stable / testing)
+概念上:
+
+- stable 包对大多数用户默认可用。
+- testing 包需要你通过 =package.accept_keywords= 显式允许 (通常按包而不是全局)。
+  建议策略:
+- 除非你明确要跑 testing 系统 , 否则尽量“按包解锁 testing”。
+
+** Mask / unmask
+mask 用于阻止安装某版本或版本范围。
+例 (屏蔽高于某版本的内核源):
+#+begin_src conf
+
+> sys-kernel/gentoo-sources-6.6.21
+#+end_src
+
+这类操作通常写入 =/etc/portage/package.mask= (文件或目录均可)。
+
+** License control
+=ACCEPT_LICENSE= 用于控制可接受的许可证 , 不接受则无法安装对应包。make.conf 页面给出了示例与建议 (例如用更可审计的方式处理 EULA 类许可证)。([eMirror][8])
+
+* emerge (Daily Driver)
+** What emerge is
+  =emerge= 是 Portage 的权威命令行接口 , 用于安装包 , 自动处理依赖 , 同步仓库 , 更新系统 , 也支持二进制包与构建二进制包。([Gentoo Developer Site][2])
+
+** Read emerge output like a pro
+强烈建议你把下面三个习惯固化:
+
+- 先 =--pretend= (或 =-p=) 看计划。
+- 用 =--ask= (或 =-a=) 在执行前确认。
+- 需要排障时加 =--verbose= (或 =-v=) 看细节。
+
+示例:
+#+begin_src sh
+emerge -pav app-editors/neovim
+#+end_src
+
+** Repository sync (getting new ebuilds)
+更新仓库的推荐方式是:
+#+begin_src sh
+emaint -a sync
+#+end_src
+文档也强调不要一天 sync 多次 , 以免对镜像服务器造成压力。([eMirror][5])
+
+你仍会见到:
+#+begin_src sh
+emerge --sync
+#+end_src
+它在很多场景可用 (例如一些工具配置会提到 “每次 sync 自动更新 overlays” )。([eMirror][1])
+
+** The canonical full upgrade workflow
+一个“可维护的升级闭环”通常是:
+
+1. sync 仓库:
+   #+begin_src sh
+   emaint -a sync
+   #+end_src
+2. 处理 news items (强烈建议每次 sync 后都检查)。
+3. 更新系统:
+   #+begin_src sh
+   emerge -avuDN @world
+   #+end_src
+4. 合并配置文件更新:
+   #+begin_src sh
+   dispatch-conf
+   #+end_src
+5. 清理无用依赖 (谨慎):
+   #+begin_src sh
+   emerge --depclean
+   #+end_src
+   该流程与注意事项在 “Upgrading Gentoo” 文档中有明确建议。
+
+** When dependency solving gets ugly (backtrack , emptytree)
+当你遇到复杂依赖冲突或解算失败时 , 文档给出两个常见抓手:
+
+- 提高回溯上限 (例如 =--backtrack=30= 或更高)。
+- 极端情况下尝试 =--emptytree= (代价很高 , 慎用)。
+  实务上建议:
+- 先用更高 =--backtrack=​。
+- 仍失败再考虑 =--emptytree= , 并在 =--ask= 阶段仔细审查计划。
+
+** Build-time dependencies (bdeps)
+若你希望更新构建期依赖 , 可考虑:
+#+begin_src sh
+emerge -avuDN --with-bdeps=y @world
+#+end_src
+该建议在升级文档中出现。([eMirror][5])
+
+* Binary Packages (When You Do Not Want To Compile Everything)
+  Portage / emerge 支持:
+
+- 安装二进制包。
+- 从源码构建并产出二进制包用于分发。
+
+** Using Gentoo binhost quickly
+二进制主机快速上手文档给出核心开关:
+
+- 安装时加 =--getbinpkg= (短选项 =-g=)。
+  示例:
+  #+begin_src sh
+  emerge -avg app-editors/nano
+  #+end_src
+
+** quickpkg (turn installed packages into binpkgs)
+handbook 描述了 =quickpkg= 用于把“已安装包”打包成二进制归档 , 默认输出到 =$PKGDIR= (通常 =/var/cache/binpkgs/= )。
+
+示例:
+#+begin_src sh
+quickpkg curl procps
+#+end_src
+
+实务建议:
+
+- 把 binpkgs 放到空间充足的盘上 , 并做好访问权限控制 (binpkgs 属于供应链的一部分)。
+
+* Configuration File Protection , And Why dispatch-conf Is Non-Optional
+** CONFIG_PROTECT and ._cfg files
+ 当 Portage 需要覆盖受保护目录中的配置文件时 , 会生成类似 =.*cfg0000*<name>= 的新文件 , 避免直接覆盖你的本地改动。
+ dispatch-conf 的职责就是把这些变化“可审计地合并”回去。([eMirror][1])
+
+你可以用:
+#+begin_src sh
+emerge --info | grep 'CONFIG_PROTECT='
+#+end_src
+来查看当前保护范围。([eMirror][1])
+
+** dispatch-conf design intent
+=dispatch-conf= 设计目标是 “在合并新包后运行” , 用于检查并处理配置文件更新冲突。([Gentoo Developer Site][11])
+
+它会把差异以 patch 或 RCS 形式归档 , 从而允许你回滚到历史版本。([eMirror][1])
+
+** First-time setup (do this once)
+handbook 建议你先编辑 =/etc/dispatch-conf.conf= , 并创建其中 =archive-dir= 指向的目录 , 然后再运行 =dispatch-conf=。([eMirror][1])
+
+一个最小化思路是:
+
+- 选择一个可备份的位置作为 archive (默认常见为 =/etc/config-archive/= , 具体以配置为准)。
+- 确保该目录权限合理 , 避免被非特权用户篡改。
+
+** Keybindings (interactive flow)
+运行 =dispatch-conf= 后 , 它会逐个让你审阅每个变更:
+
+- 按 =u= : 使用新配置替换旧配置 , 并继续下一个。
+- 按 =z= : 删除新配置文件 (不应用变更) , 并继续下一个。
+- 按 =n= : 跳过该文件 (延后处理)。
+- 按 =q= : 随时退出。([eMirror][1])
+
+实践建议:
+
+- 对关键服务 (network , sshd , init system , bootloader) 的配置更新 , 不要 “无脑 u”。
+- 需要合并时 , 先看 diff , 再决定是编辑旧文件 , 还是把新文件作为基准合并。
+
+* Logging , Observability , And Postmortem Tools
+** Portage log and elog
+  Portage 在安装 / 更新 / 移除过程中会输出大量信息 , 其中一些是重要的维护提示。由于滚屏很快 , 文档建议启用 =elog= 等日志能力把消息落盘以便复查。([eMirror][12])
+
+** Useful userland tools
+Troubleshooting 页面列出了一些常用工具:
+
+- =genlop= : 解析 emerge 日志 , 看包何时安装 / 更新以及耗时。
+- =elogv= : 以 ncurses 界面浏览 emerge logs。([eMirror][13])
+
+** FEATURES as an on-demand switchboard
+=FEATURES= 可以作为“临时构建行为开关”在命令行前缀使用 (例如保留临时文件 , 运行测试)。
+示例:
+#+begin_src sh
+FEATURES="keeptemp test" emerge -1a foobar
+#+end_src
+
+* Operational Best Practices (Low Drama Gentoo)
+** Update cadence and news discipline
+  Gentoo 是 rolling release , 维护成本主要来自 “你是否让系统长期脱离主线”。
+  升级文档建议在 daily 到 weekly 频率更新 , 并强调 sync 后要阅读 news items 与 Portage messages。([eMirror][5])
+
+** Always treat depclean as dangerous
+文档明确警告 =emerge --depclean= 可能移除重要包 (例如内核源 , 或某些 virtual 的可选依赖选择)。
+最佳实践:
+
+- 总是先 =--pretend= 审查清单。
+- 对你手动管理的软件 (如内核源) , 额外确认是否会被清理。([eMirror][5])
+
+** Profiles are architecture-level policy
+切 profile 是“系统级策略变更” , 不只是“换个默认 USE”。
+升级文档给出了通过 =eselect profile= 切换的常见命令 , 并强调在 profile 变更前先阅读相关文档。([eMirror][5])
+
+** Treat /etc/portage as code
+建议把 =/etc/portage= 纳入版本管理 (例如 git) , 以便:
+
+- 快速回滚错误的 USE / keyword / mask 改动。
+- 在多机之间同步策略。
+  (这一点与 dispatch-conf 的归档机制互补。)
+
+* Practical Cheat Sheet (Copy , Paste , Then Think)
+** Sync and upgrade
+  #+begin_src sh
+  emaint -a sync
+  emerge -avuDN --with-bdeps=y @world
+  dispatch-conf
+  emerge -pav --depclean
+  #+end_src
+
+** Inspect before doing anything
+#+begin_src sh
+emerge -pav <atom>
+emerge -pav @world
+emerge --info | grep 'CONFIG_PROTECT='
+#+end_src
+
+** Binary package usage (binhost)
+#+begin_src sh
+emerge -avg app-editors/nano
+#+end_src
+
+** Make binpkgs from installed packages
+#+begin_src sh
+quickpkg curl procps
+#+end_src
+
+* Appendix A : Where To Read The Truth (Primary References)
+
+- Gentoo Handbook , Working with Portage (mirrored) , covers Portage concepts , configuration , tools like dispatch-conf and quickpkg.([eMirror][1])
+- =man emerge= (official Portage manpage) , the authoritative CLI reference.([Gentoo Developer Site][2])
+- =man portage= (official Portage manpage) , configuration files and advanced behaviors.([Gentoo Developer Site][7])
+- =man make.conf= (official Portage manpage) , global variable semantics.([Gentoo Developer Site][15])
+- =man dispatch-conf= (official Portage manpage) , config merge operations and interaction model.([Gentoo Developer Site][11])
+- Upgrading Gentoo (mirrored) , a pragmatic system maintenance flow including emaint sync , world updates , dispatch-conf , depclean.([eMirror][5])
