@@ -1,0 +1,808 @@
+#+title: Computer Science Taxonomy: A Priority-Based Classification System
+#+author: SOV710
+#+date: 2025-12-22
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 核心思想: 优先级驱动的互斥分类
+
+计算机科学的技术栈极其庞杂，从底层硬件到上层应用，从理论算法到工程实践，边界往往模糊交叉。本文提出一套 *可执行的分类规则*，用 *"主要目标 (primary goal) 优先"* 的原则，将任何计算机技术 *有且仅有地* 归入 9 大类之一。
+
+** 分类原则
+
+#+begin_quote
+*优先级链*: 按顺序检查每一类的定义，*第一个命中即归类，停止匹配*。
+#+end_quote
+
+这样设计的理由:
+
+1. *避免歧义*: 很多技术跨越多个领域 (如 Kubernetes 既涉及网络，又涉及虚拟化)，优先级链保证唯一归属。
+2. *目标导向*: 以 *"这个技术的首要目的是什么"* 作为分类依据，而非表面特征。
+3. *可执行性*: 任何人按流程检查，都能得到相同的结果。
+
+** 9 大类别概览
+
+| 类别                 | 核心特征                                  |
+|----------------------+------------------------------------------|
+| *安全与隐私*             | 保护机密性/完整性/可用性，身份鉴别/授权/密钥/攻防 |
+| *硬件与体系结构*          | 物理/逻辑电路、器件、ISA、微架构、SoC          |
+| *操作系统与虚拟化*        | 管理计算资源、驱动、内核、虚拟机/容器           |
+| *网络与分布式系统*        | 跨进程/跨主机传输与协同 (协议、共识、复制)       |
+| *编程语言与运行时*        | 定义/翻译/执行代码 (编译器、VM、GC、类型系统)   |
+| *数据系统与工程*          | 存储/检索/加工数据 (数据库、流平台、ETL)       |
+| *人工智能与机器学习*      | 从数据学习模型，训练/推理                     |
+| *图形/视觉/多媒体 与 HCI* | 生成/处理像素、几何、音视频，或构建人机界面       |
+| *应用与行业框架*          | 直接交付领域功能 (Web/移动/游戏/机器人框架)     |
+
+#+begin_example
+优先级顺序:
+安全 → 硬件 → 操作系统 → 网络 → 语言 → 数据 → AI → 图形 → 应用
+#+end_example
+
+* 判定流程: 逐条检查，命中即停
+
+** 安全与隐私 (Security & Privacy)
+
+*判定问题*: 这个技术的 *首要目的* 是否是 *保护机密性/完整性/可用性*，或实现 *身份鉴别/授权/密钥管理/攻防*？
+
+*** 核心特征
+
+- *目标*: 防止未授权访问、篡改、泄露、拒绝服务
+- *关键词*: 加密、签名、密钥管理、零信任、WAF (Web Application Firewall)、渗透测试、鉴权 (Authentication/Authorization)
+- *边界*: 即使运行在网络层 (如 TLS) 或应用层 (如 OAuth2)，*只要首要目的是安全*，都归此类
+
+*** 典型技术
+
+**** 密码学与密钥管理
+
+- *加密协议*: TLS 1.3, DTLS, SSH, IPsec
+- *密码算法*: AES, ChaCha20, RSA, ECDSA, EdDSA
+- *密钥管理*: HashiCorp Vault, AWS KMS, PKCS#11, TPM (Trusted Platform Module)
+- *后量子密码*: Kyber, Dilithium, SPHINCS+
+
+**** 身份与访问控制
+
+- *认证协议*: OAuth 2.0, OpenID Connect, SAML, Kerberos
+- *令牌格式*: JWT (JSON Web Token), PASETO
+- *访问控制模型*: RBAC (Role-Based), ABAC (Attribute-Based), ReBAC (Relationship-Based)
+- *零信任架构*: BeyondCorp, SPIFFE/SPIRE, Istio mTLS
+
+**** 安全工具与平台
+
+- *WAF*: ModSecurity, Cloudflare WAF, AWS WAF
+- *漏洞扫描*: Nmap, OpenVAS, Burp Suite, ZAP
+- *入侵检测*: Snort, Suricata, OSSEC
+- *渗透测试*: Metasploit, Cobalt Strike, Kali Linux
+
+**** 安全开发与审计
+
+- *静态分析*: SonarQube, Semgrep, Bandit (Python)
+- *依赖扫描*: Snyk, Dependabot, OWASP Dependency-Check
+- *秘密检测*: TruffleHog, GitGuardian, detect-secrets
+
+*** 边界案例
+
+*Q*: HTTPS 算安全还是网络？
+*A*: → *安全*。虽然 HTTPS 基于 HTTP 协议，但 *TLS 的首要目的是保密性和完整性*。
+
+*Q*: Kubernetes RBAC 算安全还是操作系统？
+*A*: → *安全*。RBAC (Role-Based Access Control) 的核心是 *访问控制策略*，虽然运行在 Kubernetes 上。
+
+*Q*: SELinux/AppArmor 算安全还是操作系统？
+*A*: → *安全*。虽然是内核模块，但目的是 *强制访问控制 (MAC)*。
+
+** 硬件与体系结构 (Hardware & Architecture)
+
+*判定问题*: 是否研究 *物理/逻辑电路、器件、指令集 (ISA)、微架构、SoC*？
+
+*** 核心特征
+
+- *目标*: 设计/验证硬件，定义指令集，优化微架构性能
+- *关键词*: FPGA, Verilog/VHDL, RTL (Register Transfer Level), 流水线, 缓存一致性, ISA (Instruction Set Architecture)
+- *边界*: 传感器/执行器、MCU (Microcontroller)、CPU/GPU/NPU IP 核心也归此类
+
+*** 典型技术
+
+**** 指令集架构 (ISA)
+
+- *RISC*: RISC-V, ARM (v7, v8, v9), MIPS, SPARC
+- *CISC*: x86, x86-64 (AMD64), IA-64 (Itanium, 已淘汰)
+- *DSA* (Domain-Specific Architecture): TPU (Tensor Processing Unit), NPU (Neural Processing Unit)
+
+**** 微架构与性能优化
+
+- *流水线*: 超标量 (Superscalar), 乱序执行 (Out-of-Order), 分支预测
+- *缓存一致性*: MESI, MOESI, Directory-based protocols
+- *内存模型*: TSO (Total Store Order, x86), Weak Ordering (ARM), Relaxed (RISC-V)
+
+**** 硬件描述语言 (HDL)
+
+- *经典 HDL*: Verilog, VHDL, SystemVerilog
+- *现代 HDL*: Chisel (Scala-based), SpinalHDL, Bluespec
+- *高层综合*: Vivado HLS, Intel HLS Compiler
+
+**** 可编程硬件
+
+- *FPGA*: Xilinx (AMD) Vivado, Intel Quartus, Lattice
+- *ASIC 设计流程*: Synthesis (逻辑综合), Place & Route (布局布线), Timing Analysis (时序分析)
+- *验证*: UVM (Universal Verification Methodology), Formal Verification (形式化验证)
+
+**** 片上系统 (SoC)
+
+- *移动 SoC*: Apple M-series, Qualcomm Snapdragon, MediaTek Dimensity
+- *服务器 SoC*: AWS Graviton, Ampere Altra, NVIDIA Grace
+- *嵌入式 SoC*: STM32, ESP32, Raspberry Pi RP2040
+
+*** 边界案例
+
+*Q*: CUDA 算硬件还是编程语言？
+*A*: → *编程语言*。CUDA 是编程模型和编译器，虽然面向 GPU，但归 "编程语言与运行时"。
+
+*Q*: PCIe/NVLink 算硬件还是网络？
+*A*: → *硬件*。这些是 *片间互连协议*，属于体系结构的一部分。
+
+*Q*: 传感器 (如 IMU, Camera) 算硬件还是图形？
+*A*: → *硬件*。传感器是 *物理器件*，虽然数据可能用于视觉处理。
+
+** 操作系统与虚拟化 (Operating Systems & Virtualization)
+
+*判定问题*: 是否 *管理本机计算资源* (进程/线程、内存、I/O)，或提供 *虚拟化抽象* (VM, 容器)？
+
+*** 核心特征
+
+- *目标*: 隔离/调度/抽象硬件资源，提供进程模型和文件系统
+- *关键词*: 内核 (Kernel), 调度器, 虚拟文件系统 (VFS), cgroups, namespace, KVM, Xen, 容器, 镜像
+- *边界*: 容器 *本身* (如 Docker 容器运行时) 归此类；*集群层编排* (如 Kubernetes) 已被移至 toolchain 分类
+
+*** 典型技术
+
+**** 操作系统内核
+
+- *宏内核*: Linux, Windows NT, FreeBSD, macOS (XNU)
+- *微内核*: seL4, QNX, Fuchsia (Zircon), MINIX 3
+- *Unikernel*: MirageOS, Unikraft, IncludeOS
+- *实时操作系统 (RTOS)*: FreeRTOS, Zephyr, ThreadX, VxWorks
+
+**** 进程与线程管理
+
+- *调度算法*: CFS (Completely Fair Scheduler, Linux), O(1) scheduler, EDF (Earliest Deadline First)
+- *进程间通信 (IPC)*: Pipe, Unix socket, Message queue, Shared memory
+- *同步原语*: Mutex, Semaphore, Spinlock, RCU (Read-Copy-Update)
+
+**** 内存管理
+
+- *虚拟内存*: 页表 (Page Table), TLB (Translation Lookaside Buffer), Demand paging
+- *内存分配器*: jemalloc, tcmalloc, mimalloc
+- *Huge Pages*: Transparent Huge Pages (THP), HugeTLBfs
+
+**** 文件系统
+
+- *传统文件系统*: ext4, XFS, Btrfs, NTFS, APFS
+- *分布式文件系统*: Ceph, GlusterFS, Lustre (注: 如果强调跨节点协同，可能归 "网络与分布式")
+- *日志结构*: F2FS (Flash-Friendly File System), NILFS
+- *Copy-on-Write*: Btrfs, ZFS
+
+**** 虚拟化技术
+
+- *Type-1 Hypervisor* (裸金属): VMware ESXi, Xen, KVM (with QEMU)
+- *Type-2 Hypervisor* (宿主型): VirtualBox, VMware Workstation, Parallels
+- *容器运行时*: Docker (containerd), Podman, CRI-O
+- *容器镜像格式*: OCI Image Spec, Docker Image
+
+**** 设备驱动
+
+- *驱动模型*: Linux Device Model, Windows Driver Model (WDM)
+- *用户空间驱动*: DPDK (Data Plane Development Kit), SPDK (Storage Performance Development Kit)
+- *驱动框架*: V4L2 (Video4Linux2), ALSA (Advanced Linux Sound Architecture)
+
+*** 边界案例
+
+*Q*: Docker 算操作系统还是网络？
+*A*: → *操作系统*。Docker 的核心是 *容器运行时*，使用 cgroups/namespace 隔离资源。
+
+*Q*: Kubernetes 算操作系统还是网络？
+*A*: → *不在此分类*。Kubernetes 是 *集群编排平台*，已被移至 toolchain 分类 (工程实践与运维)。
+
+*Q*: systemd 算操作系统还是应用？
+*A*: → *操作系统*。systemd 是 *init 系统和服务管理器*，属于操作系统核心组件。
+
+*Q*: QEMU 算操作系统还是硬件？
+*A*: → *操作系统*。QEMU 是 *虚拟机监控器 (Hypervisor)*，虽然模拟硬件。
+
+** 网络与分布式系统 (Networking & Distributed Systems)
+
+*判定问题*: 核心是否是 *跨进程/跨主机的传输与协同* (通信协议、路由、RPC、共识、复制)？
+
+*** 核心特征
+
+- *目标*: 可靠/高效地在多个节点间传输数据、达成共识、复制状态
+- *关键词*: 协议 (Protocol), 路由 (Routing), RPC, 消息队列, 共识算法, 复制 (Replication), 负载均衡
+- *边界*: 如果目标是 "运维/编排" (已移至 toolchain)，或 "安全" (归安全类)，则不归此类
+
+*** 典型技术
+
+**** 网络协议栈
+
+- *传输层*: TCP, UDP, QUIC, SCTP, DCCP
+- *应用层*: HTTP/1.1, HTTP/2, HTTP/3, WebSocket, gRPC, MQTT, CoAP
+- *网络层*: IPv4, IPv6, ICMP, IPsec
+- *链路层*: Ethernet, Wi-Fi (802.11), Bluetooth, LoRa
+
+**** 远程过程调用 (RPC)
+
+- *传统 RPC*: XML-RPC, JSON-RPC, Apache Thrift, Protocol Buffers (protobuf)
+- *现代 RPC*: gRPC (HTTP/2 + protobuf), Apache Dubbo, Finagle
+- *消息格式*: protobuf, FlatBuffers, Cap'n Proto, MessagePack
+
+**** 消息队列与流平台
+
+- *消息队列*: RabbitMQ (AMQP), ActiveMQ, ZeroMQ
+- *流平台*: Apache Kafka, Apache Pulsar, NATS Streaming
+- *轻量消息*: Redis Streams, Amazon SQS
+
+注: 如果强调 *数据存储/查询*，Kafka 可能归 "数据系统"；如果强调 *消息传递*，归此类。按优先级，先匹配 "网络" 再匹配 "数据"。
+
+**** 分布式共识与协调
+
+- *共识算法*: Raft, Paxos (Multi-Paxos, Fast Paxos), Viewstamped Replication
+- *协调服务*: etcd, ZooKeeper, Consul
+- *分布式锁*: Redlock (Redis), ZooKeeper locks, etcd locks
+
+**** 负载均衡与服务发现
+
+- *负载均衡器*: HAProxy, Envoy, Nginx (作为反向代理), Traefik
+- *服务发现*: Consul, etcd, CoreDNS, Eureka
+- *服务网格*: Istio, Linkerd, Cilium Service Mesh
+
+**** 分布式数据复制
+
+- *复制模型*: Master-Slave, Multi-Master, Quorum-based (如 Cassandra)
+- *一致性模型*: Strong Consistency, Eventual Consistency, Causal Consistency
+- *冲突解决*: CRDTs (Conflict-free Replicated Data Types), Vector Clocks
+
+**** CDN 与边缘计算
+
+- *CDN*: Cloudflare, Akamai, Fastly, Amazon CloudFront
+- *边缘计算框架*: Cloudflare Workers, AWS Lambda@Edge, Vercel Edge Functions
+
+*** 边界案例
+
+*Q*: Nginx 算网络还是应用？
+*A*: 看使用场景:
+  - 作为 *反向代理/负载均衡器*，讨论七层转发协议 → *网络*
+  - 作为 *Web 应用服务器*，直接服务业务逻辑 → *应用*
+
+按优先级，"网络" 排在 "应用" 之前，所以如果 Nginx 的核心角色是负载均衡，归 *网络*。
+
+*Q*: Redis 算网络、数据还是缓存？
+*A*: → *数据系统*。虽然 Redis 用于缓存，但本质是 *内存数据库*，归 "数据系统与工程"。
+
+*Q*: gRPC 算网络还是编程语言？
+*A*: → *网络*。gRPC 是 *RPC 框架*，虽然有多语言绑定。
+
+*Q*: WebSocket 算网络还是应用？
+*A*: → *网络*。WebSocket 是 *通信协议*，虽然常用于实时应用。
+
+** 编程语言与运行时 (Programming Languages & Runtimes)
+
+*判定问题*: 是否 *定义/翻译/执行代码* (语言设计、编译器、解释器、虚拟机、GC、类型系统)？
+
+*** 核心特征
+
+- *目标*: 让程序员表达计算逻辑，并将其转换为机器可执行的形式
+- *关键词*: 编译器, 语义, 语法, IR (Intermediate Representation), JIT, VM, GC, 字节码, 类型系统
+- *边界*: 面向 GPU/异构的 *计算编程模型* (如 CUDA, OpenCL) 也归此类
+
+*** 典型技术
+
+**** 编程语言
+
+- *系统级语言*: C, C++, Rust, Zig, D
+- *托管语言*: Java, C#, Go, Swift, Kotlin
+- *动态语言*: Python, JavaScript/TypeScript, Ruby, Lua, PHP
+- *函数式语言*: Haskell, OCaml, F#, Scala, Erlang/Elixir
+- *领域特定语言 (DSL)*: SQL, GLSL/HLSL (着色器), Verilog (见硬件类)
+
+**** 编译器与工具链
+
+- *编译器前端*: Clang (C/C++), rustc (Rust), javac (Java), tsc (TypeScript)
+- *编译器后端*: LLVM, GCC backend, MSVC
+- *中间表示 (IR)*: LLVM IR, GCC GIMPLE, Java bytecode, WebAssembly
+- *优化器*: LLVM opt passes, GCC -O2/-O3, PGO (Profile-Guided Optimization)
+
+**** 虚拟机与运行时
+
+- *JVM*: HotSpot, GraalVM, OpenJ9, Android ART
+- *CLR*: .NET Core CLR, Mono
+- *JavaScript 引擎*: V8 (Chrome/Node.js), SpiderMonkey (Firefox), JavaScriptCore (Safari)
+- *动态语言 VM*: CPython, PyPy, Ruby MRI/YJIT
+
+**** 内存管理与垃圾回收 (GC)
+
+- *GC 算法*: Mark-Sweep, Copying GC, Generational GC (如 G1GC), Concurrent GC
+- *引用计数*: Swift ARC, Python refcount
+- *手动管理*: C/C++, Rust (所有权系统)
+
+**** 类型系统
+
+- *静态类型*: Java, C#, Rust, Haskell
+- *动态类型*: Python, JavaScript, Ruby
+- *渐进类型*: TypeScript, Python (mypy), Sorbet (Ruby)
+- *依赖类型*: Idris, Agda, Coq
+
+**** 并发与并行
+
+- *线程模型*: POSIX threads, Java threads, C++11 threads
+- *协程*: Go goroutines, Kotlin coroutines, Python asyncio
+- *Actor 模型*: Erlang/Elixir, Akka (Scala/Java)
+- *异步运行时*: Tokio (Rust), libuv (Node.js), asyncio (Python)
+
+**** 异构计算编程模型
+
+- *GPU 编程*: CUDA (NVIDIA), ROCm (AMD), OpenCL, SYCL
+- *并行框架*: OpenMP, OpenACC, Intel TBB
+- *统一内存*: CUDA Unified Memory, OpenCL SVM
+
+*** 边界案例
+
+*Q*: CUDA 算编程语言还是硬件？
+*A*: → *编程语言*。CUDA 是 *编程模型和编译器*，虽然面向 GPU。
+
+*Q*: LLVM 算编程语言还是应用？
+*A*: → *编程语言*。LLVM 是 *编译器基础设施*。
+
+*Q*: Jupyter Notebook 算编程语言还是应用？
+*A*: → *应用*。Jupyter 是 *交互式计算环境*，虽然运行代码。
+
+*Q*: eBPF 算编程语言还是操作系统？
+*A*: → *操作系统*。eBPF 是 *内核虚拟机*，用于扩展内核功能。
+
+** 数据系统与工程 (Data Systems & Engineering)
+
+*判定问题*: 首要目标是否是 *存储/检索/加工数据* (数据库、数据湖、流平台、ETL、列式内存)？
+
+*** 核心特征
+
+- *目标*: 持久化存储、高效查询、数据转换与聚合
+- *关键词*: SQL/NoSQL, 索引, 事务, OLTP/OLAP, CDC (Change Data Capture), ETL (Extract-Transform-Load), 流处理, 数据帧
+- *边界*: 以 "训练/推理模型" 为核心目标的归 AI 类，而非此类
+
+*** 典型技术
+
+**** 关系型数据库 (RDBMS)
+
+- *传统 RDBMS*: PostgreSQL, MySQL, Oracle, SQL Server, SQLite
+- *分布式 SQL*: CockroachDB, TiDB, YugabyteDB, Google Spanner
+- *NewSQL*: VoltDB, MemSQL (SingleStore)
+
+**** NoSQL 数据库
+
+- *文档数据库*: MongoDB, CouchDB, RavenDB
+- *键值存储*: Redis, Memcached, etcd, RocksDB
+- *列式存储*: Apache Cassandra, HBase, ScyllaDB
+- *图数据库*: Neo4j, ArangoDB, TigerGraph, Amazon Neptune
+
+**** 数据仓库与 OLAP
+
+- *传统数仓*: Teradata, Vertica, Greenplum
+- *云数仓*: Snowflake, BigQuery, Redshift, Synapse Analytics
+- *OLAP 引擎*: ClickHouse, Apache Druid, Apache Pinot
+
+**** 流处理平台
+
+- *流平台*: Apache Kafka (with Kafka Streams), Apache Pulsar
+- *流计算*: Apache Flink, Apache Spark Streaming, Apache Storm
+- *实时 OLAP*: Apache Druid, ClickHouse (实时摄入)
+
+**** 批处理与 ETL
+
+- *批处理*: Apache Spark, Apache Hadoop MapReduce, Dask
+- *ETL 工具*: Apache Airflow, Prefect, Dagster, dbt (data build tool)
+- *数据集成*: Debezium (CDC), Airbyte, Fivetran
+
+**** 列式内存与数据帧
+
+- *Arrow 生态*: Apache Arrow, Apache Parquet, Feather
+- *数据帧库*: Pandas (Python), Polars (Rust), Dask DataFrame, Vaex
+- *列式格式*: Parquet, ORC, Arrow IPC
+
+**** 索引与查询优化
+
+- *索引类型*: B-Tree, LSM-Tree (RocksDB), Bitmap Index, Full-text Index (Elasticsearch)
+- *查询优化*: Cost-based optimization, Join algorithms (Hash Join, Merge Join)
+- *向量化执行*: Apache Arrow, DuckDB, ClickHouse
+
+*** 边界案例
+
+*Q*: Kafka 算数据系统还是网络？
+*A*: → *网络* (按优先级)。虽然 Kafka 存储数据，但核心是 *消息传递*。如果讨论 Kafka 的存储引擎 (如 Tiered Storage)，可能归 *数据系统*。
+
+*Q*: Elasticsearch 算数据系统还是应用？
+*A*: → *数据系统*。Elasticsearch 是 *搜索引擎*，核心是数据索引与检索。
+
+*Q*: Pandas 算数据系统还是 AI？
+*A*: → *数据系统*。Pandas 是 *数据处理库*，虽然常用于 ML 预处理。
+
+*Q*: dbt 算数据系统还是应用？
+*A*: → *数据系统*。dbt 是 *数据转换工具*，属于 ETL 范畴。
+
+** 人工智能与机器学习 (Artificial Intelligence & Machine Learning)
+
+*判定问题*: 首要目标是否是 *从数据学习模型*，并用于 *训练/推理*？
+
+*** 核心特征
+
+- *目标*: 学习模式、预测、生成，优化模型参数
+- *关键词*: 训练, 推理, 模型, 优化器, 算子 (Operator), 蒸馏, 评测基准 (Benchmark)
+- *边界*: 传统图像处理 (如 OpenCV 的滤波器) 归图形类；数据清洗/ETL 归数据类
+
+*** 典型技术
+
+**** 机器学习框架
+
+- *深度学习*: PyTorch, TensorFlow, JAX, MXNet, PaddlePaddle
+- *传统 ML*: scikit-learn, XGBoost, LightGBM, CatBoost
+- *概率编程*: PyMC, Stan, Edward
+
+**** 推理引擎与部署
+
+- *推理引擎*: ONNX Runtime, TensorRT, OpenVINO, TVM, TensorFlow Lite
+- *模型服务*: TorchServe, TensorFlow Serving, Triton Inference Server
+- *边缘推理*: TensorFlow Lite, Core ML (Apple), NNAPI (Android)
+
+**** 模型格式与互操作
+
+- *标准格式*: ONNX (Open Neural Network Exchange), SavedModel (TF), TorchScript
+- *量化*: INT8 quantization, QAT (Quantization-Aware Training), PTQ (Post-Training Quantization)
+- *剪枝*: Magnitude pruning, Structured pruning, Lottery Ticket Hypothesis
+
+**** 模型优化
+
+- *优化器*: SGD, Adam, AdamW, LAMB, Lion
+- *学习率调度*: Cosine annealing, Warmup, ReduceLROnPlateau
+- *正则化*: Dropout, Batch Normalization, Layer Normalization, Weight Decay
+
+**** 模型压缩
+
+- *蒸馏*: Knowledge Distillation, Self-Distillation, Dark Knowledge
+- *量化*: 见上 (推理引擎部分)
+- *低秩分解*: SVD, Tucker Decomposition
+
+**** 领域模型
+
+- *计算机视觉*: ResNet, YOLO, ViT (Vision Transformer), CLIP, SAM (Segment Anything)
+- *自然语言处理*: BERT, GPT, T5, LLaMA, Mistral, Claude
+- *多模态*: CLIP, Flamingo, GPT-4V
+- *强化学习*: DQN, PPO, SAC, AlphaGo, MuZero
+
+**** 评测基准
+
+- *视觉*: ImageNet, COCO, ADE20K
+- *语言*: GLUE, SuperGLUE, SQuAD, MMLU
+- *多模态*: VQA, Winoground
+
+*** 边界案例
+
+*Q*: OpenCV 算 AI 还是图形？
+*A*: → *图形*。OpenCV 主要是 *传统图像处理* (滤波、边缘检测)，而非学习式模型。如果使用 OpenCV 的 DNN 模块加载深度学习模型，那部分归 AI。
+
+*Q*: FFmpeg 算 AI 还是多媒体？
+*A*: → *多媒体*。FFmpeg 是 *编解码器*，不涉及模型学习。
+
+*Q*: CUDA 算 AI 还是编程语言？
+*A*: → *编程语言*。CUDA 是编程模型，虽然常用于 AI 计算。
+
+*Q*: Jupyter Notebook 算 AI 还是应用？
+*A*: → *应用*。Jupyter 是交互式计算环境，虽然常用于 ML 实验。
+
+** 图形/视觉/多媒体 与 HCI (Graphics/Vision/Multimedia & Human-Computer Interaction)
+
+*判定问题*: 首要目标是否是 *生成/处理像素、几何、音视频*，或 *构建人机界面*？
+
+*** 核心特征
+
+- *目标*: 渲染 3D 场景、编解码视频、构建 GUI、实现无障碍访问
+- *关键词*: 渲染, 着色器 (Shader), 材质 (Material), 相机 (Camera), 编解码 (Codec), UI 组件, 无障碍 (Accessibility)
+- *边界*: 以 "游戏/机器人业务逻辑" 为核心的应用框架归应用类
+
+*** 典型技术
+
+**** 图形 API
+
+- *低层 API*: Vulkan, DirectX 12, Metal, OpenGL (逐渐被淘汰)
+- *高层 API*: WebGPU, DirectX 11
+- *着色器语言*: GLSL, HLSL, SPIR-V, WGSL (WebGPU Shading Language)
+
+**** 渲染技术
+
+- *光栅化*: Forward rendering, Deferred rendering, Tiled rendering
+- *光线追踪*: Ray tracing, Path tracing, Physically-Based Rendering (PBR)
+- *加速结构*: BVH (Bounding Volume Hierarchy), KD-Tree, Octree
+
+**** 渲染引擎
+
+- *商业引擎*: Unity, Unreal Engine, CryEngine, Lumberyard
+- *开源引擎*: Godot, Bevy (Rust), Three.js (WebGL), Babylon.js
+- *实时渲染*: Filament (Google), bgfx, OGRE
+
+**** 几何处理
+
+- *网格处理*: Trimesh, MeshLab, Open3D
+- *点云处理*: PCL (Point Cloud Library), Open3D
+- *体素*: OpenVDB, VDB, Minecraft 风格体素引擎
+
+**** 多媒体编解码
+
+- *视频编解码*: H.264/AVC, H.265/HEVC, VP9, AV1, VVC
+- *音频编解码*: AAC, Opus, MP3, FLAC, Vorbis
+- *容器格式*: MP4, MKV, WebM, AVI
+- *编解码库*: FFmpeg, GStreamer, libvpx, x264/x265
+
+**** 实时通信
+
+- *WebRTC*: 音视频通话、屏幕共享
+- *RTMP/RTSP*: 直播流协议
+- *HLS/DASH*: 自适应码率流
+
+**** 图像处理 (传统)
+
+- *库*: OpenCV, Pillow (Python), ImageMagick
+- *滤波*: Gaussian blur, Median filter, Bilateral filter
+- *边缘检测*: Canny, Sobel, Laplacian
+
+**** GUI 框架
+
+- *跨平台*: Qt (C++), GTK, wxWidgets, Electron, Tauri
+- *原生*: WinUI (Windows), AppKit (macOS), UIKit/SwiftUI (iOS)
+- *Web*: React, Vue, Svelte, Angular, Solid.js
+- *游戏 UI*: ImGui (Immediate Mode), Nuklear, Dear ImGui
+
+**** 无障碍 (Accessibility)
+
+- *屏幕阅读器*: JAWS, NVDA, VoiceOver
+- *API*: ARIA (Accessible Rich Internet Applications), WAI
+- *测试工具*: axe-core, Lighthouse, Pa11y
+
+*** 边界案例
+
+*Q*: Unity/Unreal 算图形还是应用？
+*A*: 看焦点:
+  - 讨论 *渲染管线、着色器、光照* → *图形*
+  - 讨论 *游戏逻辑框架、脚本系统* → *应用*
+
+按优先级，"图形" 排在 "应用" 之前，所以如果核心是渲染，归 *图形*。
+
+*Q*: OpenCV 算图形还是 AI？
+*A*: → *图形*。OpenCV 主要是 *传统图像处理*，如果用其 DNN 模块，那部分归 AI。
+
+*Q*: FFmpeg 算图形还是应用？
+*A*: → *图形*。FFmpeg 是 *编解码器*，属于多媒体处理。
+
+*Q*: React 算图形还是应用？
+*A*: → *图形*。React 是 *UI 框架*，虽然用于 Web 应用。
+
+** 应用与行业框架 (Application & Domain-Specific Frameworks)
+
+*判定问题*: 是否 *直接交付领域功能* (Web/移动/企业/机器人/嵌入式/游戏等的框架/服务器/中间件)？
+
+*** 核心特征
+
+- *目标*: 加速特定领域的应用开发，提供业务逻辑支持
+- *关键词*: Web 框架, 应用服务器, 机器人中间件, 游戏引擎 (业务逻辑部分), 业务平台
+- *边界*: 若该 "应用框架" 实质是 "运维/编排" (已移至 toolchain)，或 "协议/共识" (归网络类)，则不归此类
+
+*** 典型技术
+
+**** Web 应用框架
+
+- *后端框架*: Django (Python), Flask (Python), Express (Node.js), FastAPI (Python), Spring Boot (Java), Rails (Ruby), ASP.NET Core (C#)
+- *全栈框架*: Next.js (React), Nuxt.js (Vue), SvelteKit, Remix
+- *Serverless 框架*: AWS Lambda, Vercel Functions, Cloudflare Workers
+
+**** 移动应用框架
+
+- *原生*: Android SDK (Kotlin/Java), iOS SDK (Swift/Objective-C)
+- *跨平台*: React Native, Flutter, Xamarin, Ionic, Capacitor
+- *混合*: Cordova, PhoneGap (已停止维护)
+
+**** 企业应用中间件
+
+- *应用服务器*: Tomcat, JBoss/WildFly, WebLogic, WebSphere
+- *消息中间件*: ActiveMQ, IBM MQ, RabbitMQ (也可归网络类)
+- *工作流引擎*: Camunda, Activiti, Apache Airflow (也可归数据类)
+
+**** 游戏引擎 (业务逻辑)
+
+- *脚本系统*: Unity C# scripting, Unreal Blueprints, Lua (游戏脚本)
+- *物理引擎*: PhysX, Bullet, Havok
+- *网络同步*: Photon, Mirror (Unity), Unreal Replication Graph
+
+**** 机器人中间件
+
+- *ROS*: ROS 1 (Robot Operating System), ROS 2
+- *运动规划*: MoveIt, OMPL (Open Motion Planning Library)
+- *仿真*: Gazebo, Webots, PyBullet, Isaac Sim
+
+**** 嵌入式应用框架
+
+- *IoT 平台*: AWS IoT Core, Azure IoT Hub, Google Cloud IoT
+- *边缘框架*: Edge Impulse, TensorFlow Lite Micro
+- *嵌入式 Linux 框架*: Yocto Project, Buildroot
+
+**** 内容管理系统 (CMS)
+
+- *开源 CMS*: WordPress, Drupal, Joomla, Ghost
+- *Headless CMS*: Strapi, Contentful, Sanity
+
+**** 电商与支付
+
+- *电商平台*: Shopify, Magento, WooCommerce
+- *支付网关*: Stripe, PayPal, Square
+
+*** 边界案例
+
+*Q*: Nginx 算应用还是网络？
+*A*: → *网络* (按优先级)。如果 Nginx 作为反向代理/负载均衡器，核心是网络转发。
+
+*Q*: Django 算应用还是数据？
+*A*: → *应用*。Django 是 *Web 框架*，虽然有 ORM (Object-Relational Mapping)。
+
+*Q*: ROS 算应用还是操作系统？
+*A*: → *应用*。ROS 是 *机器人中间件*，提供消息传递和工具链，不管理操作系统资源。
+
+*Q*: Unity 算应用还是图形？
+*A*: → *图形* (按优先级)。如果讨论渲染管线，归图形；如果讨论游戏逻辑，归应用。
+
+* 代表性技术归类速查表
+
+** 安全与隐私
+
+- TLS 1.3, SSH, IPsec
+- OAuth 2.0, OpenID Connect, JWT
+- HashiCorp Vault, AWS KMS
+- ModSecurity, Cloudflare WAF
+- Metasploit, Burp Suite
+- Snyk, Dependabot
+
+** 硬件与体系结构
+
+- RISC-V, ARMv9, x86-64
+- FPGA, Verilog, VHDL, Chisel
+- MESI, MOESI (缓存一致性)
+- TPU, NPU (专用硬件)
+- STM32, ESP32, Raspberry Pi
+
+** 操作系统与虚拟化
+
+- Linux, Windows, FreeBSD, macOS
+- KVM, Xen, VMware ESXi
+- Docker, Podman, containerd
+- cgroups, namespace
+- ext4, Btrfs, ZFS
+
+** 网络与分布式系统
+
+- TCP, UDP, QUIC, HTTP/3
+- gRPC, MQTT, WebSocket
+- Raft, Paxos, etcd, ZooKeeper
+- HAProxy, Envoy, Nginx (反向代理)
+- Kafka, Pulsar (消息传递)
+
+** 编程语言与运行时
+
+- C, C++, Rust, Go, Python, Java
+- LLVM, Clang, GCC
+- JVM, CLR, V8, CPython
+- CUDA, OpenCL, OpenMP
+- G1GC, ZGC, ARC
+
+** 数据系统与工程
+
+- PostgreSQL, MySQL, MongoDB, Redis
+- Snowflake, BigQuery, Redshift
+- Kafka (存储), Spark, Flink
+- Pandas, Polars, Apache Arrow
+- Elasticsearch, ClickHouse
+
+** 人工智能与机器学习
+
+- PyTorch, TensorFlow, JAX
+- ONNX Runtime, TensorRT
+- scikit-learn, XGBoost
+- GPT, BERT, YOLO, ViT
+- Adam, SGD, Knowledge Distillation
+
+** 图形/视觉/多媒体 与 HCI
+
+- Vulkan, DirectX 12, Metal
+- Unity, Unreal, Godot
+- FFmpeg, GStreamer, WebRTC
+- OpenCV, PCL, Open3D
+- React, Vue, Qt, SwiftUI
+
+** 应用与行业框架
+
+- Django, Flask, Spring Boot, Express
+- React Native, Flutter, Android SDK
+- ROS, MoveIt, Gazebo
+- WordPress, Shopify
+- Tomcat, JBoss
+
+* 快速自检流程
+
+给定任意技术 T，按以下顺序判断:
+
+1. *首要目的是安全？* (加密/鉴权/渗透)
+   - 是 → *安全与隐私*
+   - 否 → 下一条
+
+2. *贴近芯片/ISA/电路？* (Verilog/FPGA/微架构)
+   - 是 → *硬件与体系结构*
+   - 否 → 下一条
+
+3. *管理本机资源或虚拟化？* (内核/调度/容器)
+   - 是 → *操作系统与虚拟化*
+   - 否 → 下一条
+
+4. *核心是通信/共识/跨节点协同？* (协议/RPC/Raft)
+   - 是 → *网络与分布式系统*
+   - 否 → 下一条
+
+5. *定义或执行编程语言/运行时/编译？* (编译器/VM/GC)
+   - 是 → *编程语言与运行时*
+   - 否 → 下一条
+
+6. *首要做数据存储/查询/ETL/流处理？* (数据库/数据湖)
+   - 是 → *数据系统与工程*
+   - 否 → 下一条
+
+7. *从数据学习模型 (训练/推理)？* (ML/DL/RL)
+   - 是 → *人工智能与机器学习*
+   - 否 → 下一条
+
+8. *首要处理像素/几何/音视频/UI？* (渲染/编解码/GUI)
+   - 是 → *图形/视觉/多媒体 与 HCI*
+   - 否 → 下一条
+
+9. *直接是领域应用/框架/中间件？* (Web/移动/游戏/机器人)
+   - 是 → *应用与行业框架*
+
+* 总结: 为什么这套分类有效
+
+** 互斥性
+
+每个技术 *有且仅有* 一个归类，通过优先级链避免歧义。
+
+** 可执行性
+
+不需要主观判断 "这个看起来像 XXX"，只需按流程逐条检查。
+
+** 目标导向
+
+以 *"这个技术的首要目的是什么"* 作为分类依据，而非表面特征。
+
+** 符合工业共识
+
+这 9 大类对应了计算机科学的主流分支，与 ACM Computing Classification System (CCS) 基本一致。
+
+** 适用于复合技术
+
+即使技术跨越多个领域 (如 Kubernetes 涉及网络、虚拟化、编排)，优先级链能给出明确归类。
+
+* 附录: ACM CCS 对照
+
+本分类法与 ACM Computing Classification System (2012) 的对应关系:
+
+| 本分类                | ACM CCS                                                                 |
+|----------------------+-------------------------------------------------------------------------|
+| 安全与隐私             | Security and privacy                                                    |
+| 硬件与体系结构          | Hardware → Computer systems organization                                |
+| 操作系统与虚拟化        | Software and its engineering → Operating systems                        |
+| 网络与分布式系统        | Networks → Network protocols                                            |
+| 编程语言与运行时        | Software and its engineering → Software notations and tools → Compilers |
+| 数据系统与工程          | Information systems → Data management systems                           |
+| 人工智能与机器学习      | Computing methodologies → Machine learning                              |
+| 图形/视觉/多媒体 与 HCI | Computing methodologies → Computer graphics + Human-centered computing  |
+| 应用与行业框架          | Applied computing → Enterprise computing                                |
+
+*使用这套规则，你可以在 1 分钟内给任何计算机技术归类。*

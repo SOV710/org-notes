@@ -1,0 +1,674 @@
+#+title: Mathematical Taxonomy: A Hierarchical Classification Framework for Modern Mathematics
+#+author: SOV710
+#+date: 2025-12-22
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 核心思想: 对象→目标→方法的三步判定
+
+数学的细分领域繁多，但如果用 *"研究什么对象 (what)，追求什么目标 (why)，使用什么方法 (how)"* 的框架来看，可以在 *最粗粒度* 上将数学划分为 8 个 *互斥* 的类别。
+
+这套分类法的核心是一条 *判定优先级链*:
+
+#+begin_example
+FND → PROB → DIS → ANA → GEO → NUM → ALG → APP
+#+end_example
+
+按照这条链逐步判断，一旦命中即归类，不再下探。这样设计的原因是: 某些领域 (如 FND, PROB) 具有 *强侵入性*，它们的方法论可能出现在任何地方，但如果 *随机性* 或 *元数学思考* 是命题的 *核心前提*，则必须优先归类到这些领域。
+
+** 8 大类别概览
+
+| 类别 | 全称                     | 核心特征                           |
+|------+--------------------------+-----------------------------------|
+| *FND*  | Foundations & Logic      | 研究 *数学本身* 的语义、语法、可证明性     |
+| *PROB* | Probability & Statistics | 随机性是 *对象的内生部分*               |
+| *DIS*  | Discrete & TCS           | 有限/可数结构，*不以极限/测度为核心*    |
+| *ANA*  | Analysis                 | 极限、连续性、可积可微、*函数空间与算子*  |
+| *GEO*  | Geometry & Topology      | 研究 *空间* 及其不变量 (曲率、同调)       |
+| *NUM*  | Number Theory            | 整数、素数、*丢番图问题* 及算术         |
+| *ALG*  | Algebra                  | 抽象代数结构 (群、环、域) 及其 *同态/表示* |
+| *APP*  | Applied & Computational  | *建模/计算/优化/数值方法* 为终点         |
+
+* 判定流程: 落地可执行的决策树
+
+** Step 1: FND (Foundations & Logic)
+
+*判定问题*: 这篇论文是否在讨论 *"什么可证明/可计算/可构造"*？
+
+*** 核心特征
+
+- 研究对象: *形式系统、公理化、集合论、模型论、递归论、类型论、证明论*
+- 典型问题:
+  - ZFC 集合论中的独立性 (连续统假设、选择公理)
+  - Gödel 不完备定理及其推广
+  - 可计算性理论 (递归函数、图灵度、算术层次)
+  - 类型论与依赖类型 (HoTT, Homotopy Type Theory)
+  - 模型论 (模型完备性、量词消去、稳定性理论)
+
+*** 典型论文标题
+
+- "The independence of the continuum hypothesis in ZFC"
+- "Reverse mathematics and subsystems of second-order arithmetic"
+- "Type-theoretic foundations of mathematics"
+- "Computable analysis and the Turing jump hierarchy"
+
+*** 边界案例
+
+*Q*: 算法复杂度理论 (如 P vs NP) 算 FND 还是 DIS？
+*A*: → *DIS*。虽然涉及 "可计算性"，但 P/NP 关注的是 *问题的复杂度分类*，而非 "可计算性本身的元理论"。如果讨论 "可判定性边界" (decidability)，则归 FND。
+
+*Q*: 构造数学 (Constructive Mathematics) 算 FND 还是 ALG？
+*A*: → *FND*。构造数学质疑排中律，这是 *对数学逻辑基础的反思*。
+
+** Step 2: PROB (Probability & Statistics)
+
+*判定问题*: 随机性是否是 *对象定义/假设的内生部分*？
+
+*** 核心特征
+
+- *概率*: 研究随机对象的性质 (大数定律、中心极限定理、鞅收敛)
+- *统计*: 面向数据的估计/检验/置信区间 (参数估计、假设检验、贝叶斯推断)
+- 随机过程: 马尔可夫链、布朗运动、随机微分方程 (SDE)
+- 学习理论: 泛化界、VC 维、PAC 学习
+
+*** 典型论文标题
+
+- "Martingale convergence and the ergodic theorem"
+- "Statistical consistency of the Lasso estimator"
+- "Generalization bounds for neural networks via Rademacher complexity"
+- "Percolation thresholds on random graphs"
+
+*** 边界案例
+
+*Q*: 随机图 (Random Graphs) 算 PROB 还是 DIS？
+*A*: → *PROB*。即使用到组合方法，但 *随机性* (如 Erdős-Rényi 模型中的边概率) 是对象的核心。
+
+*Q*: 随机矩阵理论 (RMT) 算 PROB 还是 ANA？
+*A*: → *PROB*。虽然涉及谱分析 (特征值分布)，但矩阵的 *随机性* 是定义的一部分。
+
+*Q*: 信息论 (Information Theory) 算 PROB 还是 APP？
+*A*: 看目标:
+  - 信道容量、率失真函数、统计推断的下界 → *PROB*
+  - 编码算法的实现与复杂度 → *DIS* 或 *APP*
+
+*Q*: 机器学习理论算 PROB 还是 APP？
+*A*:
+  - 泛化界、统计一致性、估计下界 → *PROB*
+  - 优化算法的数值收敛 (SGD, Adam) → *APP*
+
+** Step 3: DIS (Discrete Mathematics & Theoretical Computer Science)
+
+*判定问题*: 是否研究 *有限或可数结构，且不以极限/测度为核心*？
+
+*** 核心特征
+
+- 组合数学: 计数、生成函数、极值组合 (Ramsey 理论、加法组合)
+- 图论: 图的结构、染色、匹配、网络流
+- 复杂性理论: P, NP, PSPACE, 电路复杂度、可满足性 (SAT)
+- 算法分析: 近似算法、参数化复杂度、在线算法
+
+*** 典型论文标题
+
+- "The polynomial-time hierarchy and sparse sets"
+- "Approximate algorithms for MAX-CUT with performance ratio 0.878"
+- "Szemerédi's regularity lemma and applications"
+- "Graph minors and the Robertson-Seymour theorem"
+
+*** 边界案例
+
+*Q*: 组合优化算 DIS 还是 APP？
+*A*: 看方法:
+  - 讨论算法复杂度、近似比 (APX-hard) → *DIS*
+  - 连续松弛 (SDP, LP)、数值求解器 → *APP*
+
+*Q*: 编码理论 (Coding Theory) 算 DIS 还是APP？
+*A*: 看焦点:
+  - 码的构造 (有限域、代数几何码) → *DIS*
+  - 信道模型、译码算法的误码率分析 → *APP*
+
+*Q*: 密码学算 DIS 还是 NUM？
+*A*: 看困难性来源:
+  - 基于数论 (RSA, 离散对数, 椭圆曲线) → *NUM*
+  - 基于格 (LWE)、组合困难性 (LPN)、零知识证明的复杂度 → *DIS*
+
+*Q*: 算法图论 (Algorithmic Graph Theory) 算 DIS 还是 ANA？
+*A*: → *DIS*。即使用到谱方法 (Laplacian 矩阵的特征值)，只要核心是 *算法效率/复杂度*，就归 DIS。
+
+** Step 4: ANA (Analysis)
+
+*判定问题*: 核心论证是否依赖 *极限、测度、可积/可微、函数空间与算子*？
+
+*** 核心特征
+
+- 实分析/复分析: Lebesgue 积分、Fourier 分析、解析函数论
+- 泛函分析: Banach 空间、Hilbert 空间、算子理论
+- 偏微分方程 (PDE): 解的存在性、唯一性、正则性、先验估计
+- 测度论: 测度空间、可测函数、绝对连续性
+- 遍历论 (Ergodic Theory): *确定性动力系统* 中的测度与极限
+
+*** 典型论文标题
+
+- "Sobolev embedding theorems and their applications to PDEs"
+- "The Hahn-Banach theorem and its geometric interpretations"
+- "Strichartz estimates for the Schrödinger equation"
+- "Ergodic averages and pointwise convergence"
+
+*** 边界案例
+
+*Q*: PDE 算 ANA 还是 APP？
+*A*: 看目标:
+  - 解的存在性、正则性、先验估计 (Schauder 估计、能量方法) → *ANA*
+  - 离散化方法 (有限元、有限差分)、求解器、误差分析 → *APP*
+
+*Q*: 遍历论算 ANA 还是 PROB？
+*A*:
+  - 确定性动力系统 (如 Arnold cat map) 的测度与不变性 → *ANA*
+  - 随机动力系统 (随机映射、噪声扰动) → *PROB*
+
+*Q*: 谐波分析 (Harmonic Analysis) 算 ANA 还是 NUM？
+*A*: → *ANA*。虽然解析数论中会用到 (如 Hardy-Littlewood 圆法)，但谐波分析本身研究的是 *函数空间上的变换与算子*。
+
+*Q*: 算子代数 (Operator Algebras) 算 ANA 还是 ALG？
+*A*: → *ANA*。虽然名字有 "代数"，但研究的是 *Hilbert 空间上的有界算子*，核心工具是拓扑与极限。
+
+** Step 5: GEO (Geometry & Topology)
+
+*判定问题*: 核心对象是否是 *空间及其不变量* (曲率、同伦、同调)？
+
+*** 核心特征
+
+- 微分几何: 流形、曲率、测地线、联络
+- 黎曼几何: Ricci 曲率、截面曲率、Gauss-Bonnet 定理
+- 拓扑学: 同伦论、同调论、基本群、覆盖空间
+- 代数拓扑: 同调代数工具用于 *区分空间*
+- 几何分析: 调和映射、极小曲面、几何流 (Ricci flow)
+- 几何群论: 群当作 *度量空间* 研究 (Cayley 图、双曲性)
+
+*** 典型论文标题
+
+- "The Poincaré conjecture and Ricci flow with surgery"
+- "Characteristic classes and their applications"
+- "Gromov's compactness theorem for pseudo-holomorphic curves"
+- "Hyperbolic groups and CAT(0) spaces"
+
+*** 边界案例
+
+*Q*: 代数拓扑算 GEO 还是 ALG？
+*A*: → *GEO*。虽然用代数工具 (同调群、上同调环)，但目标是 *刻画空间的拓扑性质*。
+
+*Q*: 代数几何算 GEO, ALG 还是 NUM？
+*A*: 看核心:
+  - 簇/概形的几何性质 (维数、奇点、交理论) → *GEO*
+  - 算术问题 (有理点、高度、Mordell 猜想) → *NUM*
+  - 纯层论、同调代数方法论 (导出范畴) → *ALG*
+
+实例:
+  - Grothendieck 的 étale 上同调用于证明 Weil 猜想 (涉及有限域上的有理点计数) → *NUM*
+  - Hodge 理论 (复流形上的调和形式) → *GEO*
+
+*Q*: 几何群论算 GEO 还是 ALG？
+*A*: → *GEO*。虽然研究的是群，但方法是 *几何的* (Cayley 图的双曲性、渐近维数)。
+
+*Q*: 辛几何 (Symplectic Geometry) 算 GEO 还是 ANA？
+*A*: → *GEO*。虽然用到分析工具 (伪全纯曲线的 Floer 同调)，但核心是 *辛流形的几何结构*。
+
+** Step 6: NUM (Number Theory)
+
+*判定问题*: 目标是否指向 *整数、素数、丢番图问题、数域的算术*？
+
+*** 核心特征
+
+- 初等数论: 同余、原根、二次互反律
+- 解析数论: 素数分布 (黎曼 ζ 函数、L 函数)
+- 代数数论: 理想类群、局部域、类域论
+- 算术几何: 椭圆曲线、abelian 簇上的有理点、Mordell 猜想
+- 丢番图逼近: 无理数的有理逼近、连分数
+
+*** 典型论文标题
+
+- "The prime number theorem via the Riemann zeta function"
+- "Fermat's Last Theorem and modular forms"
+- "The Birch and Swinnerton-Dyer conjecture for rank-0 elliptic curves"
+- "Diophantine equations and the local-global principle"
+
+*** 边界案例
+
+*Q*: 解析数论 (Analytic Number Theory) 算 NUM 还是 ANA？
+*A*: → *NUM*。虽然用复分析工具 (留数、Perron 公式)，但目标是 *整数的性质* (素数分布)。
+
+*Q*: 算术几何算 NUM 还是 GEO？
+*A*: 看问题:
+  - 有理点、高度、局部-整体原则 → *NUM*
+  - 簇的几何性质 (奇点、上同调) → *GEO*
+
+实例:
+  - Faltings 证明 Mordell 猜想 (高亏格曲线上只有有限多个有理点) → *NUM*
+  - Deligne 证明 Weil 猜想 (用 étale 上同调的纯性) → *NUM* (因为最终服务于有限域上的算术)
+
+*Q*: 模形式 (Modular Forms) 算 NUM 还是 ANA？
+*A*: → *NUM*。虽然模形式是复平面上的解析函数，但它们的核心应用是 *数论* (如 Taniyama-Shimura-Weil 猜想)。
+
+** Step 7: ALG (Algebra)
+
+*判定问题*: 是否研究 *抽象代数结构及其同态/表示*，且可脱离具体数/空间？
+
+*** 核心特征
+
+- 群论: 有限群、李群、群的表示论
+- 环论: 交换环、Noether 环、局部化
+- 域论: Galois 理论、域扩张、可解性
+- 模论: 有限生成模、投射/内射模
+- 范畴论: 函子、自然变换、伴随、topos
+- 同调代数: 导出函子、Ext, Tor
+
+*** 典型论文标题
+
+- "The classification of finite simple groups"
+- "Representation theory of the symmetric group"
+- "Homological algebra and derived categories"
+- "Morita equivalence for rings and modules"
+
+*** 边界案例
+
+*Q*: 表示论 (Representation Theory) 算 ALG 还是 GEO？
+*A*: → *ALG*。虽然李群的表示论涉及流形，但核心是 *代数结构的表示*。
+
+*Q*: 交换代数 (Commutative Algebra) 算 ALG 还是 NUM？
+*A*: → *ALG*。除非直接研究 *整数环* 或 *代数数域的整数环*，否则归 ALG。
+
+实例:
+  - Krull 维数、正则环、Cohen-Macaulay 环 → *ALG*
+  - Dedekind 整环的理想类群 → *NUM*
+
+*Q*: 范畴论算 ALG 还是 FND？
+*A*:
+  - Topos 理论与逻辑的联系 (内语言、Kripke-Joyal 语义) → *FND*
+  - 纯粹范畴论 (函子、伴随、Kan 扩张) → *ALG*
+
+** Step 8: APP (Applied & Computational Mathematics)
+
+*判定问题*: 目标是否是 *建模/计算/优化/数值方法*，而非证明纯性质？
+
+*** 核心特征
+
+- 数值分析: 插值、数值积分、数值线性代数
+- 科学计算: 数值 PDE、有限元方法 (FEM)、谱方法
+- 优化: 凸优化、非凸优化、整数规划
+- 运筹学 (OR): 线性规划、网络流、排队论
+- 控制理论: 线性控制、最优控制、鲁棒控制
+- 计算几何: Delaunay 三角剖分、Voronoi 图
+- 计算代数: Gröbner 基、符号计算
+
+*** 典型论文标题
+
+- "Convergence analysis of the finite element method for elliptic PDEs"
+- "Stochastic gradient descent with momentum: convergence guarantees"
+- "Interior-point methods for convex optimization"
+- "Model predictive control for nonlinear systems"
+
+*** 边界案例
+
+*Q*: 数值 PDE 算 APP 还是 ANA？
+*A*: → *APP*。即使证明了收敛性 (用 Lax 等价定理)，目标仍是 *求解器*。
+
+*Q*: 计算复杂性 (Computational Complexity) 算 APP 还是 DIS？
+*A*: → *DIS*。虽然名字有 "计算"，但研究的是 *问题的内在难度*，而非算法实现。
+
+*Q*: 科学计算中的机器学习 (如 PINN: Physics-Informed Neural Networks) 算 APP 还是 PROB？
+*A*: → *APP*。虽然用神经网络，但目标是 *数值求解 PDE*，不是统计推断。
+
+*Q*: 数学物理算 APP 还是 ANA？
+*A*:
+  - 建立物理模型、数值模拟 (如 N 体问题的辛积分器) → *APP*
+  - 证明 PDE 解的性质 (散射理论、谱间隙) → *ANA*
+
+* 常见边界的"一刀切"规则
+
+** 随机图/随机矩阵
+
+*规则*: 随机性为 *对象定义* 的核心 → *PROB*
+
+#+begin_quote
+即使用到组合/线性代数工具，只要 "随机" 是定义的一部分 (如 Erdős-Rényi 图中的边概率 p)，就归 PROB。
+#+end_quote
+
+实例:
+- "Threshold phenomena in random graphs" → PROB
+- "Universality of eigenvalue distributions in random matrix ensembles" → PROB
+
+** 组合优化
+
+*规则*: 看方法和终点
+
+| 核心内容                    | 归类  | 理由                      |
+|---------------------------+-----+---------------------------|
+| 算法复杂度、近似比、APX-hard | DIS | 关注 *难度分类*              |
+| 连续松弛 (SDP/LP)、数值求解 | APP | 关注 *求解器与收敛*           |
+
+实例:
+- "MAX-CUT is APX-complete" → DIS
+- "Semidefinite programming relaxations for MAX-CUT" → APP
+
+** 信息论/编码
+
+*规则*: 看焦点
+
+| 核心内容               | 归类       | 理由                    |
+|----------------------+----------+-------------------------|
+| 信道容量、率失真、统计下界 | PROB/APP | 概率模型 or 工程实现     |
+| 码的构造 (有限域、代数) | DIS      | 组合/代数结构            |
+
+实例:
+- "The capacity of the Gaussian channel" → PROB
+- "LDPC codes and their iterative decoding algorithms" → APP
+- "Algebraic geometry codes from curves over finite fields" → DIS
+
+** 机器学习理论
+
+*规则*: 区分 *统计性质* vs *算法实现*
+
+| 核心内容                      | 归类  | 理由                 |
+|-----------------------------+-----+----------------------|
+| 泛化界、VC 维、PAC 学习        | PROB | 统计推断             |
+| 优化算法的收敛性 (SGD, Adam) | APP  | 数值分析             |
+
+实例:
+- "Generalization bounds for deep networks via compression" → PROB
+- "Convergence of Adam optimizer with adaptive learning rates" → APP
+
+** PDE (偏微分方程)
+
+*规则*: 理论 vs 数值
+
+| 核心内容                      | 归类 | 理由                  |
+|-----------------------------+----+----------------------|
+| 解的存在性、正则性、先验估计 | ANA | 纯数学性质            |
+| 离散化 (FEM/FDM)、求解器     | APP | 数值方法              |
+
+实例:
+- "Sobolev regularity for elliptic PDEs with rough coefficients" → ANA
+- "Error estimates for the finite element method on anisotropic meshes" → APP
+
+** 遍历论 (Ergodic Theory)
+
+*规则*: 确定性 vs 随机性
+
+| 系统类型         | 归类  | 理由                     |
+|----------------+-----+--------------------------|
+| 确定性动力系统   | ANA | 测度与极限               |
+| 随机动力系统     | PROB | 随机映射、噪声扰动        |
+
+实例:
+- "Birkhoff's ergodic theorem for measure-preserving transformations" → ANA
+- "Random dynamical systems and their invariant measures" → PROB
+
+** 代数几何/算术几何
+
+*规则*: 几何问题 vs 算术问题
+
+| 核心问题                    | 归类 | 理由                       |
+|---------------------------+----+----------------------------|
+| 层、线丛、曲线/簇的几何性质 | GEO | 空间的几何结构              |
+| 有理点、高度、局部-整体     | NUM | 算术性质                   |
+| 纯代数 (导出范畴、同调代数) | ALG | 范畴论方法论                |
+
+实例:
+- "Hodge theory and the Kähler cone" → GEO
+- "The Mordell conjecture and heights on abelian varieties" → NUM
+- "Derived categories of coherent sheaves" → ALG
+
+** 几何群论
+
+*规则*: 几何语言 vs 代数结构
+
+| 核心方法                 | 归类 | 理由            |
+|-------------------------+------+-----------------|
+| Cayley 图、双曲性、渐近维数 | GEO  | 群当作度量空间研究 |
+| 群的表示、结构定理         | ALG  | 纯代数方法        |
+
+实例:
+- "Hyperbolic groups and their boundaries" → GEO
+- "Representation theory of the symmetric group" → ALG
+
+** 密码学
+
+*规则*: 看困难性假设
+
+| 困难性来源                       | 归类 | 理由         |
+|--------------------------------+------+--------------|
+| 数论 (RSA, 离散对数, ECC)        | NUM  | 算术难题      |
+| 格 (LWE)、组合 (LPN)、零知识复杂度 | DIS  | 组合/复杂度难题 |
+
+实例:
+- "The hardness of the discrete logarithm problem on elliptic curves" → NUM
+- "Learning with errors and lattice-based cryptography" → DIS
+
+** 图论
+
+*规则*: 看核心方法
+
+| 核心内容             | 归类 | 理由               |
+|---------------------+------+--------------------|
+| 随机图性质            | PROB | 随机性为对象         |
+| 计数/极值/结构        | DIS  | 组合方法            |
+| 谱图论 (算子/极限)     | ANA  | 如果以 *算子理论* 为核心 |
+| 算法图论 (近似/复杂度) | DIS  | 算法效率            |
+
+实例:
+- "Threshold for connectivity in random geometric graphs" → PROB
+- "The Szemerédi regularity lemma and its applications" → DIS
+- "Spectral gap and expander graphs" → DIS (如果算法导向) or ANA (如果算子导向)
+
+** 数学物理
+
+*规则*: 纯性质 vs 模拟
+
+| 核心内容                      | 归类 | 理由                  |
+|-----------------------------+----+----------------------|
+| PDE/谱/散射等纯性质          | ANA | 数学证明              |
+| 建立模型、数值模拟           | APP | 工程实现              |
+
+实例:
+- "Scattering theory for the Schrödinger operator" → ANA
+- "Molecular dynamics simulations with symplectic integrators" → APP
+
+** 逻辑与计算
+
+*规则*: 元理论 vs 复杂度
+
+| 核心问题                      | 归类 | 理由                  |
+|-----------------------------+----+----------------------|
+| 可判定性、可计算性、证明论   | FND | 元数学思考            |
+| 复杂度类、电路复杂度         | DIS | 难度分类              |
+
+实例:
+- "The undecidability of the halting problem" → FND
+- "Circuit lower bounds for NEXP" → DIS
+
+* 每类的"硬边界锚点": 快速自检清单
+
+| 类别 | 自检问题                                           |
+|------+---------------------------------------------------|
+| *FND*  | 是否脱离具体对象，谈论 *"什么可证明/可计算/可构造"*？      |
+| *PROB* | 是否引入 *概率空间/随机变量/分布* 作为命题前提？             |
+| *DIS*  | 是否全程在 *有限/可数结构* 上推理，且不依赖极限/测度？        |
+| *ANA*  | 核心论证是否依赖 *极限、测度、可积/可微、拓扑向量空间*？     |
+| *GEO*  | 核心对象是否是 *"空间/形状/不变量"* (曲率、同伦/同调、流形)？ |
+| *NUM*  | 目标是否指向 *整数/素数/丢番图/算术等价类*？              |
+| *ALG*  | 主题是否是 *"结构+同态+表示"*，与具体数/空间可脱钩？       |
+| *APP*  | 是否 *"把数学当工具"*，以建模/算法/数值计算为终点？        |
+
+* 使用建议: 如何快速归类一篇论文
+
+** 第一步: 扫描标题和摘要
+
+按 *优先级链* 逐条判断:
+
+#+begin_example
+FND → PROB → DIS → ANA → GEO → NUM → ALG → APP
+#+end_example
+
+一旦命中，立即归类，不再下探。
+
+** 第二步: 识别关键词
+
+| 关键词线索                                 | 优先归类 |
+|------------------------------------------+---------|
+| "provable", "decidable", "computable"    | FND     |
+| "random", "stochastic", "martingale"     | PROB    |
+| "graph", "combinatorial", "NP-hard"      | DIS     |
+| "PDE", "Sobolev", "operator"             | ANA     |
+| "manifold", "curvature", "cohomology"    | GEO     |
+| "prime", "Diophantine", "elliptic curve" | NUM     |
+| "group", "ring", "representation"        | ALG     |
+| "numerical", "algorithm", "optimization" | APP     |
+
+** 第三步: 目标导向最后裁决
+
+如果卡在两类之间，问:
+
+1. *是证明抽象性质，还是设计求解器*？
+   - 前者 → 倾向纯数学 (FND/ALG/NUM/GEO/ANA/DIS)
+   - 后者 → APP
+
+2. *随机性是定义的一部分，还是分析工具*？
+   - 前者 → PROB
+   - 后者 → 其他类别
+
+3. *研究的是数的性质，还是数的计算*？
+   - 前者 → NUM
+   - 后者 → APP
+
+** 示例: 归类实战
+
+*** 论文 1: "The independence of the continuum hypothesis"
+
+- 关键词: "independence", "ZFC", "model theory"
+- 判定: 讨论 *公理系统的独立性* → *FND*
+
+*** 论文 2: "Percolation thresholds on random graphs"
+
+- 关键词: "random graphs", "threshold", "phase transition"
+- 判定: 随机性为对象核心 → *PROB*
+
+*** 论文 3: "Approximate algorithms for MAX-CUT"
+
+- 关键词: "approximate", "NP-hard", "performance ratio"
+- 判定: 算法复杂度分析 → *DIS*
+
+*** 论文 4: "Sobolev regularity for elliptic PDEs"
+
+- 关键词: "Sobolev", "elliptic", "regularity"
+- 判定: PDE 解的性质 → *ANA*
+
+*** 论文 5: "The Poincaré conjecture and Ricci flow"
+
+- 关键词: "manifold", "curvature", "topology"
+- 判定: 空间的拓扑性质 → *GEO*
+
+*** 论文 6: "Fermat's Last Theorem and modular forms"
+
+- 关键词: "Diophantine", "modular forms", "elliptic curves"
+- 判定: 整数解问题 → *NUM*
+
+*** 论文 7: "Representation theory of finite groups"
+
+- 关键词: "representation", "group", "character"
+- 判定: 抽象代数结构 → *ALG*
+
+*** 论文 8: "Finite element method for Navier-Stokes"
+
+- 关键词: "finite element", "numerical", "convergence"
+- 判定: 数值求解器 → *APP*
+
+* 特殊主题的归类指南
+
+** 量子计算与量子信息
+
+| 子领域                  | 归类     | 理由           |
+|------------------------+----------+----------------|
+| 量子算法 (Shor, Grover) | DIS      | 复杂度分析       |
+| 量子纠错码               | DIS      | 编码理论        |
+| 量子信道容量             | PROB/APP | 信息论          |
+| 量子场论的数学严格化       | ANA      | 泛函分析/算子代数 |
+
+** 动力系统
+
+| 系统类型     | 归类 | 理由         |
+|-------------+------+--------------|
+| 确定性动力系统 | ANA  | 微分方程/测度论 |
+| 随机动力系统  | PROB | 随机扰动      |
+| 符号动力系统  | DIS  | 离散结构      |
+
+** 博弈论
+
+| 子领域          | 归类 | 理由       |
+|----------------+------+------------|
+| 组合博弈论       | DIS  | 有限状态游戏 |
+| 连续博弈/微分博弈 | APP  | 最优控制    |
+| 随机博弈        | PROB | 随机策略    |
+
+** 分形与混沌
+
+| 子领域                 | 归类 | 理由          |
+|-----------------------+------+---------------|
+| 分形维数、Hausdorff 测度 | ANA  | 测度论         |
+| 混沌动力系统            | ANA  | 动力系统与遍历论 |
+
+* 为什么这套分类有效？
+
+** 1. 互斥性保证
+
+每篇论文 *有且仅有* 一个归类，通过优先级链避免歧义。
+
+** 2. 可执行性
+
+不需要主观判断 "这个看起来像 XXX"，只需按流程逐条检查即可。
+
+** 3. 符合数学社群共识
+
+这 8 大类对应了主流数学期刊的分类 (如 AMS Mathematics Subject Classification 的一级类别)。
+
+** 4. 适用于跨学科研究
+
+即使论文混用多个领域的工具，*目标导向* 原则能够给出明确归类。
+
+* 总结: 一张流程图
+
+#+begin_example
+开始
+  ↓
+谈论"可证明性/可计算性"？
+  ├─ 是 → FND
+  └─ 否
+      ↓
+随机性是对象的内生部分？
+  ├─ 是 → PROB
+  └─ 否
+      ↓
+有限/可数结构，不用极限/测度？
+  ├─ 是 → DIS
+  └─ 否
+      ↓
+核心依赖极限/可积/算子？
+  ├─ 是 → ANA
+  └─ 否
+      ↓
+研究空间及其不变量？
+  ├─ 是 → GEO
+  └─ 否
+      ↓
+目标是整数/素数/丢番图？
+  ├─ 是 → NUM
+  └─ 否
+      ↓
+研究抽象代数结构？
+  ├─ 是 → ALG
+  └─ 否
+      ↓
+目标是建模/计算/优化？
+  ├─ 是 → APP
+  └─ 否 → 重新检查题目和摘要
+#+end_example
+
+*使用这套规则，你可以在 30 秒内给任何数学论文归类。*

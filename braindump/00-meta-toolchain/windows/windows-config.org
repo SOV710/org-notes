@@ -1,0 +1,469 @@
+#+title: Windows Application Configuration Manual: A Practical Setup Guide
+#+author: SOV710
+#+date: 2025-12-22
+#+startup: showall
+#+options: toc:2 num:nil
+
+* Scoop: 包管理器驱动的开发环境
+
+Scoop 是 Windows 上最接近 Unix 哲学的包管理器，安装路径干净 (默认 =~/scoop=)，无需管理员权限，适合开发者使用。
+
+** 语言运行时与编译器
+
+*** Python 生态
+
+- =python=: CPython 解释器
+- =uv=: 超快的 Python 包管理器 (Rust 实现，替代 pip/poetry)
+- =miniconda3=: 最小化 Conda 环境 (科学计算/数据分析必备)
+
+#+begin_src powershell
+scoop install python uv miniconda3
+#+end_src
+
+*** JavaScript / Node.js
+
+- =nodejs-lts=: 长期支持版 Node.js
+- =yarn=: Facebook 的包管理器
+- =pnpm=: 节省磁盘空间的包管理器 (用符号链接共享依赖)
+
+#+begin_src powershell
+scoop install nodejs-lts yarn pnpm
+#+end_src
+
+*** Java
+
+需要先添加 Java bucket:
+
+#+begin_src powershell
+scoop bucket add java
+scoop install openjdk25
+#+end_src
+
+- =openjdk25=: 最新 OpenJDK (无 Oracle 授权限制)
+
+*** 其他语言
+
+- =go=: Google 的静态类型编译语言
+- =typst=: 现代化 LaTeX 替代品 (Rust 实现)
+- =latex=: 传统 TeX 排版系统
+- =rustup-gnu=: Rust 工具链管理器 (GNU ABI 版本)
+
+#+begin_src powershell
+scoop install go typst latex rustup-gnu
+#+end_src
+
+*** 嵌入式与系统编程
+
+- =gcc-arm-none-eabi=: ARM Cortex-M 裸机工具链 (用于 STM32 等)
+- =llvm=: LLVM 编译器基础设施 (包含 clang)
+- =mingw=: Windows 上的 GCC (GNU 工具链)
+- =just=: 现代化 Makefile 替代品 (类似 Make 但更简洁)
+
+#+begin_src powershell
+scoop install gcc-arm-none-eabi llvm mingw just
+#+end_src
+
+*** 系统库依赖
+
+- =vcredist2022=: Visual C++ 运行时库 (某些软件依赖)
+
+#+begin_src powershell
+scoop install vcredist2022
+#+end_src
+
+** 开发工具链
+
+*** 版本控制与下载
+
+- =git=: 分布式版本控制
+- =aria2=: 多线程下载器 (Scoop 自动用它加速)
+- =7zip=: 压缩/解压工具
+
+#+begin_src powershell
+scoop install git aria2 7zip
+#+end_src
+
+*** 命令行工具
+
+- =file=: 识别文件类型 (Unix =file= 命令的 Windows 移植)
+- =jq=: JSON 处理器 (命令行解析 JSON)
+- =resvg=: SVG 渲染器 (转 PNG/PDF)
+- =poppler=: PDF 工具集 (包含 =pdftotext=, =pdftoppm=)
+
+#+begin_src powershell
+scoop install file jq resvg poppler
+#+end_src
+
+*** 网络工具
+
+- =clash-nyanpasu=: Clash 核心的现代化 GUI (代理工具)
+
+安装后需要手动创建 shim (快捷启动):
+
+#+begin_src powershell
+scoop install clash-nyanpasu
+scoop shim add nyanpasu "$env:USERPROFILE\scoop\apps\clash-nyanpasu\current\Clash Nyanpasu.exe"
+#+end_src
+
+现在可以在终端直接运行 =nyanpasu= 启动。
+
+*** 终端与启动器
+
+- =windows-terminal=: 微软官方现代化终端 (支持多 tab, Unicode)
+- =wox=: 快速启动器 (类似 macOS Spotlight / Linux Rofi)
+
+#+begin_src powershell
+scoop install windows-terminal wox
+#+end_src
+
+*** Shell 增强工具
+
+- =zoxide=: 智能目录跳转 (记住常用路径, =z= 命令)
+- =starship=: 跨 shell 的美化 prompt (Rust 实现, 极快)
+- =eza=: =ls= 的现代替代品 (彩色输出, Git 状态集成)
+- =ripgrep=: 超快的文本搜索 (=grep= 替代, Rust 实现)
+- =fzf=: 模糊查找器 (交互式过滤)
+- =yazi=: 终端文件管理器 (类似 ranger, Rust 实现)
+- =autohotkey=: Windows 自动化脚本语言
+
+#+begin_src powershell
+scoop install zoxide starship eza ripgrep fzf yazi autohotkey
+#+end_src
+
+*** 编辑器与脚本
+
+- =neovim=: Vim 的现代化分支 (异步插件支持)
+- =lua=: Lua 解释器 (Neovim 配置语言)
+- =luajit=: Lua 的 JIT 编译器 (更快)
+
+#+begin_src powershell
+scoop install neovim lua luajit
+#+end_src
+
+*** 文件搜索
+
+- =everything=: 极速文件名搜索 (索引 NTFS MFT)
+- =everything-cli= (=es=): Everything 的命令行接口
+
+#+begin_src powershell
+scoop install everything everything-cli
+#+end_src
+
+用法:
+
+#+begin_src powershell
+es "*.pdf"  # 搜索所有 PDF 文件
+#+end_src
+
+*** 多媒体处理
+
+- =pandoc=: 万能文档转换器 (Markdown → PDF/Word/HTML...)
+- =imagemagick=: 图像处理瑞士军刀 (转换/裁剪/合成)
+- =ffmpeg=: 音视频处理工具 (转码/剪辑/提取)
+
+#+begin_src powershell
+scoop install pandoc imagemagick ffmpeg
+#+end_src
+
+*** 数据库
+
+- =sqlite=: 轻量级嵌入式数据库
+- =postgresql=: 开源关系型数据库
+
+#+begin_src powershell
+scoop install sqlite postgresql
+#+end_src
+
+** 文档与知识管理系统
+
+- =obsidian=: Markdown 笔记软件 (双向链接, 知识图谱)
+- =anki=: 间隔重复记忆工具 (背单词/考试必备)
+- =keepassxc=: 密码管理器 (离线, 开源)
+
+#+begin_src powershell
+scoop install obsidian anki keepassxc
+#+end_src
+
+** 浏览器
+
+- =vivaldi=: 基于 Chromium 的高度可定制浏览器
+
+#+begin_src powershell
+scoop install vivaldi
+#+end_src
+
+** 媒体播放与查看
+
+- =qimgv=: 轻量级图片查看器 (支持动图)
+- =mpv=: 极简视频播放器 (GPU 加速, 高度可配置)
+- =yt-dlp=: YouTube 下载器 (=youtube-dl= 的活跃分支)
+- =dopamine=: 音乐播放器 (Material Design 风格)
+- =sumatrapdf=: 轻量级 PDF 阅读器 (启动极快)
+
+#+begin_src powershell
+scoop install qimgv mpv yt-dlp dopamine sumatrapdf
+#+end_src
+
+** 即时通讯
+
+- =element=: Matrix 协议客户端 (去中心化 IM)
+
+#+begin_src powershell
+scoop install element
+#+end_src
+
+** 杂项工具
+
+- =fastfetch=: 系统信息展示工具 (类似 =neofetch=, 但更快)
+- =cheat-engine=: 游戏内存修改器 (修改器/逆向分析)
+
+#+begin_src powershell
+scoop install fastfetch cheat-engine
+#+end_src
+
+Cheat Engine 需要手动创建 shim:
+
+#+begin_src powershell
+scoop shim add ce "$env:USERPROFILE\scoop\apps\cheat-engine\current\cheatengine-x86_64.exe"
+#+end_src
+
+- =fontforge=: 字体编辑器 (创建/修改 TTF/OTF 字体)
+- =autoclicker=: 自动点击器
+
+#+begin_src powershell
+scoop install fontforge autoclicker
+#+end_src
+
+* 手动安装软件 (Handmade)
+
+以下软件无法通过 Scoop 安装，需要手动下载:
+
+** 国产办公/社交软件
+
+- QQ
+- 微信 (Wechat)
+- 飞书 (Feishu)
+- 腾讯会议 (Tencent Meeting)
+- 百度网盘
+
+这些软件通常需要从官网下载。
+
+** 输入法
+
+- =weasel= (小狼毫): Rime 输入法 Windows 前端
+
+下载: [[https://rime.im/]]
+
+* 工业软件 (Industrial & Professional Tools)
+
+** CAD 软件
+
+- *Solidworks*: 机械设计 CAD (参数化建模)
+
+** Adobe Creative Cloud 全家桶
+
+- Ps (Photoshop): 图像编辑
+- Ai (Illustrator): 矢量图形
+- Id (InDesign): 排版设计
+- Pr (Premiere Pro): 视频剪辑
+- Ae (After Effects): 动态图形/视觉特效
+- Lr (Lightroom): 照片管理/后期
+- Xd (Adobe XD): UI/UX 设计
+- Au (Audition): 音频编辑
+
+** Microsoft Office
+
+- Word: 文字处理
+- Excel: 电子表格
+- Powerpoint: 演示文稿
+- Outlook: 邮件/日历
+- Access: 数据库
+- Project: 项目管理
+- Visio: 流程图/架构图
+
+** 板级 EDA
+
+- *Altium Designer*: PCB 设计软件 (电路板设计/Layout)
+
+** SPICE 仿真
+
+- *LTspice*: Linear Technology 的模拟电路仿真器 (免费, 但专注 LT 芯片)
+
+下载: [[https://www.analog.com/en/design-center/design-tools-and-calculators/ltspice-simulator.html]]
+
+** 土木工程
+
+- *ETABS*: 建筑结构分析 (高层建筑/抗震设计)
+- *SAP2000*: 通用结构分析软件
+
+* 系统调试与配置 (MS Config & Debug)
+
+** Windows 调试工具
+
+- *WinDbg*: 微软官方内核/用户态调试器
+
+安装方式:
+
+1. 通过 Windows SDK 安装
+2. 或下载 WinDbg Preview (Microsoft Store)
+
+用途:
+
+- 分析蓝屏 (BSOD) dump 文件
+- 用户态程序崩溃分析
+- 驱动开发调试
+
+* 开发环境总结 (Dev)
+
+** 必装工具清单
+
+- *Windows Terminal*: 现代化终端
+- *Wox*: 快速启动器
+- *AutoHotkey* (>=2.0): 自动化脚本
+- *Weasel* (小狼毫): Rime 输入法
+
+** 配置建议
+
+*** Windows Terminal 配置
+
+编辑 =settings.json=:
+
+#+begin_src json
+{
+  "defaultProfile": "{...}",  // 设置默认 shell (PowerShell/Git Bash)
+  "profiles": {
+    "defaults": {
+      "font": {
+        "face": "CaskaydiaCove Nerd Font",  // 使用 Nerd Font
+        "size": 11
+      }
+    }
+  },
+  "schemes": [...]  // 配色方案
+}
+#+end_src
+
+*** Starship 配置
+
+创建 =~/.config/starship.toml=:
+
+#+begin_src toml
+[character]
+success_symbol = "[➜](bold green)"
+error_symbol = "[✗](bold red)"
+
+[directory]
+truncation_length = 3
+truncate_to_repo = true
+#+end_src
+
+在 PowerShell =profile.ps1= 中添加:
+
+#+begin_src powershell
+Invoke-Expression (&starship init powershell)
+#+end_src
+
+*** Wox 插件推荐
+
+- *Everything*: 文件搜索 (安装 Everything 插件)
+- *Web Search*: 快速搜索 (Google/Bing/GitHub)
+- *Clipboard*: 剪贴板历史
+
+*** AutoHotkey 示例
+
+创建 =~/.ahk= 脚本实现快捷键:
+
+#+begin_src ahk
+; 快速启动 Windows Terminal
+^!t::Run "wt.exe"  ; Ctrl+Alt+T
+
+; 快速锁屏
+^!l::DllCall("LockWorkStation")  ; Ctrl+Alt+L
+#+end_src
+
+* 最佳实践
+
+** Scoop 维护
+
+定期更新:
+
+#+begin_src powershell
+scoop update          # 更新 Scoop 本身
+scoop update *        # 更新所有已安装软件
+scoop cleanup *       # 清理旧版本
+scoop cache rm *      # 清理下载缓存
+#+end_src
+
+** 环境变量管理
+
+Scoop 会自动管理 PATH, 但某些工具需要手动配置:
+
+#+begin_src powershell
+# 查看当前 PATH
+$env:PATH -split ';'
+
+# 永久添加路径 (系统级)
+[Environment]::SetEnvironmentVariable("PATH", "$env:PATH;C:\MyTools", "Machine")
+#+end_src
+
+** 备份配置
+
+关键配置文件位置:
+
+- Scoop: =~/scoop/apps/scoop/current/config.json=
+- Windows Terminal: =~/AppData/Local/Packages/Microsoft.WindowsTerminal_*/LocalState/settings.json=
+- Starship: =~/.config/starship.toml=
+- Neovim: =~/AppData/Local/nvim/=
+
+建议用 Git 管理配置 (dotfiles):
+
+#+begin_src powershell
+cd ~
+git init
+git add .config/ scoop/ .gitconfig
+git commit -m "Initial dotfiles"
+#+end_src
+
+** 性能优化
+
+*** 禁用 Windows Defender 实时保护 (开发时)
+
+开发过程中, Defender 会扫描每个编译生成的文件, 拖慢编译速度。
+
+*警告*: 仅在信任的开发环境中禁用, 并在完成后重新启用。
+
+#+begin_src powershell
+# 临时禁用 (需管理员权限)
+Set-MpPreference -DisableRealtimeMonitoring $true
+
+# 排除开发目录
+Add-MpPreference -ExclusionPath "C:\dev"
+#+end_src
+
+*** 启用 WSL2 (可选)
+
+如果需要 Linux 环境:
+
+#+begin_src powershell
+wsl --install
+wsl --set-default-version 2
+#+end_src
+
+推荐发行版: Ubuntu 22.04 LTS 或 Arch Linux
+
+* 总结
+
+这份配置清单涵盖了:
+
+- *开发环境*: 从 Python 到 Rust, 从 Web 到嵌入式
+- *工具链*: Shell 增强, 文件搜索, 多媒体处理
+- *专业软件*: CAD, EDA, Adobe, Office
+- *系统调试*: WinDbg
+
+*核心原则*:
+
+1. 优先用 Scoop 管理 (可更新, 可卸载)
+2. 手动安装仅限无可奈何的软件 (QQ/微信/工业软件)
+3. 定期更新和备份配置
+
+如果你刚拿到一台新 Windows 机器, 按这份清单走一遍, 30 分钟即可搭建完整开发环境。

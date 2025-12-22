@@ -1,0 +1,1362 @@
+#+title: Taskwarrior Reports Architecture: The Pipeline from Configuration to Display
+#+author: SOV710
+#+date: 2025-12-22
+#+startup: showall
+#+options: toc:2 num:nil
+
+* Report 的本质: 配置驱动的数据管线
+
+Task 的任何表格输出，本质上都是一个 report 管线。
+
+Report 的定义:
+
+#+begin_quote
+"A custom report is simply a set of configuration values"
+#+end_quote
+
+Report 是一组配置项，当执行 =task <reportname>= 时，Taskwarrior 按照该 report 的配置项去:
+
+- 选任务 (filter)
+- 排序 (sort)
+- 投影字段并格式化 (columns + column format)
+- 打印表头 (labels，且受 verbose 控制)
+- 打印附注 / 页限制等 (verbose、limit:page、reserved.lines 等)
+
+此外，官方明确区分了三类 reports:
+
+- 不可修改的内建报告 (如 =info= / =summary=)
+- *可被重新定义 / 移除* 的内建报告 (如 =list= / =next=)
+- 你自定义的报告
+
+官方把 report 的关键字段列为五项: =description, columns, labels, sort, filter=。
+
+** Report 的执行流程
+
+当你运行:
+
+#+begin_src sh
+task project:kernel next
+#+end_src
+
+Taskwarrior 内部的执行流程:
+
+#+begin_example
+1. 解析命令行
+   ├─ 提取 command: "next"
+   ├─ 提取 filter: "project:kernel"
+   └─ 提取 overrides: (无)
+
+2. 加载 report 配置
+   ├─ report.next.filter = "status:pending -WAITING limit:page"
+   ├─ report.next.sort = "urgency-"
+   ├─ report.next.columns = "id,start.age,priority,..."
+   ├─ report.next.labels = "ID,Active,P,..."
+   └─ report.next.description = "Most urgent tasks"
+
+3. 组合 filter
+   ├─ 命令行 filter: "project:kernel"
+   ├─ Report filter: "status:pending -WAITING limit:page"
+   └─ 合并: "project:kernel and status:pending -WAITING limit:page"
+
+4. 选择任务 (filter 阶段)
+   ├─ 从 ~/.task/pending.data 读取所有任务
+   ├─ 应用组合 filter
+   └─ 得到匹配的任务集合
+
+5. 排序 (sort 阶段)
+   ├─ 按 sort 规则排序
+   └─ 得到有序任务列表
+
+6. 投影 (columns 阶段)
+   ├─ 对每个任务提取 columns 指定的字段
+   ├─ 应用 format 转换
+   └─ 得到二维数据矩阵
+
+7. 渲染 (display 阶段)
+   ├─ 打印 header (如果 verbose 包含 'label')
+   ├─ 打印数据行 (应用颜色规则)
+   ├─ 打印 footnote (如果 verbose 包含 'footnote')
+   └─ 应用 limit:page (截断输出)
+#+end_example
+
+** Report 是声明式的
+
+这是一个关键认知: Report 不是 *命令式* (imperative) 的，而是 *声明式* (declarative) 的。
+
+你不是在告诉 Taskwarrior "怎么做"，而是在告诉它 "我要什么样的结果"。
+
+#+begin_src sh
+# 你不会写
+task "for each pending task, if project is kernel, print id and description"
+
+# 而是写
+task config report.kernel.filter 'status:pending project:kernel'
+task config report.kernel.columns 'id,description'
+task kernel
+#+end_src
+
+这种声明式设计让 report 变得:
+
+1. *可组合*: filter 可以叠加
+2. *可复用*: 同一个 report 配置可以用于不同场景
+3. *可扩展*: 新增 column format 不影响已有 report
+
+* Report 的五大配置项
+
+** 1. =report.X.filter=
+
+决定 "*哪些行会出现*" (Row selection)。
+
+例如官方示例里 (第三方文章复述了 =task show report.next= 的默认值):
+
+#+begin_example
+report.next.filter status:pending -WAITING limit:page
+#+end_example
+
+这意味着:
+
+- 表格只会出现 =status:pending= 且不在 =WAITING= 的任务
+- =limit:page= 会触发分页 / 屏幕填充逻辑 (并与 =reserved.lines= 等参数相关)
+
+*** Filter 的组合规则
+
+当你在命令行指定 filter 时，它会与 =report.X.filter= *合并* (用 =and= 连接):
+
+#+begin_src sh
+# 命令行
+task project:kernel next
+
+# 实际执行的 filter
+status:pending -WAITING limit:page and project:kernel
+#+end_src
+
+这是一个常见的困惑点:
+
+#+begin_src sh
+# 为什么这个命令没有输出？
+task status:completed list
+#+end_src
+
+原因: =report.list.filter= 包含 =status:pending=，与 =status:completed= 互斥。
+
+*正确做法*:
+
+#+begin_src sh
+# 使用没有 status filter 的 report
+task status:completed all
+
+# 或临时覆盖 filter
+task rc.report.list.filter='' status:completed list
+#+end_src
+
+*** Limit:page 的工作原理
+
+=limit:page= 是一个特殊的 filter 项，它:
+
+1. 查询终端高度 (通过 =LINES= 环境变量或 =ioctl=)
+2. 减去 =reserved.lines= (默认 1，为 shell prompt 预留)
+3. 减去 header / footnote 占用的行数
+4. 截断输出到剩余行数
+
+#+begin_src sh
+# 查看当前终端高度
+task _get rc.defaultheight
+
+# 输出 (假设终端 40 行高)
+40
+
+# 假设 header 占 2 行，footer 占 1 行，reserved.lines=1
+# 实际显示任务数 = 40 - 2 - 1 - 1 = 36 行
+#+end_src
+
+*调整 reserved.lines*:
+
+#+begin_src sh
+# 如果你的 shell prompt 占 2 行
+task config reserved.lines 2
+
+# 如果你不想分页
+task rc.report.next.filter='status:pending -WAITING' next
+#+end_src
+
+*** Filter 与 Context 的交互
+
+Context (上下文) 是全局的 filter，会应用到 *所有* report:
+
+#+begin_src sh
+# 定义 context
+task context define work project.startswith:work
+
+# 激活
+task context work
+
+# 现在所有 report 都会自动加上 "project.startswith:work"
+task next
+# 等价于
+task project.startswith:work next
+#+end_src
+
+这意味着 *三层 filter* 叠加:
+
+1. Context filter
+2. Report filter
+3. 命令行 filter
+
+#+begin_example
+final_filter = context_filter AND report_filter AND command_line_filter
+#+end_example
+
+** 2. =report.X.sort=
+
+决定 "*行的顺序*" (Row ordering)。
+
+Sort 是一个列列表，可带方向 =+/-=，还可以用 =/= 指定 "分隔断行 (break)"。
+
+临时改排序的官方示例 (注意 =rc.report.next.sort=...=):
+
+#+begin_src sh
+task rc.report.next.sort=due-,urgency- next
+#+end_src
+
+你看到表格 "为什么 next 不是按 due 排"，答案在 =report.next.sort=。
+
+*** Sort 的语法
+
+#+begin_example
+report.X.sort = <column><direction>[/<break>],<column><direction>,...
+#+end_example
+
+- =<column>=: 任意有效的列名 (如 =urgency=, =due=, =project=)
+- =<direction>=:
+  - =+= : 升序 (ascending)
+  - =-= : 降序 (descending)
+- =/= (可选): 在该列的值变化时插入空行 (break line)
+
+*** Sort 示例
+
+*基本排序*:
+
+#+begin_src sh
+# 按 urgency 降序 (最紧急的在前)
+task config report.next.sort 'urgency-'
+
+# 按 due 升序 (最早到期的在前)
+task config report.list.sort 'due+'
+
+# 多级排序: 先按 priority，再按 due
+task config report.list.sort 'priority-,due+'
+#+end_src
+
+*Break line 的视觉效果*:
+
+#+begin_src sh
+# 按 project 分组，每个 project 之间插入空行
+task config report.simple.sort 'project+/,entry+'
+#+end_src
+
+输出:
+
+#+begin_example
+ID  Project   Description
+1   home      Clean kitchen
+2   home      Fix faucet
+
+3   work      Prepare report
+4   work      Review PR
+5   work      Meeting at 3pm
+
+6   personal  Call dentist
+#+end_example
+
+空行让不同 project 的任务 *视觉分组*，提高可读性。
+
+*** Sort 的排序稳定性
+
+Taskwarrior 使用 *稳定排序* (stable sort)，这意味着:
+
+- 如果两个任务在排序键上相等，它们的相对顺序 *不会改变*
+- 实际上，它们会按 *ID 升序* 作为最终的 tiebreaker
+
+#+begin_src sh
+# 两个任务的 urgency 相同
+task 12 info  # urgency: 5.0
+task 15 info  # urgency: 5.0
+
+# 排序后，12 会在 15 前面 (因为 ID 小)
+task rc.report.list.sort='urgency-' list
+#+end_example
+
+*** Sort 不支持的列
+
+某些列 *不能用于排序*:
+
+- =depends.list= (不是标量值)
+- =tags.list= (不是标量值)
+- =description.combined= (多行文本)
+
+如果你尝试:
+
+#+begin_src sh
+task config report.list.sort 'depends.list-'
+# 错误: Cannot sort by depends.list
+#+end_src
+
+*正确做法*: 用 =depends.count= 或 =+BLOCKED= 虚拟标签过滤。
+
+*** 临时修改 Sort
+
+#+begin_src sh
+# 方法 1: 命令行覆盖
+task rc.report.next.sort='due-,priority-' next
+
+# 方法 2: 创建临时 report
+task rc.report.temp.sort='project+' \
+     rc.report.temp.filter='status:pending' \
+     rc.report.temp.columns='id,project,description' \
+     temp
+#+end_src
+
+** 3. =report.X.columns=
+
+决定 "表格有哪些列、列顺序、以及列的格式"。
+
+=columns= 命令列出所有支持的列，并说明 "每个列可能有多个格式"；例如 =due= 可以用 =due.iso=, =due.relative=, =due.countdown= 等形式展示。
+
+*** Columns 的语法
+
+#+begin_example
+report.X.columns = <column>[.<format>],<column>[.<format>],...
+#+end_example
+
+- =<column>=: 字段名 (如 =id=, =description=, =due=)
+- =<format>= (可选): 格式修饰符 (如 =truncated=, =count=, =relative=)
+
+*** 默认 Format
+
+每个 column 都有一个 *默认 format* (用星号 =*= 标记):
+
+#+begin_src sh
+$ task columns description
+
+Columns     Supported Formats    Example
+----------- -------------------- ----------
+description combined*            Move your clothes...
+            desc                 Move your clothes...
+            truncated            Move your clothes do...
+            count                Move your clothes... [4]
+            truncated_count      Move your clothes do... [4]
+#+end_src
+
+如果不指定 format，使用默认的 =combined=。
+
+*** Columns 与 Labels 的对应
+
+=columns= 中的每一项都需要在 =labels= 中有对应的标签:
+
+#+begin_src sh
+# columns 有 4 项
+task config report.simple.columns 'id,project,tags.count,description'
+
+# labels 也必须有 4 项
+task config report.simple.labels 'ID,Project,Tags,Desc'
+#+end_src
+
+如果数量不匹配，Taskwarrior 会用默认标签或留空。
+
+*** Column Width 的自动调整
+
+Taskwarrior 会根据终端宽度自动调整列宽:
+
+#+begin_example
+总宽度 = defaultwidth 或 terminal width
+可用宽度 = 总宽度 - (列数 - 1) × column.padding
+
+列宽分配:
+1. 固定宽度列 (id, priority) 先分配
+2. 剩余宽度按比例分配给可变列 (description)
+3. 如果仍然不够，截断 description
+#+end_example
+
+*控制宽度*:
+
+#+begin_src sh
+# 强制宽度为 120
+task rc.defaultwidth=120 list
+
+# 无限宽度 (不截断)
+task rc.defaultwidth=0 list
+
+# 查询当前宽度
+task _get rc.defaultwidth
+#+end_src
+
+*** Column Padding
+
+=column.padding= 控制列之间的间距:
+
+#+begin_src sh
+# 默认值 1 (一个空格)
+task config column.padding 1
+
+# 无间距 (紧凑)
+task rc.column.padding=0 list
+
+# 宽松 (两个空格)
+task rc.column.padding=2 list
+#+end_src
+
+输出对比:
+
+#+begin_example
+# padding=0
+ID Project    Description
+1  home       Clean kitchen
+
+# padding=1 (默认)
+ID  Project     Description
+1   home        Clean kitchen
+
+# padding=2
+ID   Project      Description
+1    home         Clean kitchen
+#+end_example
+
+*** 特殊 Column: UUID
+
+UUID 列有 *两种格式*:
+
+- =uuid.long=: 完整 36 字符
+- =uuid.short=: 前 8 字符
+
+但通常 *不应该在 report 中显示 UUID*:
+
+#+begin_src sh
+# ❌ 糟糕: UUID 占据巨大宽度
+task config report.list.columns 'id,uuid.long,description'
+
+# ✅ 好: 只在需要时用 short
+task config report.audit.columns 'id,uuid.short,entry,description'
+#+end_src
+
+** 4. =report.X.labels=
+
+决定 "*表头那一行写什么*" (Header labels)。
+
+对应表格: 表头 (第一行列名)。
+
+注意: 表头是否显示，受 =verbose= 控制。官方说明 =verbose= 可以包含 =label= token 来启用列标签输出。
+
+有可能你改了 =labels= 但表格看不到变化: 原因往往是 =verbose= 没包含 =label=，或被设为 =nothing=。
+
+*** Labels 的作用
+
+Labels 是 *人类可读* 的列标题，而 columns 是 *机器可读* 的字段名。
+
+#+begin_src sh
+# columns (机器语言)
+task config report.simple.columns 'id,start.active,due.relative,description.truncated_count'
+
+# labels (人类语言)
+task config report.simple.labels 'ID,Active,Due,Description'
+#+end_src
+
+输出:
+
+#+begin_example
+ID  Active  Due    Description
+1   *       -2d    Fix memory leak... [3]
+2           today  Prepare report
+#+end_example
+
+*** Labels 的长度控制
+
+Labels 会影响列宽，太长的 label 会挤压数据列:
+
+#+begin_src sh
+# ❌ 糟糕: label 太长
+task config report.list.labels 'Task ID,Activity Status,Due Date Relative,Full Description with Annotations'
+
+# ✅ 好: label 简洁
+task config report.list.labels 'ID,A,Due,Description'
+#+end_src
+
+*经验法则*:
+
+- 固定宽度列 (id, priority): 2-3 字符
+- 日期列: 3-4 字符
+- Description: 可以长一些 (10-15 字符)
+
+*** Labels 与 Verbose 的交互
+
+=verbose= 控制是否显示 label:
+
+#+begin_src sh
+# 显示 label (默认)
+task list
+
+# 不显示 label
+task rc.verbose=nothing list
+
+# 自定义 verbose tokens (包含 label)
+task rc.verbose=label,footnote list
+#+end_src
+
+输出对比:
+
+#+begin_example
+# verbose=label
+ID  Description
+1   Fix bug
+2   Implement feature
+
+# verbose=nothing (无 header)
+1   Fix bug
+2   Implement feature
+#+end_example
+
+*** Labels 的国际化
+
+Labels 可以用非 ASCII 字符:
+
+#+begin_src sh
+# 中文 labels
+task config report.list.labels '编号,优先级,项目,描述'
+
+# 输出
+编号  优先级  项目  描述
+1     H       工作  修复内存泄漏
+#+end_src
+
+但要确保终端支持 UTF-8。
+
+** 5. =report.X.description=
+
+不在表格主体里，而在 "reports 列表 / 帮助语义层"。
+
+对应 =task reports= / =task commands= / help 输出中的说明文本。
+
+它不直接改变表格的行或列，但决定 report "作为命令名" 被展示时的描述。官方在 report 文档里把它列为组成部分之一。
+
+*** Description 的作用
+
+#+begin_src sh
+# 定义 report
+task config report.today.description 'Tasks due today'
+task config report.today.filter '+DUETODAY'
+task config report.today.columns 'id,due.countdown,description'
+#+end_src
+
+查看:
+
+#+begin_src sh
+$ task reports | grep today
+today     Tasks due today
+
+$ task help | grep today
+task today    Tasks due today
+#+end_src
+
+*** Description 的最佳实践
+
+*简洁*: 一句话说明这个 report 是什么。
+
+#+begin_src sh
+# ✅ 好
+task config report.next.description 'Most urgent tasks'
+
+# ❌ 糟糕: 太详细
+task config report.next.description 'This report shows all pending tasks that are not waiting, sorted by urgency in descending order, limited to one page'
+#+end_src
+
+*动词开头*: 描述 report 的动作。
+
+#+begin_src sh
+task config report.completed.description 'Shows completed tasks'
+task config report.blocked.description 'Lists blocked tasks'
+task config report.overdue.description 'Displays overdue tasks'
+#+end_src
+
+*避免重复*: description 不需要重复 report 名字。
+
+#+begin_src sh
+# ❌ 糟糕
+task config report.next.description 'Next report'
+
+# ✅ 好
+task config report.next.description 'Most urgent tasks'
+#+end_src
+
+* Verbose: 输出控制的精细化
+
+=verbose= 是一个被低估的配置项，它控制 report 输出的 *所有非数据部分*。
+
+** Verbose 的值类型
+
+=verbose= 有三种设置方式:
+
+1. *布尔值*: =1= / =0= / =on= / =off=
+2. *特殊值*: =nothing=
+3. *Token 列表*: =blank,header,label,footnote,...=
+
+*** 布尔值模式
+
+#+begin_src sh
+# 显示所有附加信息 (默认)
+task config verbose on
+
+# 只显示数据
+task config verbose off
+#+end_src
+
+=verbose=1= 等价于包含所有 tokens。
+
+*** Nothing 模式
+
+#+begin_src sh
+task config verbose nothing
+task list
+#+end_src
+
+输出:
+
+#+begin_example
+1   Fix bug
+2   Implement feature
+3   Review code
+#+end_example
+
+*完全没有* header, label, footnote，只有数据行。
+
+*用途*: 脚本解析、管道处理。
+
+#+begin_src bash
+#!/bin/bash
+# 获取所有任务 ID
+ids=$(task rc.verbose=nothing _ids)
+for id in $ids; do
+    echo "Processing task $id"
+done
+#+end_src
+
+*** Token 列表模式
+
+#+begin_src sh
+# 只显示 label 和 footnote
+task config verbose 'label,footnote'
+task list
+#+end_src
+
+输出:
+
+#+begin_example
+ID  Description
+1   Fix bug
+2   Implement feature
+
+2 tasks
+#+end_example
+
+有 label (表头) 和 footnote (底部统计)，但没有 header (顶部提示)。
+
+** Verbose Tokens 详解
+
+| Token       | 含义                                 | 示例                              |
+|-----------+--------------------------------------+-----------------------------------|
+| =blank=     | 在输出中插入空行，增加清晰度         | 表格前后的空行                    |
+| =header=    | 命令开始前的消息                     | "[task next]" 提示                |
+| =footnote=  | 命令结束后的消息                     | "2 tasks"、"Created task 5"       |
+| =label=     | 表格的列标题                         | "ID  Description"                 |
+| =new-id=    | 新任务的 ID 反馈                     | "Created task 5"                  |
+| =new-uuid=  | 新任务的 UUID 反馈 (覆盖 new-id)     | "Created task f30cb9c3..."        |
+| =affected=  | 修改任务数量的反馈                   | "Modified 3 tasks"                |
+| =edit=      | =edit= 命令的详细模板                | =task edit= 的输出                |
+| =special=   | 应用特殊标签时的反馈                 | "Applied +next tag"               |
+| =project=   | 项目状态变化的反馈                   | "Project 'work' is 75% complete"  |
+| =sync=      | 同步反馈                             | "Sync successful"                 |
+| =filter=    | 显示使用的 filter                    | "Filter: status:pending"          |
+| =context=   | 显示当前 context                     | "Context 'work' active"           |
+| =override=  | 配置覆盖通知                         | "Configuration override detected" |
+| =recur=     | 循环任务实例创建通知                 | "Created recurring task instance" |
+| =default=   | Taskwarrior 选择默认行为的通知       | "Using default report 'next'"     |
+| =news=      | 新版本发布提醒                       | "New version available"           |
+
+*** Token 之间的依赖关系
+
+某些 tokens *隐式包含* 其他 tokens:
+
+- =affected=, =new-id=, =new-uuid=, =project=, =override=, =recur= → 隐式包含 =footnote=
+- =default= → 隐式包含 =header=
+
+#+begin_src sh
+# 只指定 affected，但 footnote 也会生效
+task config verbose 'affected'
+task 1-5 modify priority:H
+
+# 输出
+Modified 5 tasks.
+#+end_example
+
+*** Verbose 的实战组合
+
+*执行视图* (最小干扰):
+
+#+begin_src sh
+task config verbose 'label'
+task next
+#+end_src
+
+只显示表头和数据，无其他提示。
+
+*审查视图* (完整信息):
+
+#+begin_src sh
+task config verbose 'blank,header,label,footnote,affected'
+task list
+#+end_src
+
+包含空行、提示、表头、底部统计。
+
+*脚本视图* (纯数据):
+
+#+begin_src sh
+task rc.verbose=nothing list | while read line; do
+    process_task "$line"
+done
+#+end_src
+
+** Verbose 与 Reserved.lines 的交互
+
+=reserved.lines= 控制屏幕底部预留多少行给 shell prompt:
+
+#+begin_src sh
+# 默认值 1 (单行 prompt)
+task config reserved.lines 1
+
+# 多行 prompt (如 starship, powerlevel10k)
+task config reserved.lines 2
+#+end_src
+
+*工作原理*:
+
+#+begin_example
+当 limit:page 生效时:
+
+可显示行数 = 终端高度 - reserved.lines - header 行数 - footer 行数
+#+end_example
+
+示例:
+
+#+begin_example
+终端高度: 40 行
+reserved.lines: 2 行
+header: 2 行 (verbose 包含 header 和 label)
+footer: 1 行 (verbose 包含 footnote)
+
+实际数据行 = 40 - 2 - 2 - 1 = 35 行
+#+end_example
+
+*调试*:
+
+#+begin_src sh
+# 查看终端高度
+task _get rc.defaultheight
+
+# 查看 reserved.lines
+task show reserved.lines
+
+# 临时修改
+task rc.reserved.lines=0 next
+#+end_src
+
+* 内置 Reports 分为两类: Static 与 Modifiable
+
+Static 报表 "非标准表格形态 / 参数不统一"，因此官方明确说 *不可修改*。
+
+** Static Reports
+
+Static: =burndown.*=, =calendar=, =colors=, =export=, =ghistory.*=, =history.*=, =information=, =summary=, =timesheet= 等。
+
+*** 为什么这些是 Static？
+
+这些 report 的输出 *不是表格*，而是:
+
+- *图表*: =burndown=, =ghistory=, =history=
+- *日历*: =calendar=
+- *键值对*: =information= (=task <id> info=)
+- *JSON*: =export=
+- *色彩演示*: =colors=
+
+它们不遵循 =columns / labels / sort= 的表格模型。
+
+*** Burndown Report
+
+#+begin_src sh
+task burndown.daily
+#+end_src
+
+输出:
+
+#+begin_example
+Burndown
+
+  30 +                                                +
+     |                                                |
+     |                                            **  |
+  20 |                                          **    |
+     |                                        **      |
+     |                                    ****        |
+  10 |                              ******            |
+     |                        ******                  |
+     |                  ******                        |
+   0 +--+---+---+---+---+---+---+---+---+---+---+---+
+     1   5   9  13  17  21  25  29
+                    Day of Month
+#+end_example
+
+这是一个 *ASCII 图表*，无法用 =columns= 定义。
+
+*** Calendar Report
+
+#+begin_src sh
+task calendar
+#+end_src
+
+输出:
+
+#+begin_example
+    December 2025
+Mo Tu We Th Fr Sa Su
+ 1  2  3  4  5  6  7
+ 8  9 10 11 12 13 14
+15 16 17 18 19 20 21
+22 23 24 25 26 27 28
+29 30 31
+#+end_example
+
+标记有 due date 的日期。
+
+*** Information Report
+
+#+begin_src sh
+task 12 info
+#+end_src
+
+输出:
+
+#+begin_example
+Name          Value
+ID            12
+Description   Fix memory leak
+Status        Pending
+Project       kernel
+Priority      H
+Entered       2025-12-01 10:30:00
+Due           2025-12-22 17:00:00
+Urgency       18.3
+#+end_example
+
+这是 *键值对*，不是表格。
+
+*** Export Report
+
+#+begin_src sh
+task export
+#+end_src
+
+输出:
+
+#+begin_example
+[
+{"id":1,"description":"Fix bug","status":"pending",...},
+{"id":2,"description":"Implement feature","status":"pending",...}
+]
+#+end_example
+
+这是 *JSON*，用于脚本和集成。
+
+*** Colors Report
+
+#+begin_src sh
+task colors
+#+end_src
+
+输出:
+
+#+begin_example
+color0  ███ ■ ▌ │
+color1  ███ ■ ▌ │
+...
+#+end_example
+
+演示所有颜色主题。
+
+** Modifiable Reports
+
+Modifiable: =active=, =all=, =blocked=, =blocking=, =completed=, =list=, =long=, =ls=, =minimal=, =newest=, =next=, =oldest=, =overdue=, =ready=, =recurring=, =unblocked=, =waiting=。
+
+*** 为什么这些是 Modifiable？
+
+它们都是 *表格形式*，遵循统一的配置模型:
+
+#+begin_example
+report.X.description
+report.X.filter
+report.X.columns
+report.X.labels
+report.X.sort
+#+end_example
+
+你可以:
+
+- *修改*: 改变任意配置项
+- *删除*: 移除整个 report
+- *克隆*: 复制一个 report 并修改
+
+*** 查看 Modifiable Report 的配置
+
+#+begin_src sh
+# 查看 next report 的配置
+task show report.next
+
+# 输出
+report.next.columns      id,start.age,entry.age,depends.indicator,...
+report.next.description  Most urgent tasks
+report.next.filter       status:pending limit:page -WAITING
+report.next.labels       ID,Active,Age,D,P,Project,Tags,R,Sch,Due,...
+report.next.sort         start-,due+,project+,urgency-
+#+end_src
+
+*** 修改 Modifiable Report
+
+#+begin_src sh
+# 修改 list report，移除 tags 列
+task config report.list.columns 'id,project,priority,description.truncated_count'
+task config report.list.labels 'ID,Project,Pri,Description'
+
+# 验证
+task list
+#+end_src
+
+*** 删除 Modifiable Report
+
+#+begin_src sh
+# 删除 long report 的所有配置
+task config report.long.columns ''
+task config report.long.labels ''
+task config report.long.sort ''
+task config report.long.filter ''
+task config report.long.description ''
+
+# 现在 task long 会报错
+task long
+# Error: Report 'long' not found
+#+end_src
+
+*** 克隆 Modifiable Report
+
+#+begin_src sh
+# 克隆 next report 为 urgent report
+task show report.next | grep '^report.next' | while read line; do
+    new_line=$(echo "$line" | sed 's/report.next/report.urgent/')
+    task config ${new_line%=*} "${new_line#*=}"
+done
+
+# 修改 urgent report
+task config report.urgent.description 'Extremely urgent tasks'
+task config report.urgent.filter 'status:pending priority:H urgency.over:15'
+
+# 使用
+task urgent
+#+end_src
+
+* 创建自定义 Report 的最佳实践
+
+** 1. 从需求出发，不是技术
+
+*错误的思路*:
+
+#+begin_quote
+"我想用 =description.truncated_count= 和 =due.countdown=，创建一个 report。"
+#+end_quote
+
+*正确的思路*:
+
+#+begin_quote
+"我需要一个 report 显示今天必须完成的任务，按剩余时间排序。"
+#+end_quote
+
+然后才选择技术实现:
+
+#+begin_src sh
+task config report.today.description 'Tasks due today'
+task config report.today.filter '+DUETODAY status:pending'
+task config report.today.columns 'id,due.countdown,description.truncated_count,urgency'
+task config report.today.labels 'ID,Remaining,Description,Urg'
+task config report.today.sort 'due+'
+#+end_src
+
+** 2. 渐进式添加列
+
+不要一次性定义所有列，而是:
+
+1. 从最小集合开始 (id + description)
+2. 逐步添加有用的列
+3. 移除不常看的列
+
+#+begin_src sh
+# 第 1 版
+task config report.simple.columns 'id,description'
+
+# 使用一周后，发现需要 priority
+task config report.simple.columns 'id,priority,description'
+
+# 再过一周，发现 priority 没什么用
+task config report.simple.columns 'id,urgency,description'
+#+end_src
+
+** 3. 使用语义化的 Report 名字
+
+*糟糕的命名*:
+
+#+begin_src sh
+report.foo
+report.temp
+report.test
+report.x
+#+end_src
+
+*好的命名*:
+
+#+begin_src sh
+report.today     # 今天到期的任务
+report.urgent    # 紧急任务
+report.review    # 审查用 report
+report.audit     # 审计用 report
+report.weekly    # 每周回顾
+#+end_src
+
+命名应该让你 *一眼看出用途*。
+
+** 4. 为不同场景创建不同 Report
+
+不要试图用一个 report 解决所有问题。
+
+*执行场景*:
+
+#+begin_src sh
+task config report.exe.description 'Execution view'
+task config report.exe.filter 'status:pending -WAITING limit:page'
+task config report.exe.columns 'id,start.active,priority,due.relative,description.truncated_count,urgency'
+task config report.exe.sort 'urgency-'
+#+end_src
+
+*审查场景*:
+
+#+begin_src sh
+task config report.rev.description 'Review view'
+task config report.rev.filter 'status:pending'
+task config report.rev.columns 'id,entry.age,modified.age,project,tags.count,description.count'
+task config report.rev.sort 'modified+'
+#+end_src
+
+*审计场景*:
+
+#+begin_src sh
+task config report.aud.description 'Audit view'
+task config report.aud.filter 'status:pending or status:completed'
+task config report.aud.columns 'id,entry.formatted,due.formatted,end.formatted,description'
+task config report.aud.sort 'entry+'
+#+end_src
+
+** 5. 利用 Context 简化 Report
+
+如果你的 report 主要是 *filter 不同*，考虑用 context 代替多个 report:
+
+#+begin_src sh
+# ❌ 不好: 创建多个 report
+task config report.work.filter 'status:pending project.startswith:work'
+task config report.home.filter 'status:pending project.startswith:home'
+task config report.personal.filter 'status:pending project:personal'
+
+# ✅ 好: 使用 context
+task context define work project.startswith:work
+task context define home project.startswith:home
+task context define personal project:personal
+
+# 切换 context
+task context work
+task next  # 自动只显示 work 任务
+
+task context home
+task next  # 自动只显示 home 任务
+#+end_src
+
+** 6. 测试 Report 的可读性
+
+创建 report 后，添加一些测试数据并实际查看:
+
+#+begin_src sh
+# 添加测试任务
+task add "Test task 1" project:test priority:H due:today
+task add "Test task 2 with a very long description that should be truncated" project:test due:tomorrow
+task add "Test task 3" project:test +urgent
+
+# 查看 report
+task rc.report.test.filter='project:test' test
+
+# 检查:
+# - 列宽是否合理？
+# - Description 是否截断？
+# - 排序是否符合预期？
+#+end_src
+
+** 7. 文档化你的 Report
+
+在 =~/.taskrc= 中添加注释:
+
+#+begin_src sh
+# Execution view: minimal distraction, urgency-sorted
+report.exe.description=Execution view
+report.exe.filter=status:pending -WAITING limit:page
+report.exe.columns=id,start.active,priority,due.relative,description.truncated_count,urgency
+report.exe.labels=ID,A,P,Due,Description,Urg
+report.exe.sort=urgency-
+
+# Review view: for weekly task review
+report.rev.description=Review view
+report.rev.filter=status:pending
+report.rev.columns=id,entry.age,modified.age,project,tags.count,description.count
+report.rev.labels=ID,Age,Modified,Project,Tags,Description
+report.rev.sort=modified+
+#+end_src
+
+或者创建单独的文档:
+
+#+begin_src sh
+$ cat ~/.task/reports.md
+
+# My Custom Reports
+
+## exe (Execution)
+Daily task execution view, sorted by urgency.
+Usage: `task exe`
+
+## rev (Review)
+Weekly task review, sorted by last modification.
+Usage: `task rev`
+
+## aud (Audit)
+Full task history for auditing.
+Usage: `task aud`
+#+end_src
+
+* 常见问题和陷阱
+
+** 问题 1: 修改了 Labels 但看不到变化
+
+*症状*:
+
+#+begin_src sh
+task config report.list.labels 'ID,Project,Desc'
+task list
+# 表头没有变化
+#+end_src
+
+*原因*: =verbose= 不包含 =label=。
+
+*解决*:
+
+#+begin_src sh
+# 查看 verbose 设置
+task show verbose
+
+# 如果是 'nothing' 或不包含 'label'
+task config verbose 'label,footnote'
+
+# 或临时修改
+task rc.verbose=label list
+#+end_src
+
+** 问题 2: Filter 没有生效
+
+*症状*:
+
+#+begin_src sh
+task config report.myreport.filter 'project:kernel'
+task myreport
+# 仍然显示所有项目的任务
+#+end_src
+
+*原因*: Report 配置不完整。
+
+*解决*:
+
+#+begin_src sh
+# 确保所有必要配置都设置了
+task config report.myreport.description 'Kernel tasks'
+task config report.myreport.columns 'id,description'
+task config report.myreport.labels 'ID,Description'
+task config report.myreport.sort 'urgency-'
+task config report.myreport.filter 'project:kernel'
+
+# 验证配置
+task show report.myreport
+
+# 使用
+task myreport
+#+end_src
+
+** 问题 3: Sort 不起作用
+
+*症状*:
+
+#+begin_src sh
+task config report.list.sort 'due+'
+task list
+# 任务没有按 due 排序
+#+end_src
+
+*原因 1*: 很多任务没有 =due= 字段。
+
+*解决*: 使用多级排序，未设置 =due= 的任务会排到最后:
+
+#+begin_src sh
+task config report.list.sort 'due+,urgency-'
+#+end_src
+
+*原因 2*: 临时 override 覆盖了配置。
+
+#+begin_src sh
+# 检查是否有 override
+task rc.verbose=override list
+
+# 清除可能的环境变量
+unset TASKRC
+#+end_src
+
+** 问题 4: Limit:page 不生效
+
+*症状*:
+
+#+begin_src sh
+task config report.next.filter 'status:pending limit:page'
+task next
+# 显示了所有任务，没有分页
+#+end_src
+
+*原因*: 终端高度检测失败 (如在 tmux 或 screen 中)。
+
+*解决*:
+
+#+begin_src sh
+# 手动设置终端高度
+task config defaultheight 40
+
+# 或临时修改
+task rc.defaultheight=40 next
+
+# 检查环境变量
+echo $LINES
+#+end_src
+
+** 问题 5: Columns 和 Labels 数量不匹配
+
+*症状*:
+
+#+begin_src sh
+task config report.myreport.columns 'id,project,description'
+task config report.myreport.labels 'ID,Project'  # 少了一个
+task myreport
+# 表头显示异常
+#+end_src
+
+*解决*:
+
+#+begin_src sh
+# 确保数量一致
+task config report.myreport.labels 'ID,Project,Description'
+#+end_src
+
+*技巧*: 用脚本检查:
+
+#+begin_src bash
+#!/bin/bash
+cols=$(task _get report.myreport.columns | tr ',' '\n' | wc -l)
+labs=$(task _get report.myreport.labels | tr ',' '\n' | wc -l)
+
+if [ $cols -ne $labs ]; then
+    echo "Error: columns ($cols) != labels ($labs)"
+fi
+#+end_src
+
+** 问题 6: Description 总是被截断
+
+*症状*:
+
+#+begin_src sh
+task list
+# Description 列太窄，所有任务都被截断
+#+end_src
+
+*原因*: 终端宽度不够或配置了 =defaultwidth=。
+
+*解决*:
+
+#+begin_src sh
+# 检查宽度设置
+task show defaultwidth
+
+# 增加宽度
+task config defaultwidth 120
+
+# 或使用无限宽度
+task rc.defaultwidth=0 list
+
+# 或使用不截断的格式
+task config report.list.columns 'id,description.count'
+#+end_src
+
+* 总结: Report 设计的金字塔原则
+
+#+begin_example
+                   ┌─────────────┐
+                   │   审计视图   │  (完整信息，低频使用)
+                   └─────────────┘
+                  ┌───────────────┐
+                  │    审查视图    │  (中等信息，周期使用)
+                  └───────────────┘
+                 ┌─────────────────┐
+                 │     执行视图      │  (最小信息，高频使用)
+                 └─────────────────┘
+#+end_example
+
+*执行视图* (每天用):
+
+- 最少的列 (5-7 列)
+- 最简洁的 format (indicator, truncated_count)
+- 最严格的 filter (limit:page)
+- 最明确的排序 (urgency)
+
+*审查视图* (每周用):
+
+- 中等的列 (8-10 列)
+- 中等的 format (count, age)
+- 中等的 filter (status:pending)
+- 多级排序 (modified+, urgency-)
+
+*审计视图* (需要时用):
+
+- 完整的列 (12+ 列)
+- 完整的 format (formatted, combined)
+- 宽松的 filter (包含 completed)
+- 时间排序 (entry+)
+
+*最后的建议*:
+
+#+begin_quote
+Report 是工具，不是艺术品。
+如果一个 report 让你更快完成工作，它就是好的。
+如果一个 report 让你纠结于配置，它就是坏的。
+#+end_quote
+
+从简单开始，根据实际需要调整。不要试图一次性设计完美的 report——完美的 report 是在使用中逐渐演化出来的。

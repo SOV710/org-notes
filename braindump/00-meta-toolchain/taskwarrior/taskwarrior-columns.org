@@ -1,0 +1,1495 @@
+#+title: Taskwarrior Columns Mastery: The Expert's Guide to Report Design
+#+author: SOV710
+#+date: 2025-12-22
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 前言: Columns 不是字段，是投影
+
+下面这份说明 *严格以 Taskwarrior 官方 =columns= 文档为语义基准*​，并且 *站在 "你已经在写 report.columns / report.sort / urgency 配置" 的专家视角* 来解释这些列——不是 "字段解释"，而是:
+
+#+begin_quote
+*这些列在数据模型中是什么？*
+*为什么有这些 format？*
+*在 report / 排序 / 过滤 / 认知负担上各自应该如何使用？*
+#+end_quote
+
+我会按 *类别 (关系 / 文本 / 时间 / 标识 / 结构 / 派生)* 来讲，而不是简单逐条翻译。
+
+** 核心认知: Column = Field × Format
+
+在 Taskwarrior 中，一个 "列" 不是数据库里的 "字段"，而是:
+
+#+begin_example
+列 = 字段 × 格式投影
+#+end_example
+
+例如，=description= 字段有 5 种格式投影:
+
+- =description.combined= → 完整语义 (含 annotations)
+- =description.desc= → 只显示主描述
+- =description.truncated= → 截断显示
+- =description.count= → 显示 + annotation 计数
+- =description.oneline= → 单行展平
+
+每种格式解决不同的 *认知负担问题*。这就是为什么专家不会说 "显示 description"，而是说 "用 =description.truncated_count= 控制横向稳定性"。
+
+** 查看所有可用列
+
+#+begin_src sh
+# 查看所有列
+task _columns
+
+# 查看特定列的格式
+task columns description
+task columns due
+task columns tags
+#+end_src
+
+输出示例:
+
+#+begin_example
+$ task columns description
+
+Columns     Supported Formats    Example
+----------- -------------------- --------------------------------------
+description combined*            Move your clothes down on to the lower peg
+                                 2014-02-08 Immediately before your lunch
+            desc                 Move your clothes down on to the lower peg
+            oneline              Move your clothes... Immediately before...
+            truncated            Move your clothes do...
+            count                Move your clothes down on to... [4]
+            truncated_count      Move your clothes do... [4]
+#+end_example
+
+星号 =*= 表示默认格式。
+
+* 一、依赖与结构关系类列 (dependency & structure)
+
+** 1. =depends=
+
+*本质*:
+
+=depends= 是一个 *UUID 引用集合*​，表示 "当前任务被哪些任务阻塞"。
+
+*** Formats 的真实含义
+
+- =depends= / =depends.list=
+  显示依赖任务的 *ID 列表 (当前 report 语境下)*
+
+  #+begin_example
+  1 2 10
+  #+end_example
+
+  ⚠️ 这是 *视图相关的 ID，不是 uuid*，只用于人类阅读。
+
+- =depends.count=
+
+  #+begin_example
+  [3]
+  #+end_example
+
+  专家用途:
+  - 放在 =list= / =next= 中，用于 *快速判断复杂度*
+  - 极少用于排序 (排序用 =+BLOCKED= / =+BLOCKING= 更清晰)
+
+- =depends.indicator=
+
+  #+begin_example
+  D
+  #+end_example
+
+  *这是一个 "存在性指示器"*
+  - 有任何依赖 → 显示 =D=
+  - 无依赖 → 空
+
+*** 专家用法建议
+
+- *默认 report*: 用 =depends.indicator=
+- *排障 / 清理依赖*: 临时用 =depends.list=
+- *认知负担管理*: 用 =depends.count=
+
+*** 实际配置示例
+
+#+begin_src sh
+# 简洁的执行视图
+task config report.list.columns 'id,priority,project,depends.indicator,description.count'
+
+# 依赖关系审计视图
+task config report.deps.columns 'id,depends.list,description'
+task config report.deps.filter '+BLOCKED or +BLOCKING'
+#+end_src
+
+*** 为什么不在 sort 中使用 depends？
+
+依赖关系是 *图结构*，不是标量值。排序应该用:
+
+- =+BLOCKED= 虚拟标签过滤
+- =urgency= 排序 (blocked 任务的 urgency 系数是 -5.0)
+
+#+begin_src sh
+# 正确: 过滤被阻塞的任务
+task +BLOCKED list
+
+# 错误: 尝试按依赖数量排序 (意义不大)
+task rc.report.list.sort=depends.count- list
+#+end_src
+
+** 2. =parent= / =template=
+
+- =parent=: 当前任务的 *父任务 UUID*
+- =template=: 周期性任务实例所对应的 *模板 UUID*
+
+这两者几乎 *不应该出现在常规 report 中*。
+
+*** 专家判断标准
+
+#+begin_quote
+如果你在日常 report 里需要看到 =parent= / =template=，
+说明你在用 Taskwarrior 做 "任务建模调试"，而不是任务执行。
+#+end_quote
+
+*** 唯一合理的使用场景
+
+调试循环任务的生成逻辑:
+
+#+begin_src sh
+# 查看循环任务的家族树
+task +PARENT info
+task parent:<uuid> all
+#+end_src
+
+或者在导出/导入时需要保留完整引用关系:
+
+#+begin_src sh
+task export > backup.json
+# parent/template 会在 JSON 中保留
+#+end_src
+
+*** 数据模型层面的理解
+
+=parent= 和 =template= 存在的意义是:
+
+1. *循环任务的实例化追溯*: 知道一个任务是从哪个模板生成的
+2. *删除传播*: 删除父任务时，可以级联删除所有子任务
+3. *同步一致性*: 在 Taskserver 同步时保持任务关系
+
+但这些都是 *内部机制*，不是用户视角的关注点。
+
+* 二、文本与语义密度控制 (description / tags / project)
+
+** 3. =description=
+
+这是 *Taskwarrior 中语义密度最高、也是最危险的一列*。
+
+*** Formats 的本质分层
+
+**** (1) 结构型
+
+- =description= / =description.desc=
+  只显示主描述，不含 annotations
+
+**** (2) 组合型
+
+- =description.combined=
+
+  #+begin_example
+  描述
+  日期 annotation
+  日期 annotation
+  #+end_example
+
+  *这是完整语义，但只适合 =long= / =info=*
+
+- =description.oneline=
+  把所有 annotation 拉平成一行
+  ❌ *几乎不应在表格中使用*
+
+**** (3) 宽度控制型 (专家常用)
+
+- =description.truncated=
+- =description.count=
+- =description.truncated_count=
+
+这三者的核心不是 "显示什么"，而是:
+
+#+begin_quote
+*控制 report 的横向稳定性*
+#+end_quote
+
+*** 专家建议 (非常重要)
+
+- *list / next*: =description.truncated_count=
+- *review / audit*: =description.count=
+- *single task inspect*: =description.combined=
+
+*** 为什么 =truncated_count= 是最佳默认？
+
+考虑这个场景: 你有 50 个任务，其中 10 个有 annotations。
+
+*使用 =description.desc=*:
+
+#+begin_example
+ID  Description
+1   Fix the memory leak in kernel module
+2   Implement user authentication
+3   Review PR #123
+...
+#+end_example
+
+问题: *你不知道哪些任务有 annotations*，可能遗漏重要备注。
+
+*使用 =description.count=*:
+
+#+begin_example
+ID  Description
+1   Fix the memory leak in kernel module [2]
+2   Implement user authentication
+3   Review PR #123 [5]
+...
+#+end_example
+
+问题: 长描述会 *撑破列宽*，导致表格错位。
+
+*使用 =description.truncated_count=* (推荐):
+
+#+begin_example
+ID  Description
+1   Fix the memory leak... [2]
+2   Implement user authentication
+3   Review PR #123 [5]
+...
+#+end_example
+
+优势:
+1. 列宽稳定 (不会因长描述而换行)
+2. 信息密度高 (知道有几个 annotations)
+3. 视觉一致性好 (表格对齐)
+
+*** 实战配置
+
+#+begin_src sh
+# 执行视图 (最小认知负担)
+task config report.next.columns \
+  'id,start.active,priority,project,tags.indicator,description.truncated_count,urgency'
+
+# 审查视图 (更多细节)
+task config report.review.columns \
+  'id,entry.age,project,tags.count,description.count,urgency'
+
+# 详细视图 (单任务检查)
+task config report.long.columns \
+  'id,project,tags,description.combined,entry,due,urgency'
+#+end_src
+
+*** Truncation 的宽度控制
+
+Taskwarrior 会根据终端宽度自动截断，但你可以强制指定:
+
+#+begin_src sh
+# 强制宽度为 120 列
+task rc.defaultwidth=120 list
+
+# 查询当前终端宽度
+task _get rc.defaultwidth
+#+end_src
+
+*** Annotations 的认知成本
+
+每个 annotation 有:
+
+- 时间戳 (=entry= 时间)
+- 文本内容
+
+在 =combined= 格式中会多行显示:
+
+#+begin_example
+$ task 12 info
+
+Description  Fix memory leak
+Annotations  2024-01-15 Discussed with team
+             2024-01-18 Root cause: buffer overflow
+             2024-01-20 Patch ready for review
+#+end_example
+
+但在表格报告中，这会导致 *一个任务占 4 行*，破坏视觉流畅性。
+
+*专家原则*: 表格用 =count=，检查用 =info=。
+
+** 4. =tags=
+
+- =tags.list=: 真实标签集合
+- =tags.indicator=: 只显示 =+=
+- =tags.count=: =[2]=
+
+*** 专家使用策略
+
+- *执行视图*: =tags.indicator=
+- *分类视图*: =tags.count=
+- *重构 / 清理*: =tags.list=
+
+*** 为什么 =tags.indicator= 是最佳默认？
+
+#+begin_example
+ID  Tags  Description
+1   +     Fix the bug
+2         Implement feature
+3   +     Review code
+#+end_example
+
+一目了然: 任务 1 和 3 有标签，任务 2 没有。
+
+*不需要知道具体是什么标签* (那是 filter 的工作)，只需要知道 "有标签" (提示你可能需要关注)。
+
+*** 实战: Tags 与 Filter 的配合
+
+#+begin_src sh
+# 执行视图: 只显示 indicator
+task config report.next.columns 'id,tags.indicator,description.truncated_count'
+
+# 审查时，用 filter 选择特定标签
+task +bug list
+task +urgent +work list
+
+# 清理标签时，显示完整列表
+task tags.count.over:5 rc.report.list.columns='id,tags.list,description'
+#+end_src
+
+*** Tags.count 的高级用法
+
+=tags.count= 可以用于 *filter*:
+
+#+begin_src sh
+# 查找标签过多的任务 (可能分类混乱)
+task tags.count.over:5 list
+
+# 查找没有标签的任务 (可能需要分类)
+task tags.count:0 list
+#+end_src
+
+这在 *任务清理 / 重构* 时非常有用。
+
+** 5. =project=
+
+Project 在 Taskwarrior 中是 *纯字符串*，层级只是格式化结果。
+
+- =project.full=: =home.garden=
+- =project.parent=: =home=
+- =project.indented=:
+
+  #+begin_example
+    home.garden
+  #+end_example
+
+*** 专家原则
+
+#+begin_quote
+project 的 "层级感" 只应该体现在 *report 的视觉层*，
+而不是被当成结构性约束。
+#+end_quote
+
+*** 为什么 Taskwarrior 的 Project 不是树结构？
+
+很多人以为 =project:home.garden= 是一个 *树节点*，但其实它只是一个 *包含点号的字符串*。
+
+证据:
+
+#+begin_src sh
+# 过滤 "home" 项目
+task project:home list
+# 这不会匹配 home.garden！
+
+# 必须用通配符或层级过滤
+task project.startswith:home list
+# 或
+task project:home project:home.garden list
+#+end_src
+
+*** Project.indented 的视觉效果
+
+=project.indented= 会根据点号数量自动缩进:
+
+#+begin_example
+ID  Project               Description
+1   work                  Prepare report
+2     work.meeting        Schedule 1-on-1
+3       work.meeting.prep Draft agenda
+4   home                  Clean kitchen
+5     home.garden         Plant flowers
+#+end_example
+
+但这只是 *视觉效果*，不影响数据结构。
+
+*** 实战: Project 的正确使用方式
+
+#+begin_src sh
+# 执行视图: 使用 full 格式 (最清晰)
+task config report.next.columns 'id,project,description.truncated_count'
+
+# 项目审查: 使用 indented 格式 (视觉层级)
+task config report.projects_detail.columns 'project.indented,count'
+task config report.projects_detail.sort 'project+'
+
+# 重构: 查看父项目
+task rc.report.list.columns='id,project.parent,project,description' list
+#+end_src
+
+*** Project 与 Context 的配合
+
+#+begin_src sh
+# 定义工作 context
+task context define work project.startswith:work
+
+# 激活后，所有命令自动过滤
+task context work
+task list  # 只显示 work.* 项目
+#+end_src
+
+这避免了在每个命令中重复输入 =project:work=。
+
+* 三、时间类列 (date family)——这是 report 的灵魂
+
+所有 date 列都共享 *完全一致的 format 体系*:
+
+#+begin_example
+formatted / julian / epoch / iso
+age / relative / remaining / countdown
+#+end_example
+
+*** 统一解释 (非常关键)
+
+| Format      | 语义                             | 示例               |
+|-----------+----------------------------------+-------------------|
+| =formatted= | 按配置格式化 (默认 YYYY-MM-DD)   | =2025-12-31=      |
+| =julian=    | 儒略日 (天文学用)                | =2460676.5=       |
+| =epoch=     | Unix 时间戳 (秒)                 | =1735689600=      |
+| =iso=       | ISO 8601 格式                    | =20251231T000000Z= |
+| =age=       | 距离现在的绝对时长 (过去为正)    | =5d=              |
+| =relative=  | 带符号 (未来/过去)               | =-3d= (3 天后)    |
+| =remaining= | 到期前剩余时间 (负数隐藏)        | =2d= (还剩 2 天)  |
+| =countdown= | 强制显示倒计时 (hh:mm:ss)        | =PT48H30M=        |
+
+*** 为什么有这么多格式？
+
+不同场景需要不同的 *认知模式*:
+
+*执行时* (我现在该做什么？)
+→ 用 =relative= / =countdown= (关注 "距离现在多远")
+
+*审计时* (这个任务是什么时候创建的？)
+→ 用 =formatted= / =iso= (关注 "绝对时间")
+
+*导出时* (给脚本处理)
+→ 用 =epoch= (关注 "机器可读")
+
+** 6. =due=
+
+*这是 urgency 的核心输入之一*。
+
+*** 专家选择逻辑
+
+- *认知排序*: =due.relative=
+- *即时执行*: =due.countdown=
+- *审计 / 导出*: =due.iso=
+
+*** Due.relative 的认知优势
+
+#+begin_example
+ID  Due      Description
+1   -2d      Submit report (已过期 2 天)
+2   today    Call client
+3   +3d      Prepare presentation (3 天后)
+4   +2w      Quarterly review (2 周后)
+#+end_example
+
+一眼就能看出:
+- 任务 1 *已经晚了*
+- 任务 2 *今天必须做*
+- 任务 3/4 *还有时间*
+
+而如果用 =due.formatted=:
+
+#+begin_example
+ID  Due         Description
+1   2025-12-20  Submit report
+2   2025-12-22  Call client
+3   2025-12-25  Prepare presentation
+4   2026-01-05  Quarterly review
+#+end_example
+
+需要 *心算* 才能知道 "距离现在多远"，认知负担高。
+
+*** Due.countdown 的实时压迫感
+
+=countdown= 格式使用 ISO 8601 duration:
+
+#+begin_example
+PT2H30M  (2 小时 30 分钟)
+PT15M    (15 分钟)
+-PT1H    (过期 1 小时)
+#+end_example
+
+适合 *短期任务的实时追踪*:
+
+#+begin_src sh
+# 今天到期的任务，显示倒计时
+task +DUETODAY rc.report.today.columns='id,due.countdown,description'
+#+end_src
+
+但 *不适合长期任务* (=PT720H= 没人看得懂)。
+
+*** Due 与 Urgency 的关系
+
+Due date 对 urgency 的贡献是 *动态的*:
+
+#+begin_example
+urgency_due = 12.0 × (1 - days_until_due / 14)
+#+end_example
+
+- 今天到期: 12.0
+- 7 天后: 6.0
+- 14 天后: 0
+- 已过期: > 12.0 (持续增长)
+
+这意味着 =due= 在 *14 天内* 对排序有显著影响。
+
+*** 实战配置
+
+#+begin_src sh
+# 执行视图: 用 relative 快速判断
+task config report.next.columns 'id,due.relative,description.truncated_count'
+
+# 今日任务: 用 countdown 增加紧迫感
+task config report.today.columns 'id,due.countdown,description'
+task config report.today.filter '+DUETODAY'
+
+# 审计视图: 用 formatted 看绝对日期
+task config report.audit.columns 'id,entry.formatted,due.formatted,description'
+#+end_src
+
+** 7. =scheduled= vs =wait=
+
+- =scheduled=: *你计划开始做的时间*
+- =wait=: *在此之前，任务不应出现*
+
+*** 专家经验
+
+- =scheduled= 适合放在 report
+- =wait= 适合用于 filter，而不是 display
+
+*** 为什么？
+
+*Scheduled 是 "计划"*:
+
+#+begin_src sh
+task add "Review code" scheduled:friday
+#+end_src
+
+这表示 "我计划周五开始做"，但你 *现在就能看到这个任务*。
+
+在 =next= report 中显示:
+
+#+begin_example
+ID  Sch     Description
+12  -2d     Review code (计划 2 天前开始，但还没做)
+#+end_example
+
+这是一个 *提醒*: "你本来计划这时候开始的"。
+
+*Wait 是 "隐藏"*:
+
+#+begin_src sh
+task add "Buy birthday gift" due:2025-12-30 wait:2025-12-20
+#+end_src
+
+这表示 "2025-12-20 之前，别让我看到这个任务"。
+
+在 2025-12-19 运行 =task list=:
+
+#+begin_example
+(任务不会显示)
+#+end_example
+
+在 2025-12-20 运行 =task list=:
+
+#+begin_example
+ID  Due         Description
+15  2025-12-30  Buy birthday gift
+#+end_example
+
+*Wait 是一种 "定时炸弹"*，到时间才爆出来。
+
+*** Scheduled 对 Urgency 的贡献
+
+=scheduled= 有固定系数 5.0:
+
+#+begin_example
+urgency += 5.0  (如果 scheduled <= today)
+#+end_example
+
+这让 "该开始的任务" 自动排到前面。
+
+*** 实战配置
+
+#+begin_src sh
+# 显示 scheduled (提醒你该开始了)
+task config report.next.columns 'id,scheduled.relative,due.relative,description'
+
+# 不显示 wait (因为它在 filter 层就被排除了)
+task config report.list.filter 'status:pending -WAITING'
+
+# 查看等待中的任务 (特殊需求)
+task +WAITING list
+#+end_src
+
+*** Scheduled.countdown 的妙用
+
+对于短期计划任务，用 =countdown=:
+
+#+begin_src sh
+# 今天计划开始的任务
+task scheduled:today rc.report.list.columns='id,scheduled.countdown,description'
+#+end_src
+
+输出:
+
+#+begin_example
+ID  Sch       Description
+3   PT2H15M   Prepare demo (2 小时 15 分钟后开始)
+5   -PT30M    Review PR (计划 30 分钟前开始，晚了)
+#+end_example
+
+** 8. =start=
+
+- =start.active=: 显示 =*=
+- =start.age=: 已执行时长
+
+*** 专家用法
+
+- =start.active= 是 *执行态指示器*
+- 不要在 =next= 里用 =start.age=，它会污染注意力
+
+*** Start 的语义
+
+当你运行:
+
+#+begin_src sh
+task 12 start
+#+end_src
+
+Taskwarrior 会:
+
+1. 记录 =start= 时间戳
+2. 给任务添加 =+ACTIVE= 虚拟标签
+3. Urgency 增加 4.0
+
+这是一个 *状态标记*: "这个任务正在进行中"。
+
+*** Start.active 的视觉提示
+
+#+begin_example
+ID  A  Description
+1   *  Fix memory leak (正在做)
+2      Implement feature
+3      Review code
+#+end_example
+
+星号 =*= 是一个强烈的视觉锚点，让你立刻知道 "我现在在做什么"。
+
+*** 为什么不显示 Start.age？
+
+考虑这个场景:
+
+#+begin_example
+ID  Active  Description
+1   3d      Fix memory leak (已执行 3 天)
+2           Implement feature
+#+end_example
+
+这会让你感到 *焦虑*: "天哪，我已经做了 3 天了？"
+
+但其实 3 天可能包括:
+- 1 天调研
+- 1 天实现
+- 1 天测试
+
+中间还穿插了其他任务。=start.age= 是 *累计时间*，不是 *实际工作时间*。
+
+*专家建议*: 用 Timewarrior 追踪实际工作时间，用 Taskwarrior 的 =start= 只做 *状态标记*。
+
+*** 实战配置
+
+#+begin_src sh
+# 执行视图: 只显示 indicator
+task config report.next.columns 'id,start.active,priority,description.truncated_count'
+
+# 审查时，看 age (了解任务卡了多久)
+task +ACTIVE rc.report.list.columns='id,start.age,description' list
+#+end_src
+
+** 9. =entry= / =modified= / =end= / =until=
+
+| 列         | 专家是否常显 | 原因                   |
+|----------+------------+------------------------|
+| =entry=    | ❌          | 只用于审计             |
+| =modified= | ❌          | 只用于审计             |
+| =end=      | ❌          | 只用于审计             |
+| =until=    | ⚠️          | 仅对 recurring 有意义 |
+
+*** Entry: 创建时间
+
+=entry= 记录任务的创建时间戳。
+
+*唯一有用的场景*: 查看 "老任务"。
+
+#+begin_src sh
+# 查找创建超过 30 天但还没完成的任务
+task entry.before:now-30d status:pending list
+#+end_src
+
+在 report 中显示 =entry.age=:
+
+#+begin_example
+ID  Age   Description
+1   45d   Fix the ancient bug (创建 45 天了，该处理了)
+2   3d    Implement new feature
+#+end_example
+
+*** Modified: 最后修改时间
+
+=modified= 记录任务的最后修改时间 (任何字段变化都会更新)。
+
+*用途*: 查找 "僵尸任务" (长时间没有更新)。
+
+#+begin_src sh
+# 查找 60 天没更新的任务
+task modified.before:now-60d status:pending list
+#+end_src
+
+但 *不要在日常 report 中显示*，信息过载。
+
+*** End: 完成时间
+
+=end= 记录任务的完成时间戳 (只有 =status:completed= 任务有此字段)。
+
+*用途*: 统计和回顾。
+
+#+begin_src sh
+# 查看本周完成的任务
+task end.after:sow completed
+#+end_src
+
+*** Until: 任务过期时间
+
+=until= 是循环任务的 *终止条件*:
+
+#+begin_src sh
+task add "Pay rent" due:28th recur:monthly until:now+1y
+#+end_src
+
+这表示 "这个循环任务在 1 年后停止生成新实例"。
+
+*在 report 中显示 =until.remaining=*:
+
+#+begin_example
+ID  Until  Description
+5   8mo    Pay rent (还会生成 8 个月)
+#+end_example
+
+但只对 =+PARENT= 任务有意义 (子任务没有 =until=)。
+
+*** 实战: 时间审计报告
+
+#+begin_src sh
+# 定义审计报告
+task config report.audit.description 'Task timeline audit'
+task config report.audit.columns 'id,entry.age,modified.age,description'
+task config report.audit.sort 'entry+'
+task config report.audit.filter 'status:pending'
+
+# 查找 "老而未动" 的任务
+task entry.before:now-90d modified.before:now-30d list
+#+end_src
+
+* 四、标识与内部状态列 (ID / UUID / mask)
+
+** 10. =id=
+
+- *Report-local* (报告内的临时编号)
+- *临时* (每次运行可能变化)
+- *只用于交互* (命令行输入)
+
+#+begin_quote
+排序、逻辑、建模中永远不要依赖 =id=
+#+end_quote
+
+*** ID 的本质
+
+=id= 是 Taskwarrior 在 *渲染报告时* 动态分配的序号。
+
+证据:
+
+#+begin_src sh
+# 第一次运行
+task list
+
+ID  Description
+1   Task A
+2   Task B
+3   Task C
+
+# 完成任务 2
+task 2 done
+
+# 第二次运行
+task list
+
+ID  Description
+1   Task A
+2   Task C   (原来的任务 3)
+#+end_src
+
+*ID 2 现在指向不同的任务！*
+
+*** 为什么不能依赖 ID？
+
+*场景 1: 脚本中使用 ID*
+
+#+begin_src bash
+# ❌ 错误: ID 可能变化
+task_id=5
+task $task_id modify priority:H
+
+# ✅ 正确: 使用 UUID
+task_uuid=$(task _get 5.uuid)
+task $task_uuid modify priority:H
+#+end_src
+
+*场景 2: 跨设备同步*
+
+设备 A:
+
+#+begin_example
+ID  Description
+1   Task X
+2   Task Y
+#+end_example
+
+设备 B (同步后):
+
+#+begin_example
+ID  Description
+1   Task Y
+2   Task X
+#+end_example
+
+*ID 顺序可能不同！*
+
+*** ID 的正确用法
+
+ID 只用于 *交互式命令行*:
+
+#+begin_src sh
+task 12 done
+task 5 modify priority:H
+task 1-10 delete
+#+end_src
+
+这些都是 "一次性操作"，不依赖 ID 的持久性。
+
+** 11. =uuid=
+
+- 真正的任务身份
+- 只在 =info= / =export= / =debug= 中使用
+
+*** UUID 的本质
+
+UUID 是任务的 *全局唯一标识符* (Universally Unique Identifier)，格式如:
+
+#+begin_example
+f30cb9c3-3fc0-483f-bfb2-3bf134f00694
+#+end_example
+
+*特性*:
+
+1. *永久不变*: 从创建到删除，UUID 不会改变
+2. *全局唯一*: 不同设备上的任务不会重复
+3. *可同步*: Taskserver 使用 UUID 识别任务
+
+*** UUID 的两种格式
+
+- =uuid.long=: 完整 36 字符
+- =uuid.short=: 前 8 字符 (=f30cb9c3=)
+
+Short UUID 通常足够唯一 (概率 $< 10^{-8}$)。
+
+*** UUID 在脚本中的使用
+
+#+begin_src bash
+#!/bin/bash
+# 批量修改某个项目的优先级
+
+# 获取所有任务的 UUID
+uuids=$(task project:kernel status:pending _uuids)
+
+for uuid in $uuids; do
+    task $uuid modify priority:H
+done
+#+end_src
+
+这样即使任务列表在循环中变化，UUID 也不会失效。
+
+*** 为什么不在 Report 中显示 UUID？
+
+#+begin_example
+ID  UUID                                  Description
+1   f30cb9c3-3fc0-483f-bfb2-3bf134f00694  Fix bug
+2   a1b2c3d4-e5f6-7890-abcd-ef1234567890  Implement feature
+#+end_example
+
+UUID 列占据 *巨大的宽度*，但对人类毫无可读性。
+
+*专家原则*: UUID 是机器语言，不是人类语言。
+
+** 12. =mask= / =imask= / =last=
+
+这些是 *Taskwarrior 内部渲染 / 状态掩码*。
+
+*** Mask 的本质
+
+=mask= 用于 *循环任务* 的实例化控制:
+
+#+begin_example
+mask=++++---
+
++ → 该实例已生成
+- → 该实例未生成或已删除
+#+end_example
+
+例如，一个每周循环任务，前 4 周的实例已完成，后 3 周未生成:
+
+#+begin_example
+++++---
+^^^^
+已完成的实例
+#+end_example
+
+*** Imask (Instance Mask)
+
+=imask= 是循环任务子实例在父任务 mask 中的 *索引*。
+
+*例子*:
+
+父任务 (模板):
+
+#+begin_example
+mask: ++++---
+#+end_example
+
+子任务 (第 5 周的实例):
+
+#+begin_example
+imask: 4  (从 0 开始计数)
+#+end_example
+
+*** Last
+
+=last= 记录循环任务的 *最后一个实例的生成时间*。
+
+*** 专家建议
+
+#+begin_quote
+除非你在研究 Taskwarrior 本身，否则不应出现在任何 report 中。
+#+end_quote
+
+*** 唯一的使用场景
+
+调试循环任务生成逻辑:
+
+#+begin_src sh
+# 查看循环任务的 mask
+task +PARENT info
+
+# 输出
+Mask       ++++---
+Imask      -
+Last       2025-12-15
+#+end_src
+
+* 五、行为与状态类 (priority / status / recur / rtype)
+
+** 13. =priority=
+
+- =default=: H/M/L
+- =indicator=: 符号化显示
+
+*** 专家原则
+
+#+begin_quote
+priority 是 *urgency 的输入*，
+不是排序的替代品。
+#+end_quote
+
+*** Priority 的演化
+
+*历史*: Priority 曾经是 *核心字段* (core attribute)。
+
+*现在*: 从 Taskwarrior 2.4.3 开始，priority 是 *UDA* (User Defined Attribute)。
+
+这意味着你可以 *完全自定义*:
+
+#+begin_src sh
+# 修改 priority 的可选值
+task config uda.priority.values 'Critical,Important,Normal,Low,'
+
+# 修改 urgency 系数
+task config urgency.uda.priority.Critical.coefficient 10.0
+task config urgency.uda.priority.Important.coefficient 5.0
+task config urgency.uda.priority.Normal.coefficient 2.0
+task config urgency.uda.priority.Low.coefficient 0.5
+#+end_src
+
+*** Priority.indicator 的视觉效果
+
+默认配置下:
+
+#+begin_example
+H → H
+M → M
+L → L
+  → (空)
+#+end_example
+
+但你可以自定义:
+
+#+begin_src sh
+# 使用符号
+task config uda.priority.indicator '!!!'  # 高优先级
+task config uda.priority.indicator '!'    # 中优先级
+#+end_src
+
+输出:
+
+#+begin_example
+ID  P    Description
+1   !!!  Critical task
+2   !    Important task
+3        Normal task
+#+end_example
+
+*** Priority 的认知陷阱
+
+很多人误以为:
+
+#+begin_example
+Priority = 重要性 = 应该先做
+#+end_example
+
+*但其实*:
+
+- *Priority* 是 urgency 的 *一个因子* (系数 6.0)
+- *Urgency* 才是 "应该先做" 的综合评分
+
+*例子*:
+
+任务 A: =priority:H=, =due:next_month=
+→ urgency = 6.0 + 0 = 6.0
+
+任务 B: =priority:M=, =due:today=
+→ urgency = 3.9 + 12.0 = 15.9
+
+*任务 B 会排在任务 A 前面*，因为 urgency 更高。
+
+*** 实战: Priority 的正确使用
+
+#+begin_src sh
+# ❌ 错误: 按 priority 排序
+task config report.list.sort 'priority-'
+
+# ✅ 正确: 按 urgency 排序 (priority 是其中一部分)
+task config report.list.sort 'urgency-'
+
+# ✅ 正确: 用 priority 过滤，但用 urgency 排序
+task priority:H list
+#+end_src
+
+** 14. =status=
+
+- =long=: Pending / Completed / Deleted / Waiting
+- =short=: P / C / D / W
+
+*几乎不需要显示*，因为 =report.filter= 已经限定了状态。
+
+*** Status 的状态机
+
+Taskwarrior 的任务有 5 种状态:
+
+#+begin_example
+pending → completed (done)
+        → deleted (delete)
+        → waiting (modify wait:...)
+        → recurring (add recur:...)
+#+end_example
+
+*** 为什么不在 Report 中显示 Status？
+
+考虑 =list= report:
+
+#+begin_src sh
+task show report.list.filter
+# 输出: status:pending
+#+end_src
+
+这意味着 =list= *只显示 pending 任务*，所有任务的 =status= 都是 "Pending"。
+
+显示 =status= 列是 *信息冗余*:
+
+#+begin_example
+ID  Status   Description
+1   Pending  Task A
+2   Pending  Task B
+3   Pending  Task C
+#+end_example
+
+每一行都是 "Pending"，浪费列宽。
+
+*** 唯一有用的场景
+
+显示 *混合状态* 的报告:
+
+#+begin_src sh
+# 显示所有任务 (不限状态)
+task config report.all.filter ''
+task config report.all.columns 'id,status.short,description'
+task all
+#+end_example
+
+输出:
+
+#+begin_example
+ID  S  Description
+1   P  Fix bug
+2   C  Implement feature (已完成)
+3   D  Old task (已删除)
+#+end_example
+
+** 15. =recur= / =rtype=
+
+- =recur.indicator=: =R=
+- =rtype.indicator=: =chained= / =periodic=
+
+*** 专家用法
+
+- 执行视图: 只放 =recur.indicator=
+- 模型检查: 查看 =rtype=
+
+*** Recur 的两种模式
+
+*Periodic (周期型)*:
+
+#+begin_src sh
+task add "Team meeting" due:friday recur:weekly
+#+end_src
+
+特点:
+- *固定周期* (每周)
+- *独立实例* (完成一个不影响下一个)
+
+*Chained (链式)*:
+
+#+begin_src sh
+task add "Check server" due:today recur:daily
+task <uuid> modify rtype:chained
+#+end_src
+
+特点:
+- *依赖完成* (完成当前实例才生成下一个)
+- *适合依赖前序任务的场景*
+
+*** Recur.indicator 的视觉提示
+
+#+begin_example
+ID  R  Description
+1      Fix bug
+2   R  Team meeting (每周)
+3      Implement feature
+#+end_example
+
+=R= 标记提醒你: "这是循环任务的一个实例"。
+
+*** 实战配置
+
+#+begin_src sh
+# 执行视图: 只显示 indicator
+task config report.next.columns 'id,recur.indicator,description.truncated_count'
+
+# 循环任务管理
+task config report.recurring.columns 'id,recur,rtype,until.remaining,description'
+task recurring
+#+end_example
+
+* 六、派生与评分 (urgency)
+
+** 16. =urgency=
+
+这是 *report.next 的排序核心，但不是 display 核心*。
+
+*** Formats
+
+- =real=: =4.6= (浮点数)
+- =integer=: =4= (整数)
+
+*** 专家建议
+
+- =next=: 显示
+- =list=: 可选
+- 排序: 永远优先用 urgency
+
+*** Urgency 的显示策略
+
+*问题*: Urgency 是一个 *抽象数字* (如 15.7)，对人类认知不友好。
+
+*解决*:
+
+1. *只在 next 中显示* (因为 next 就是按 urgency 排序的)
+2. *用颜色编码* (高 urgency → 红色，低 urgency → 绿色)
+3. *不依赖数字本身，而是依赖排序*
+
+*** Urgency 的颜色配置
+
+#+begin_src sh
+# 高 urgency (>15) 显示为红色
+task config color.urgency.high 'bold red'
+
+# 中等 urgency (5-15) 显示为黄色
+task config color.urgency.medium 'yellow'
+
+# 低 urgency (<5) 显示为绿色
+task config color.urgency.low 'green'
+#+end_src
+
+输出 (带颜色):
+
+#+begin_example
+ID  Urg  Description
+1   18.3  Fix critical bug (红色)
+2   12.1  Implement feature (黄色)
+3   3.2   Clean code (绿色)
+#+end_example
+
+*** 为什么不用 Urgency 替代 Priority？
+
+很多人想:
+
+#+begin_example
+既然 urgency 是综合评分，为什么还需要 priority？
+#+end_example
+
+*答案*:
+
+- *Priority 是输入* (你的主观判断)
+- *Urgency 是输出* (算法的客观计算)
+
+你不能直接修改 urgency (它是派生字段)，但你可以修改 priority。
+
+*** Urgency 的调试
+
+#+begin_src sh
+# 查看 urgency 的计算细节
+task 12 info
+
+# 输出
+Urgency    18.3
+    priority   6    6.0 *  1.0
+    due       12   12.0 *  1.0
+    tags       1    1.0 *  1.0
+    age      0.3    2.0 *  0.15
+#+end_src
+
+这让你理解 "为什么这个任务的 urgency 是 18.3"。
+
+*** 实战配置
+
+#+begin_src sh
+# Next report: 显示 urgency (因为是排序依据)
+task config report.next.columns 'id,urgency,description.truncated_count'
+task config report.next.sort 'urgency-'
+
+# List report: 不显示 urgency (因为已经按它排序了)
+task config report.list.columns 'id,project,tags.indicator,description.truncated_count'
+task config report.list.sort 'urgency-'
+#+end_src
+
+* 七、UDA (自定义属性)
+
+=<uda>= 的存在意味着:
+
+#+begin_quote
+Taskwarrior 的列系统不是 "固定 schema"，
+而是 *可扩展的数据投影系统*。
+#+end_quote
+
+*** 专家模式
+
+- UDA 用于 *domain-specific metadata*
+- Report 中只显示 indicator / count / short form
+
+*** UDA 的格式继承
+
+当你定义一个 UDA:
+
+#+begin_src sh
+task config uda.estimate.type duration
+task config uda.estimate.label Estimate
+#+end_src
+
+它会自动继承所有 =duration= 类型的格式:
+
+- =estimate.formatted=
+- =estimate.iso=
+- =estimate.indicator=
+- ...
+
+*** 实战: 定义 Estimate UDA
+
+#+begin_src sh
+# 定义 estimate (任务估时)
+task config uda.estimate.type duration
+task config uda.estimate.label Est
+task config uda.estimate.values 'PT15M,PT30M,PT1H,PT2H,PT4H,PT1D,'
+
+# 添加 urgency 系数 (估时越长，urgency 越低)
+task config urgency.uda.estimate.PT15M.coefficient 3.0
+task config urgency.uda.estimate.PT30M.coefficient 2.0
+task config urgency.uda.estimate.PT1H.coefficient 1.0
+task config urgency.uda.estimate.PT2H.coefficient 0.5
+
+# 在 report 中显示
+task config report.next.columns 'id,estimate,description.truncated_count'
+
+# 使用
+task add "Quick fix" estimate:PT15M
+task add "Major refactor" estimate:PT1D
+#+end_src
+
+*** UDA.indicator 的模式
+
+所有 UDA 都有 =.indicator= 格式:
+
+#+begin_src sh
+task config uda.size.indicator 'S'  # 自定义显示
+#+end_src
+
+默认显示 =U= (表示 UDA 有值)。
+
+* 总结: 专家级 Report 设计三原则
+
+** 1. 列 ≠ 字段，而是 "字段 × 格式" 的投影
+
+不要说 "显示 description"，而是说:
+
+- "用 =description.truncated_count= 控制宽度"
+- "用 =description.combined= 查看完整语义"
+
+** 2. Report 是认知工具，不是数据导出
+
+Report 的目标是 *降低认知负担*，而不是 "显示所有数据"。
+
+*执行视图* (next):
+- 最小列数 (5-7 列)
+- 只显示 indicator (=+=, =*=, =D=)
+- 用 =truncated_count= 控制宽度
+
+*审查视图* (review):
+- 中等列数 (8-10 列)
+- 显示 count (=[2]=)
+- 用 =relative= / =age= 显示时间
+
+*审计视图* (audit):
+- 完整信息 (12+ 列)
+- 显示 =formatted= / =iso= 时间
+- 用 =combined= 显示完整描述
+
+** 3. 执行视图的目标是 "最小注意力消耗"
+
+一个好的 =next= report 应该:
+
+1. *一眼看出* 最该做的任务 (靠 urgency 排序)
+2. *快速识别* 任务状态 (靠 indicator)
+3. *避免干扰* (不显示无关信息)
+
+*** 反面教材
+
+#+begin_example
+ID  UUID      Entry       Modified    Project       Tags                Priority  Due         Description
+1   f30cb... 2025-01-01  2025-01-05  work.meeting  work,urgent,review  H         2025-01-10  Prepare the quarterly report and slides for the board meeting
+#+end_example
+
+问题:
+- UUID 没用
+- Entry/Modified 是审计信息
+- Tags 应该用 indicator
+- Description 太长
+
+*** 正确示例
+
+#+begin_example
+ID  A  P  Sch     Due     Description                    Urg
+1   *  H  -2d     today   Prepare quarterly report... [2] 18.3
+2      M          +3d     Review PR #123                  12.1
+3      L  +1w     +2w     Clean up old code               4.2
+#+end_example
+
+优势:
+- 一眼看出任务 1 *正在做* (=*=) 且 *今天到期*
+- Description 截断且显示 annotation 数量
+- Urgency 提供参考，但主要靠颜色编码
+
+* 附录: 三套参考配置
+
+** 执行视图 (Execute)
+
+#+begin_src sh
+task config report.exe.description 'Execution view'
+task config report.exe.columns 'id,start.active,priority,scheduled.relative,due.relative,tags.indicator,description.truncated_count,urgency'
+task config report.exe.labels 'ID,A,P,Sch,Due,T,Description,Urg'
+task config report.exe.sort 'urgency-'
+task config report.exe.filter 'status:pending -WAITING limit:page'
+#+end_src
+
+** 审查视图 (Review)
+
+#+begin_src sh
+task config report.rev.description 'Review view'
+task config report.rev.columns 'id,entry.age,modified.age,project,tags.count,depends.count,description.count,urgency'
+task config report.rev.labels 'ID,Age,Mod,Project,Tags,Deps,Description,Urg'
+task config report.rev.sort 'modified+,urgency-'
+task config report.rev.filter 'status:pending'
+#+end_src
+
+** 审计视图 (Audit)
+
+#+begin_src sh
+task config report.aud.description 'Audit view'
+task config report.aud.columns 'id,uuid.short,entry.formatted,modified.formatted,due.formatted,project.full,tags.list,description.combined'
+task config report.aud.labels 'ID,UUID,Created,Modified,Due,Project,Tags,Description'
+task config report.aud.sort 'entry+'
+task config report.aud.filter 'status:pending or status:completed'
+#+end_src
+
+* 最后的建议
+
+*不要过度设计*:
+
+1. 从 =next= 开始，只调整让你 *真正困扰* 的部分
+2. 每次只改 *一列*​，观察效果
+3. 如果一周后还觉得有用，保留；否则回滚
+
+*记住*:
+
+#+begin_quote
+Report 是工具，不是艺术品。
+目标是让你 *更快完成工作*，而不是 *更好看的表格*。
+#+end_quote
+
+如果你发现自己花 1 小时调整 report 配置，那可能是时候停下来，实际去 *完成一个任务* 了。
