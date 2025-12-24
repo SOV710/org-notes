@@ -1,0 +1,812 @@
+#+title: WirePlumber Configuration Deep Dive: Locations, Priorities, and the Documentation Gap
+#+author: SOV710
+#+date: 2025-12-23
+#+startup: showall
+#+options: toc:2 num:nil
+
+* WirePlumber 是什么
+
+WirePlumber 是 PipeWire 的 *会话管理器* (session manager)，负责管理 PipeWire 的音频/视频流路由、设备监控、权限管理等核心功能。
+
+** 为什么需要会话管理器
+
+PipeWire 本身只是一个 *流交换框架* (stream exchange framework)。当 PipeWire 启动时，它只是一个空进程，加载一些模块后提供对象工厂和 IPC 协议，但 *不会主动做任何事情*。
+
+会话管理器的职责包括:
+
+- *设备监控*: 发现并启用 ALSA/V4L2/蓝牙设备
+- *节点链接*: 决定哪个应用的音频流应该连到哪个输出设备
+- *权限管理*: 决定哪些客户端可以访问哪些对象
+- *设备配置*: 管理音频配置文件 (profiles) 和路由 (routes)
+- *元数据管理*: 存储默认设备、音量等状态
+
+简单来说，PipeWire 提供管道，WirePlumber 决定水往哪流。
+
+** WirePlumber vs. pipewire-media-session
+
+PipeWire 上游提供了一个极简的示例会话管理器 =pipewire-media-session=，主要用于测试和演示，功能有限且逻辑硬编码。
+
+WirePlumber 是 Collabora 为 Automotive Grade Linux (AGL) 开发的现代化替代方案，特点:
+
+- *模块化设计*: 基于 GObject，支持 C 模块和 Lua 脚本
+- *高度可配置*: 大部分逻辑用 Lua 实现，用户可自定义
+- *运行时修改*: 支持通过 =pw-metadata= 动态修改设置
+- *跨平台*: 适用于桌面、嵌入式、车载系统
+
+从 Fedora 35 (2021 年) 开始，WirePlumber 成为 *官方推荐* 的会话管理器。=pipewire-media-session= 已标记为废弃 (deprecated)。
+
+** 从 Lua 到 JSON: 配置格式演变
+
+*重要历史转折点*: WirePlumber 在 0.5 版本 (2023 年) 进行了 *重大重构*，配置格式从 Lua 迁移到 SPA-JSON (PipeWire 使用的 JSON 变体)。
+
+| 版本   | 配置格式          | 特点                       |
+|--------+------------------+----------------------------|
+| 0.4.x  | Lua (=.lua=)       | 配置即代码，灵活但难以覆盖      |
+| *0.5.x+* | *SPA-JSON (=.conf=)* | *静态配置，支持 fragments 叠加* |
+
+Lua 作为配置语言的问题:
+
+- 配置不能运行时修改 (静态)
+- 用户覆盖不优雅 (需要复制整个文件)
+- 无法用 schema 验证配置
+
+新 JSON 系统的优势:
+
+- 支持 *配置片段* (fragments) 分层覆盖
+- 运行时可通过 =pw-metadata= 修改
+- 客户端可透明访问当前运行时配置
+- 未来可加入 schema 验证
+
+*注意*: Lua 仍是 WirePlumber 的 *脚本语言*​，只是不再用于配置。复杂逻辑 (如链接策略) 依然用 Lua 实现。
+
+* 配置文件位置与优先级
+
+WirePlumber 的配置文件搜索遵循 [[https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html][XDG Base Directory Specification]]，允许用户配置覆盖系统默认配置。
+
+** 主配置文件优先级
+
+WirePlumber 在启动时按以下顺序搜索 =wireplumber.conf=:
+
+1. =~/.config/wireplumber= (=$XDG_CONFIG_HOME/wireplumber=)
+2. =/etc/xdg/wireplumber= (=$XDG_CONFIG_DIRS/wireplumber=)
+3. =/etc/wireplumber= (=$sysconfdir/wireplumber=)
+4. =~/.local/share/wireplumber= (=$XDG_DATA_DIRS/wireplumber=)
+5. =/usr/share/wireplumber= (=$datadir/wireplumber=)
+
+*优先级规则*: 位置越靠前，优先级越高。找到第一个 =wireplumber.conf= 后停止搜索。
+
+*** 环境变量覆盖
+
+可以通过 =WIREPLUMBER_CONFIG_DIR= 环境变量 *完全覆盖* 默认搜索路径:
+
+#+begin_src bash
+# 指定单个目录
+WIREPLUMBER_CONFIG_DIR=/custom/path wireplumber
+
+# 指定多个目录 (冒号分隔)
+WIREPLUMBER_CONFIG_DIR=~/my-config:/etc/wireplumber wireplumber
+#+end_src
+
+*重要*: 设置 =WIREPLUMBER_CONFIG_DIR= 后，默认位置会被 *完全忽略*，WirePlumber 只会在指定目录中查找。
+
+*** 典型场景
+
+- *用户自定义*: 将配置放在 =~/.config/wireplumber/wireplumber.conf=
+- *系统管理员*: 将全局配置放在 =/etc/wireplumber/wireplumber.conf=
+- *发行版默认*: 不动 =/usr/share/wireplumber/wireplumber.conf=
+- *开发调试*: 使用 =WIREPLUMBER_CONFIG_DIR=src/config wireplumber=
+
+** 配置片段 (Fragments) 加载顺序
+
+从 WirePlumber 0.5 开始，支持 *配置片段* (configuration fragments)，允许将配置拆分为多个小文件。
+
+WirePlumber 会在所有配置搜索位置中查找 =wireplumber.conf.d/*.conf= 目录:
+
+1. =~/.config/wireplumber/wireplumber.conf.d/*.conf=
+2. =/etc/xdg/wireplumber/wireplumber.conf.d/*.conf=
+3. =/etc/wireplumber/wireplumber.conf.d/*.conf=
+4. =~/.local/share/wireplumber/wireplumber.conf.d/*.conf=
+5. =/usr/share/wireplumber/wireplumber.conf.d/*.conf=
+
+*** 片段合并规则
+
+- *逐目录加载*: 按上述顺序遍历所有目录
+- *按字母排序*: 同一目录内的文件按文件名字母序加载
+- *后者覆盖前者*: 后加载的片段中的同名变量会覆盖先加载的
+
+例如，如果存在:
+
+#+begin_example
+/usr/share/wireplumber/wireplumber.conf.d/10-default.conf
+/usr/share/wireplumber/wireplumber.conf.d/50-alsa.conf
+~/.config/wireplumber/wireplumber.conf.d/99-custom.conf
+#+end_example
+
+加载顺序为:
+
+#+begin_example
+10-default.conf → 50-alsa.conf → 99-custom.conf
+              (优先级递增 →)
+#+end_example
+
+*** 文件命名惯例
+
+为了控制加载顺序，通常使用数字前缀:
+
+- =00-= ~ =09-=: 基础设施和函数
+- =10-= ~ =39-=: 核心功能和监视器
+- =40-= ~ =69-=: 设备和流配置
+- =70-= ~ =89-=: 策略和路由规则
+- =90-= ~ =99-=: 用户自定义
+
+*** 环境变量影响
+
+当设置 =WIREPLUMBER_CONFIG_DIR= 时，*默认位置被忽略*，片段只会在指定目录的 =wireplumber.conf.d/= 子目录中查找。
+
+#+begin_src bash
+WIREPLUMBER_CONFIG_DIR=/custom/path wireplumber
+# 只会查找 /custom/path/wireplumber.conf.d/*.conf
+#+end_src
+
+*** 实际应用示例
+
+*禁用蓝牙自动连接*:
+
+#+begin_src conf
+# ~/.config/wireplumber/wireplumber.conf.d/90-no-auto-bt.conf
+monitor.bluez.properties = {
+  bluez5.autoswitch-profile = false
+}
+#+end_src
+
+*强制 ALSA 使用 Pro Audio 配置*:
+
+#+begin_src conf
+# ~/.config/wireplumber/wireplumber.conf.d/51-alsa-pro-audio.conf
+monitor.alsa.rules = [
+  {
+    matches = [
+      { device.name = "~alsa_card.*" }
+    ]
+    actions = {
+      update-props = {
+        api.alsa.use-acp = false
+        device.profile = "pro-audio"
+        api.acp.auto-profile = false
+      }
+    }
+  }
+]
+#+end_src
+
+* 脚本文件位置与优先级
+
+WirePlumber 的核心逻辑大部分由 Lua 脚本实现 (如设备监视器、链接策略等)。脚本是一种特殊的 "数据" 文件。
+
+** 脚本搜索路径
+
+脚本文件应放在数据目录下的 =scripts= 子目录中:
+
+1. =~/.local/share/wireplumber/scripts=
+2. =/usr/local/share/wireplumber/scripts=
+3. =/usr/share/wireplumber/scripts=
+
+实际搜索顺序为:
+
+- =~/.local/share/wireplumber= (=$XDG_DATA_HOME/wireplumber=)
+- =/usr/local/share/wireplumber= (=$XDG_DATA_DIRS/wireplumber=)
+- =/usr/share/wireplumber= (=$datadir/wireplumber=)
+
+其中 =$XDG_DATA_HOME= 默认为 =~/.local/share=，=$XDG_DATA_DIRS= 默认为 =/usr/local/share:/usr/share=。
+
+** 环境变量覆盖
+
+可以通过 =WIREPLUMBER_DATA_DIR= 环境变量 *完全覆盖* 默认搜索路径:
+
+#+begin_src bash
+# 开发时使用源码树中的脚本
+WIREPLUMBER_DATA_DIR=src wireplumber
+# 实际查找: src/scripts/*.lua
+
+# 指定多个数据目录
+WIREPLUMBER_DATA_DIR=~/my-scripts:/usr/share/wireplumber wireplumber
+#+end_src
+
+*重要*: 设置 =WIREPLUMBER_DATA_DIR= 后，默认位置会被 *完全忽略*。
+
+** 脚本类型
+
+WirePlumber 的系统脚本分为几类:
+
+*** 监视器脚本 (Monitors)
+
+负责发现和管理硬件设备:
+
+- =monitors/alsa.lua=: ALSA 音频设备
+- =monitors/v4l2.lua=: V4L2 摄像头
+- =monitors/bluez.lua=: 蓝牙音频设备 (通过 BlueZ)
+
+*** 策略脚本 (Policy)
+
+负责链接逻辑和路由决策:
+
+- =policy-node.lua=: 核心链接策略 (将流连接到设备)
+- =policy-device-routes.lua=: 设备路由选择
+- =policy-endpoint.lua=: 端点管理
+
+*** 访问控制脚本 (Access)
+
+负责权限管理:
+
+- =access-default.lua=: 默认权限策略
+- =access-flatpak.lua=: Flatpak 沙盒应用权限
+
+** 加载自定义脚本
+
+要加载自定义脚本，需要在配置片段中声明组件:
+
+#+begin_src conf
+# ~/.config/wireplumber/wireplumber.conf.d/91-my-script.conf
+wireplumber.components = [
+  {
+    name = my-custom-script.lua
+    type = script/lua
+    provides = custom.my-feature
+  }
+]
+
+wireplumber.profiles = {
+  main = {
+    custom.my-feature = required
+  }
+}
+#+end_src
+
+然后创建脚本:
+
+#+begin_src lua
+-- ~/.local/share/wireplumber/scripts/my-custom-script.lua
+log = Log.open_topic("my-script")
+
+-- 创建对象管理器，监听所有音频流
+om = ObjectManager {
+  Interest {
+    type = "node",
+    Constraint { "media.class", "equals", "Audio/Sink" }
+  }
+}
+
+-- 当检测到新设备时
+om:connect("object-added", function(om, node)
+  log.info("New sink: " .. node.properties["node.name"])
+end)
+
+om:activate()
+#+end_src
+
+* 模块位置与加载
+
+WirePlumber 的模块是 C 编写的共享库 (=.so= 文件)，提供底层功能。
+
+** 模块搜索路径
+
+模块位于:
+
+- =/usr/lib/wireplumber-<API版本>=
+- =/usr/lib/<arch-triplet>/wireplumber-<API版本>=
+
+例如:
+
+- =/usr/lib/wireplumber-0.5=
+- =/usr/lib/x86_64-linux-gnu/wireplumber-0.5= (Debian/Ubuntu)
+- =/usr/lib64/wireplumber-0.5= (Fedora/RHEL)
+
+其中 =<API版本>= 是主版本号，如 =0.4= 或 =0.5=。
+
+** 环境变量覆盖
+
+可以通过 =WIREPLUMBER_MODULE_DIR= 环境变量 *完全覆盖* 默认路径:
+
+#+begin_src bash
+# 开发时使用本地编译的模块
+WIREPLUMBER_MODULE_DIR=build/modules wireplumber
+
+# 指定多个目录
+WIREPLUMBER_MODULE_DIR=~/my-modules:/usr/lib/wireplumber-0.5 wireplumber
+#+end_src
+
+*重要*: 设置 =WIREPLUMBER_MODULE_DIR= 后，默认位置会被 *完全忽略*。
+
+** 核心模块列表
+
+WirePlumber 附带的核心模块:
+
+| 模块名称                                  | 功能               |
+|-----------------------------------------+-------------------|
+| =libwireplumber-module-lua-scripting=     | Lua 脚本引擎         |
+| =libwireplumber-module-default-nodes=     | 默认节点管理         |
+| =libwireplumber-module-default-profile=   | 默认配置文件管理      |
+| =libwireplumber-module-mixer-api=         | 音量控制 API        |
+| =libwireplumber-module-metadata=          | 元数据存储          |
+| =libwireplumber-module-dbus-connection=   | D-Bus 连接支持      |
+| =libwireplumber-module-reserve-device=    | 设备预留 (ALSA 独占) |
+| =libwireplumber-module-file-monitor-api=  | 文件监控 API        |
+
+** 在配置中加载模块
+
+模块通过配置文件的 =context.modules= 或 =wireplumber.components= 部分加载:
+
+#+begin_src conf
+# 早期加载 (连接 PipeWire 之前)
+context.modules = [
+  { name = libpipewire-module-protocol-native }
+  { name = libpipewire-module-metadata }
+]
+
+# 晚期加载 (连接 PipeWire 之后)
+wireplumber.components = [
+  {
+    name = libwireplumber-module-lua-scripting
+    type = module
+  }
+  {
+    name = libwireplumber-module-mixer-api
+    type = module
+    provides = support.mixer
+  }
+]
+#+end_src
+
+*区别*:
+
+- =context.modules=: PipeWire 协议模块，必须在连接前加载
+- =wireplumber.components=: WirePlumber 功能模块，连接后加载
+
+* 完整目录结构总览
+
+一个典型的 WirePlumber 安装目录结构:
+
+#+begin_example
+/usr/
+├── lib/wireplumber-0.5/              # 模块
+│   ├── libwireplumber-module-lua-scripting.so
+│   ├── libwireplumber-module-mixer-api.so
+│   └── ...
+└── share/
+    └── wireplumber/                  # 数据目录
+        ├── wireplumber.conf          # 主配置
+        ├── wireplumber.conf.d/       # 配置片段
+        │   ├── 00-functions.conf
+        │   ├── 10-wireplumber.conf
+        │   ├── 20-default-access.conf
+        │   ├── 30-alsa-monitor.conf
+        │   ├── 40-device-defaults.conf
+        │   ├── 50-alsa-config.conf
+        │   └── ...
+        └── scripts/                  # Lua 脚本
+            ├── policy-node.lua
+            ├── monitors/
+            │   ├── alsa.lua
+            │   ├── bluez.lua
+            │   └── v4l2.lua
+            └── ...
+
+/etc/wireplumber/                     # 系统级覆盖
+├── wireplumber.conf
+└── wireplumber.conf.d/
+    └── 90-custom.conf
+
+~/.config/wireplumber/                # 用户级覆盖
+└── wireplumber.conf.d/
+    └── 99-my-config.conf
+
+~/.local/share/wireplumber/           # 用户数据
+└── scripts/
+    └── my-script.lua
+#+end_example
+
+* 配置选项参考: 文档缺失的痛
+
+这是 WirePlumber 让人最难绷的一点: *官方文档没有完整的配置选项参考页面*。
+
+** 官方文档的局限
+
+WirePlumber 的官方文档结构:
+
+- [[https://pipewire.pages.freedesktop.org/wireplumber/daemon/configuration/features.html][Well-known features]]: 列出了组件提供的功能标识 (如 =monitor.alsa=, =support.dbus=)
+- [[https://pipewire.pages.freedesktop.org/wireplumber/daemon/configuration/settings.html][Well-known settings]]: 列出了少量核心设置 (如 =default.audio.sink=)
+- 各种 Tutorial: 零散的示例，但不成体系
+
+但是 *没有*:
+
+- 完整的配置选项列表
+- 所有可用的 =monitor.*.properties= 参数
+- 所有可用的 =rules= 匹配条件和动作
+- 每个模块支持的参数
+
+*唯一可信的参考源*: 发行版自带的 =/usr/share/wireplumber/wireplumber.conf= 及其片段文件。
+
+这意味着:
+
+- 想知道 ALSA 监视器有哪些选项？读 =30-alsa-monitor.conf=
+- 想知道蓝牙有什么参数？读 =30-bluez-monitor.conf=
+- 想知道策略脚本的规则语法？读 =policy-node.lua=
+
+** 实用技巧: 从配置文件中学习
+
+*** 查看系统默认配置
+
+#+begin_src bash
+# 查看主配置
+cat /usr/share/wireplumber/wireplumber.conf
+
+# 列出所有片段
+ls -la /usr/share/wireplumber/wireplumber.conf.d/
+
+# 查看特定功能配置
+cat /usr/share/wireplumber/wireplumber.conf.d/30-alsa-monitor.conf
+#+end_src
+
+*** 使用 =wpctl= 检查运行时状态
+
+#+begin_src bash
+# 列出所有对象 (设备、节点、端口)
+wpctl status
+
+# 检查特定对象的属性
+wpctl inspect <ID>
+
+# 查看当前设置
+pw-metadata -n sm-settings
+#+end_src
+
+示例输出:
+
+#+begin_example
+$ wpctl inspect 48
+id 48, type PipeWire:Interface:Node
+  node.name = "alsa_output.pci-0000_00_1f.3.analog-stereo"
+  node.nick = "ALC295 Analog"
+  media.class = "Audio/Sink"
+  device.id = "42"
+  device.api = "alsa"
+  audio.position = [ FL FR ]
+  audio.channels = 2
+  ...
+#+end_example
+
+这些属性名 (如 =device.name=, =node.nick=) 可以用在 =matches= 规则中。
+
+*** 查看日志诊断问题
+
+#+begin_src bash
+# 查看 WirePlumber 日志
+journalctl --user -u wireplumber -f
+
+# 设置日志级别 (更详细)
+WIREPLUMBER_DEBUG=3 wireplumber
+#+end_src
+
+日志级别:
+
+- =0=: 错误
+- =1=: 警告
+- =2=: 信息
+- =3=: 调试
+- =4=: 追踪
+
+** 社区资源
+
+由于官方文档不完整，很多知识散落在:
+
+- [[https://wiki.archlinux.org/title/WirePlumber][ArchWiki WirePlumber 页面]]: 最完善的社区文档
+- [[https://gitlab.freedesktop.org/pipewire/wireplumber/-/issues][WirePlumber GitLab Issues]]: 实际问题讨论
+- [[https://www.reddit.com/r/linuxaudio/][r/linuxaudio]]: Reddit 社区
+- [[https://lists.freedesktop.org/archives/pipewire-devel/][PipeWire 邮件列表]]: 开发者讨论
+
+但即使如此，很多配置细节依然只能通过 *阅读源码* 或 *实验* 来发现。
+
+** 文档贡献的必要性
+
+如果你在配置 WirePlumber 时发现了有用的技巧或参数，*强烈建议*:
+
+1. 在 ArchWiki 上补充
+2. 向 WirePlumber 仓库提交文档 PR
+3. 在博客/论坛上分享
+
+WirePlumber 是一个优秀的项目，但文档是明显的短板。社区贡献能让后来者少走弯路。
+
+* 常见配置场景
+
+以下是一些实用的配置示例，基于实际需求场景。
+
+** 固定默认音频设备
+
+#+begin_src conf
+# ~/.config/wireplumber/wireplumber.conf.d/90-default-devices.conf
+wireplumber.settings = {
+  # 使用 node.name 或 node.nick 指定
+  default.audio.sink = "alsa_output.pci-0000_00_1f.3.analog-stereo"
+  default.audio.source = "alsa_input.usb-Blue_Microphones_Yeti_Stereo_Microphone-00.analog-stereo"
+}
+#+end_src
+
+*如何获取设备名*:
+
+#+begin_src bash
+$ wpctl status
+Audio
+ ├─ Sinks:
+ │      48. ALC295 Analog                    [vol: 0.50]
+ │  *   52. Yeti Stereo Microphone          [vol: 0.80]
+
+$ wpctl inspect 48 | grep node.name
+  node.name = "alsa_output.pci-0000_00_1f.3.analog-stereo"
+#+end_src
+
+** 禁用设备自动挂起
+
+#+begin_src conf
+# ~/.config/wireplumber/wireplumber.conf.d/90-no-suspend.conf
+monitor.alsa.rules = [
+  {
+    matches = [
+      { node.name = "~alsa_input.*" }
+      { node.name = "~alsa_output.*" }
+    ]
+    actions = {
+      update-props = {
+        session.suspend-timeout-seconds = 0
+      }
+    }
+  }
+]
+#+end_src
+
+=0= 表示永不挂起，默认值通常是 =5= 秒。
+
+** 蓝牙音质优化
+
+#+begin_src conf
+# ~/.config/wireplumber/wireplumber.conf.d/90-bluetooth-quality.conf
+monitor.bluez.properties = {
+  # 强制使用 AAC 编解码器 (如果支持)
+  bluez5.codecs = [ aac ldac aptx_hd ]
+
+  # 禁用自动切换配置文件 (避免通话时切换到低音质 HSP/HFP)
+  bluez5.autoswitch-profile = false
+}
+#+end_src
+
+** 设置 ALSA 缓冲大小
+
+#+begin_src conf
+# ~/.config/wireplumber/wireplumber.conf.d/90-alsa-latency.conf
+monitor.alsa.rules = [
+  {
+    matches = [
+      { node.name = "~alsa_output.*" }
+    ]
+    actions = {
+      update-props = {
+        # 降低延迟 (单位: 采样数)
+        api.alsa.period-size = 256
+        api.alsa.headroom = 1024
+      }
+    }
+  }
+]
+#+end_src
+
+*注意*: 降低缓冲可能导致爆音 (xrun)，需要根据硬件调整。
+
+** 重命名设备显示名称
+
+#+begin_src conf
+# ~/.config/wireplumber/wireplumber.conf.d/90-device-names.conf
+monitor.alsa.rules = [
+  {
+    matches = [
+      { device.name = "alsa_card.pci-0000_00_1f.3" }
+    ]
+    actions = {
+      update-props = {
+        device.description = "内置音频"
+        device.nick = "笔记本声卡"
+      }
+    }
+  }
+]
+#+end_src
+
+** 自动将特定应用路由到特定设备
+
+#+begin_src lua
+-- ~/.local/share/wireplumber/scripts/app-routing.lua
+om = ObjectManager {
+  Interest {
+    type = "node",
+    Constraint { "media.class", "matches", "Stream/Output/Audio" }
+  }
+}
+
+om:connect("object-added", function(om, node)
+  local app_name = node.properties["application.name"]
+
+  -- 将 Firefox 音频发送到蓝牙耳机
+  if app_name == "Firefox" then
+    node:set_param_sync("Route", {
+      ["target.node"] = "bluez_output.XX_XX_XX_XX_XX_XX.a2dp-sink"
+    })
+  end
+end)
+
+om:activate()
+#+end_src
+
+对应配置:
+
+#+begin_src conf
+# ~/.config/wireplumber/wireplumber.conf.d/91-app-routing.conf
+wireplumber.components = [
+  {
+    name = app-routing.lua
+    type = script/lua
+    provides = custom.app-routing
+  }
+]
+
+wireplumber.profiles = {
+  main = {
+    custom.app-routing = required
+  }
+}
+#+end_src
+
+* 调试与故障排查
+
+** 检查 WirePlumber 是否运行
+
+#+begin_src bash
+# systemd 用户服务状态
+systemctl --user status wireplumber
+
+# 查看进程
+ps aux | grep wireplumber
+
+# 检查 PipeWire 连接
+pw-cli ls Node
+#+end_src
+
+** 重启 WirePlumber
+
+#+begin_src bash
+# 方法 1: systemd
+systemctl --user restart wireplumber
+
+# 方法 2: 杀死进程 (会被 systemd 自动重启)
+pkill wireplumber
+
+# 方法 3: 临时手动运行 (用于调试)
+systemctl --user stop wireplumber
+WIREPLUMBER_DEBUG=3 wireplumber
+#+end_src
+
+** 验证配置语法
+
+WirePlumber 使用 SPA-JSON 格式，严格要求:
+
+- *没有尾逗号*: =[1, 2,]= 是非法的
+- *支持注释*: =# 注释= 和 =// 注释= 都可以
+- *属性名可不加引号*: ={name = value}= 和 ={"name": value}= 都合法
+
+常见错误:
+
+#+begin_src conf
+# 错误: 数组最后一个元素后有逗号
+wireplumber.components = [
+  { name = some-module, type = module },  # ← 删掉这个逗号
+]
+
+# 错误: 缺少等号
+monitor.alsa.rules [  # ← 应该是 =
+  ...
+]
+#+end_src
+
+查看启动错误:
+
+#+begin_src bash
+journalctl --user -u wireplumber -n 50
+#+end_src
+
+** 重置配置
+
+如果配置彻底乱了，可以删除用户配置恢复默认:
+
+#+begin_src bash
+# 备份现有配置
+mv ~/.config/wireplumber ~/.config/wireplumber.backup
+
+# 重启 WirePlumber
+systemctl --user restart wireplumber
+#+end_src
+
+** 图形化工具
+
+- *qpwgraph*: Qt 图形化 PipeWire 连接管理器 (类似 JACK 的 QjackCtl)
+- *Helvum*: GTK 图形化连接管理器
+- *pwvucontrol*: PipeWire 音量控制 (类似 =pavucontrol=)
+
+#+begin_src bash
+# Arch Linux
+sudo pacman -S qpwgraph helvum
+
+# 运行
+qpwgraph
+#+end_src
+
+* 总结与最佳实践
+
+** 核心要点
+
+1. *优先级链*: 用户配置 (=~/.config=) > 系统配置 (=/etc=) > 默认配置 (=/usr/share=)
+2. *片段机制*: 用 =wireplumber.conf.d/*.conf= 而不是修改主配置
+3. *命名惯例*: 用数字前缀控制加载顺序 (=90-= 开头的最后加载)
+4. *脚本位置*: =~/.local/share/wireplumber/scripts= (数据目录)
+5. *环境变量*: =WIREPLUMBER_CONFIG_DIR= 等会 *完全覆盖* 默认路径
+
+** 推荐工作流程
+
+1. *不要动系统文件*: 永远不要修改 =/usr/share/wireplumber= 下的文件
+2. *小步迭代*: 一次只改一个配置，测试后再继续
+3. *善用片段*: 一个功能一个文件，便于管理和禁用
+4. *查看日志*: =journalctl --user -u wireplumber -f= 是你的朋友
+5. *参考 ArchWiki*: 目前最完善的社区文档
+
+** 文档现状与未来
+
+WirePlumber 的功能强大，架构优雅，但文档确实是最大的痛点。
+
+*现状*:
+
+- 官方文档覆盖基础概念和架构
+- 缺乏完整的配置参考
+- 高级功能只能靠源码和实验
+
+*如何应对*:
+
+- 把 =/usr/share/wireplumber= 当成 "活文档"
+- 加入社区，分享你的发现
+- 阅读 [[https://gitlab.freedesktop.org/pipewire/wireplumber/-/tree/master][WirePlumber 源码]]，特别是 Lua 脚本部分
+
+*期待改进*:
+
+如果你在配置 WirePlumber 时发现了有用的参数或技巧，请通过以下方式贡献:
+
+- 在 ArchWiki 上补充条目
+- 向 WirePlumber 提交文档 PR
+- 在博客/论坛上写详细教程
+- 在 GitHub/GitLab 上创建配置示例仓库
+
+社区的力量能让后来者少走很多弯路。
+
+** 最后的吐槽
+
+*为什么不能有一个完整的配置参考啊？！*
+
+这是我在配置 WirePlumber 时最大的痛点。每次想调整一个设置，都要在以下几个地方翻找:
+
+1. 官方文档 (只有基础)
+2. ArchWiki (有些过时)
+3. =/usr/share/wireplumber= (最可信但要自己读)
+4. GitLab Issues (碰运气)
+5. Reddit/论坛 (信噪比低)
+
+难以想象到底是谁负责维护 WirePlumber 的用户指南，还是说开发者觉得 "读源码就行了"？
+
+*血泪建议*: 如果你有空，整理一份你自己的配置笔记。当你半年后再次需要调整时，会感谢当时的自己。
+
+-----
+
+*作者注*: 本文基于 WirePlumber 0.5.x 版本。未来版本可能会有变化，请以官方文档和实际安装的配置文件为准。如果发现本文有错误或过时信息，欢迎指正。

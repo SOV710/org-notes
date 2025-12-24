@@ -1,0 +1,1441 @@
+#+title: Unix Domain Sockets: The Fastest IPC Mechanism on Linux
+#+author: SOV710
+#+date: 2025-12-23
+#+startup: showall
+#+options: toc:2 num:nil
+
+* Unix Domain Sockets: 本地进程间通信的王者
+
+Unix Domain Sockets (UDS) 是 Unix/Linux 系统上最高效的进程间通信 (IPC) 机制之一。与 TCP/IP sockets 相比，UDS 完全 *在内核内部传输*，无需经过网络协议栈，延迟可低至 *5~12 µs*，是 TCP loopback 的 2~3 倍快。
+
+** 为什么需要 UDS？
+
+*** 性能优势
+
+| IPC 机制           | 延迟 (µs) | 吞吐量 (GB/s) | 适用场景          |
+|--------------------+-----------+--------------+------------------|
+| 共享内存 + 信号量     | 0.5~2     | 20~50        | 极低延迟，需手动同步 |
+| *Unix Domain Socket* | *5~12*      | *5~10*         | *平衡性能与易用性*    |
+| TCP loopback       | 20~40     | 2~5          | 兼容网络代码       |
+| Named Pipe         | 10~20     | 3~8          | 单向流式传输       |
+| Message Queue      | 15~30     | 1~3          | 异步消息传递       |
+
+*** 安全优势
+
+UDS 支持 *凭证传递* (credential passing)，接收端可以验证发送端的 =pid=, =uid=, =gid=:
+
+#+begin_src c
+struct ucred cred;
+socklen_t len = sizeof(cred);
+getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len);
+// 验证: if (cred.uid != 0) { reject(); }
+#+end_src
+
+这是 D-Bus, systemd, X11 等系统服务的安全基础。
+
+*** 文件描述符传递
+
+UDS 可以在进程间 *传递打开的文件描述符* (包括 sockets, pipes, files)，这是其他 IPC 无法做到的:
+
+#+begin_src c
+// 进程 A 打开文件
+int fd = open("/etc/passwd", O_RDONLY);
+
+// 通过 UDS 传递给进程 B
+sendmsg(sock, ...);  // 附带 SCM_RIGHTS 控制消息
+
+// 进程 B 接收 fd，可以直接读取
+recvmsg(sock, ...);
+read(received_fd, buf, sizeof(buf));
+#+end_src
+
+这是容器运行时 (Docker/Podman)、特权分离架构 (Postfix) 的核心技术。
+
+* UDS vs TCP/IP Sockets: 关键差异
+
+** 地址族 (Address Family)
+
+| 类型         | 地址族       | 地址结构          | 地址示例                |
+|------------+------------+-----------------+----------------------|
+| TCP/IP     | =AF_INET=    | =sockaddr_in=     | =127.0.0.1:8080=       |
+| Unix Domain| =AF_UNIX= / =AF_LOCAL= | =sockaddr_un= | =/tmp/sock= 或 =@abstract= |
+
+** 地址表示
+
+*** 文件系统路径 (Filesystem Namespace)
+
+#+begin_src c
+struct sockaddr_un addr;
+addr.sun_family = AF_UNIX;
+strncpy(addr.sun_path, "/tmp/my.sock", sizeof(addr.sun_path) - 1);
+#+end_src
+
+- 优点: 可用文件权限控制访问 (=chmod 600=)
+- 缺点: 需要手动清理 (=unlink()=)，路径长度限制 108 字节
+
+*** 抽象命名空间 (Abstract Namespace, Linux 特有)
+
+#+begin_src c
+struct sockaddr_un addr;
+addr.sun_family = AF_UNIX;
+addr.sun_path[0] = '\0';  // 首字节为 NUL
+strncpy(addr.sun_path + 1, "my_abstract_sock", sizeof(addr.sun_path) - 2);
+#+end_src
+
+- 优点: *无需文件系统*，进程退出自动清理，无路径冲突
+- 缺点: 无文件权限保护，只能靠凭证验证
+
+查看抽象 socket:
+
+#+begin_src sh
+$ ss -lx | grep @
+u_str  LISTEN  0  128  @/tmp/.X11-unix/X0  12345  * 0
+#+end_src
+
+注意前缀 =@= 表示抽象命名空间。
+
+** 套接字类型 (Socket Type)
+
+*** =SOCK_STREAM= (流式, 类似 TCP)
+
+- 面向连接 (connection-oriented)
+- 可靠、有序、字节流
+- 需要 =listen()= / =accept()=
+
+#+begin_src c
+int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+#+end_src
+
+*** =SOCK_DGRAM= (数据报, 类似 UDP)
+
+- 无连接 (connectionless)
+- 保留消息边界 (message boundary)
+- *可靠* (与 UDP 不同! UDS 不丢包)
+
+#+begin_src c
+int sock = socket(AF_UNIX, SOCK_DGRAM, 0);
+#+end_src
+
+*** =SOCK_SEQPACKET= (顺序包, UDS 独有)
+
+- 面向连接
+- 保留消息边界
+- 可靠、有序
+
+#+begin_src c
+int sock = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+#+end_src
+
+这是 =SOCK_STREAM= + =SOCK_DGRAM= 的混合体，适合需要 *记录边界* 的协议 (如 SCTP)。
+
+* 核心系统调用详解
+
+** 创建套接字: =socket()= 和 =socketpair()=
+
+*** =socket()=: 单个套接字
+
+#+begin_src c
+int socket(int domain, int type, int protocol);
+#+end_src
+
+参数:
+
+- =domain=: =AF_UNIX= / =AF_LOCAL=
+- =type=: =SOCK_STREAM= / =SOCK_DGRAM= / =SOCK_SEQPACKET=
+- =protocol=: 通常填 =0= (自动选择)
+
+返回: 文件描述符，失败返回 =-1=
+
+示例:
+
+#+begin_src c
+int sock = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+if (sock < 0) {
+    perror("socket");
+    exit(1);
+}
+#+end_src
+
+*推荐*: 使用 =SOCK_CLOEXEC= 标志，避免 =fork()= 后子进程继承 fd。
+
+*** =socketpair()=: 成对相连的匿名 socket
+
+#+begin_src c
+int socketpair(int domain, int type, int protocol, int sv[2]);
+#+end_src
+
+创建一对 *已连接* 的 socket，常用于父子进程通信:
+
+#+begin_src c
+int sv[2];
+socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
+
+if (fork() == 0) {
+    // 子进程
+    close(sv[0]);
+    write(sv[1], "hello", 5);
+    close(sv[1]);
+    exit(0);
+}
+
+// 父进程
+close(sv[1]);
+char buf[10];
+read(sv[0], buf, sizeof(buf));
+printf("Received: %s\n", buf);
+close(sv[0]);
+#+end_src
+
+=socketpair()= 比 =pipe()= 强大:
+
+- *双向通信* (pipe 单向)
+- 支持 =sendmsg()= / =recvmsg()= (可传 fd)
+- 支持 =shutdown()= (半关闭)
+
+** 绑定和连接: =bind()= / =connect()=
+
+*** =bind()=: 服务器绑定地址
+
+#+begin_src c
+int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+#+end_src
+
+示例 (文件系统路径):
+
+#+begin_src c
+struct sockaddr_un addr = {0};
+addr.sun_family = AF_UNIX;
+strncpy(addr.sun_path, "/tmp/server.sock", sizeof(addr.sun_path) - 1);
+
+// 先删除旧文件 (否则 EADDRINUSE)
+unlink(addr.sun_path);
+
+if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    perror("bind");
+    exit(1);
+}
+
+// 设置权限 (可选)
+chmod(addr.sun_path, 0600);  // 只有 owner 可连接
+#+end_src
+
+示例 (抽象命名空间):
+
+#+begin_src c
+struct sockaddr_un addr = {0};
+addr.sun_family = AF_UNIX;
+addr.sun_path[0] = '\0';
+strncpy(addr.sun_path + 1, "my_service", sizeof(addr.sun_path) - 2);
+
+socklen_t addrlen = offsetof(struct sockaddr_un, sun_path) + 1 + strlen(addr.sun_path + 1);
+bind(sock, (struct sockaddr *)&addr, addrlen);
+#+end_src
+
+*注意*: 抽象 socket 的 =addrlen= 必须精确计算，不能用 =sizeof(addr)=。
+
+*** =connect()=: 客户端连接
+
+#+begin_src c
+int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+#+end_src
+
+#+begin_src c
+struct sockaddr_un addr = {0};
+addr.sun_family = AF_UNIX;
+strncpy(addr.sun_path, "/tmp/server.sock", sizeof(addr.sun_path) - 1);
+
+if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    perror("connect");
+    exit(1);
+}
+#+end_src
+
+对于 =SOCK_STREAM=，=connect()= 会阻塞直到服务器 =accept()=。可以设置 =O_NONBLOCK= 实现非阻塞连接:
+
+#+begin_src c
+fcntl(sock, F_SETFL, O_NONBLOCK);
+if (connect(sock, ...) < 0 && errno == EINPROGRESS) {
+    // 使用 poll/epoll 等待 POLLOUT
+}
+#+end_src
+
+** 监听和接受: =listen()= / =accept()=
+
+*** =listen()=: 置为监听状态
+
+#+begin_src c
+int listen(int sockfd, int backlog);
+#+end_src
+
+- =backlog=: 挂起连接队列长度，推荐 =128= 或 =SOMAXCONN=
+
+#+begin_src c
+if (listen(sock, 128) < 0) {
+    perror("listen");
+    exit(1);
+}
+#+end_src
+
+*** =accept()= / =accept4()=: 接受连接
+
+#+begin_src c
+int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+int accept4(int sockfd, struct sockaddr *addr, socklen_t *addrlen, int flags);
+#+end_src
+
+=accept4()= 是 Linux 扩展，支持原子设置 =SOCK_NONBLOCK= / =SOCK_CLOEXEC=:
+
+#+begin_src c
+int client = accept4(server, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+if (client < 0) {
+    perror("accept4");
+    exit(1);
+}
+#+end_src
+
+传统 =accept()= 需要后续调用 =fcntl()=:
+
+#+begin_src c
+int client = accept(server, NULL, NULL);
+fcntl(client, F_SETFL, O_NONBLOCK);
+fcntl(client, F_SETFD, FD_CLOEXEC);
+#+end_src
+
+** 数据传输: =send()= / =recv()=
+
+*** =send()= / =recv()=: 流式传输
+
+#+begin_src c
+ssize_t send(int sockfd, const void *buf, size_t len, int flags);
+ssize_t recv(int sockfd, void *buf, size_t len, int flags);
+#+end_src
+
+常用 =flags=:
+
+- =MSG_DONTWAIT=: 非阻塞 (等价于 =O_NONBLOCK=)
+- =MSG_NOSIGNAL=: 对端关闭时不触发 =SIGPIPE= (推荐)
+- =MSG_PEEK=: 读取但不移除数据 (调试用)
+
+#+begin_src c
+// 发送
+const char *msg = "Hello, UDS!";
+if (send(sock, msg, strlen(msg), MSG_NOSIGNAL) < 0) {
+    perror("send");
+}
+
+// 接收
+char buf[1024];
+ssize_t n = recv(sock, buf, sizeof(buf) - 1, 0);
+if (n < 0) {
+    perror("recv");
+} else if (n == 0) {
+    printf("Connection closed\n");
+} else {
+    buf[n] = '\0';
+    printf("Received: %s\n", buf);
+}
+#+end_src
+
+*重要*: =SOCK_STREAM= 不保留消息边界，可能需要多次 =recv()=:
+
+#+begin_src c
+// 发送 1000 字节
+send(sock, data, 1000, 0);
+
+// 接收端可能分多次收到
+recv(sock, buf, 512, 0);  // 收到 512 字节
+recv(sock, buf, 512, 0);  // 收到 488 字节
+#+end_src
+
+解决方法: 自定义协议头 (长度前缀) 或用 =SOCK_SEQPACKET=。
+
+*** =sendto()= / =recvfrom()=: 数据报传输
+
+#+begin_src c
+ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
+               const struct sockaddr *dest_addr, socklen_t addrlen);
+ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
+                 struct sockaddr *src_addr, socklen_t *addrlen);
+#+end_src
+
+用于 =SOCK_DGRAM=:
+
+#+begin_src c
+// 客户端: 发送到指定地址 (无需 connect)
+struct sockaddr_un addr = {0};
+addr.sun_family = AF_UNIX;
+strncpy(addr.sun_path, "/tmp/server.sock", sizeof(addr.sun_path) - 1);
+sendto(sock, "ping", 4, 0, (struct sockaddr *)&addr, sizeof(addr));
+
+// 服务器: 接收并获取源地址
+struct sockaddr_un peer;
+socklen_t peer_len = sizeof(peer);
+char buf[1024];
+ssize_t n = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&peer, &peer_len);
+printf("From %s: %.*s\n", peer.sun_path, (int)n, buf);
+#+end_src
+
+*注意*: =SOCK_DGRAM= UDS 是 *可靠的*，不会丢包 (与 UDP 不同)。
+
+*** =read()= / =write()=: 简化接口
+
+对于 =SOCK_STREAM=，可以直接用文件 I/O:
+
+#+begin_src c
+write(sock, "data", 4);
+read(sock, buf, sizeof(buf));
+#+end_src
+
+等价于 =send()= / =recv()=，但无法设置 =flags=。
+
+** 高级传输: =sendmsg()= / =recvmsg()=
+
+*** =sendmsg()= / =recvmsg()=: 传递辅助数据
+
+#+begin_src c
+ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags);
+ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags);
+#+end_src
+
+=msghdr= 结构:
+
+#+begin_src c
+struct msghdr {
+    void         *msg_name;       // 目的地址 (DGRAM 用)
+    socklen_t     msg_namelen;
+    struct iovec *msg_iov;        // 数据向量 (scatter/gather I/O)
+    size_t        msg_iovlen;
+    void         *msg_control;    // 控制消息缓冲区
+    size_t        msg_controllen;
+    int           msg_flags;      // 接收标志 (recvmsg 填充)
+};
+
+struct iovec {
+    void  *iov_base;  // 数据指针
+    size_t iov_len;   // 数据长度
+};
+#+end_src
+
+*** 示例: Scatter/Gather I/O
+
+#+begin_src c
+// 发送: 两个缓冲区一次发送
+struct iovec iov[2];
+iov[0].iov_base = "Hello, ";
+iov[0].iov_len = 7;
+iov[1].iov_base = "World!";
+iov[1].iov_len = 6;
+
+struct msghdr msg = {0};
+msg.msg_iov = iov;
+msg.msg_iovlen = 2;
+
+sendmsg(sock, &msg, 0);  // 一次系统调用发送 13 字节
+#+end_src
+
+** 批量传输: =sendmmsg()= / =recvmmsg()=
+
+Linux 3.0+ 支持批量发送/接收消息，减少系统调用次数:
+
+#+begin_src c
+int sendmmsg(int sockfd, struct mmsghdr *msgvec, unsigned int vlen, int flags);
+int recvmmsg(int sockfd, struct mmsghdr *msgvec, unsigned int vlen,
+             int flags, struct timespec *timeout);
+#+end_src
+
+#+begin_src c
+struct mmsghdr {
+    struct msghdr msg_hdr;  // 消息头
+    unsigned int  msg_len;  // 发送/接收的字节数 (recvmmsg 填充)
+};
+#+end_src
+
+示例 (批量发送 100 条消息):
+
+#+begin_src c
+struct mmsghdr msgs[100];
+struct iovec iovecs[100];
+char bufs[100][64];
+
+for (int i = 0; i < 100; i++) {
+    snprintf(bufs[i], sizeof(bufs[i]), "Message %d", i);
+    iovecs[i].iov_base = bufs[i];
+    iovecs[i].iov_len = strlen(bufs[i]);
+
+    msgs[i].msg_hdr.msg_iov = &iovecs[i];
+    msgs[i].msg_hdr.msg_iovlen = 1;
+    msgs[i].msg_hdr.msg_name = &dest_addr;  // DGRAM 需要
+    msgs[i].msg_hdr.msg_namelen = sizeof(dest_addr);
+    msgs[i].msg_hdr.msg_control = NULL;
+    msgs[i].msg_hdr.msg_controllen = 0;
+}
+
+int sent = sendmmsg(sock, msgs, 100, 0);
+printf("Sent %d messages\n", sent);
+#+end_src
+
+性能提升: 批量操作比循环 =sendmsg()= 快 *2~5 倍*。
+
+** 关闭连接: =close()= / =shutdown()=
+
+*** =close()=: 关闭套接字
+
+#+begin_src c
+close(sock);
+#+end_src
+
+- 减少引用计数，计数为 0 时释放资源
+- 如果是 =SOCK_STREAM= 且有未发送数据，可能触发 =RST=
+
+*** =shutdown()=: 半关闭
+
+#+begin_src c
+int shutdown(int sockfd, int how);
+#+end_src
+
+参数 =how=:
+
+- =SHUT_RD= (0): 关闭读端，后续 =recv()= 返回 0
+- =SHUT_WR= (1): 关闭写端，触发 =EOF= (对端 =recv()= 返回 0)
+- =SHUT_RDWR= (2): 关闭双向
+
+示例 (客户端发送完毕后关闭写端):
+
+#+begin_src c
+send(sock, data, len, 0);
+shutdown(sock, SHUT_WR);  // 告诉服务器 "我发送完了"
+
+// 继续接收服务器响应
+recv(sock, buf, sizeof(buf), 0);
+close(sock);
+#+end_src
+
+=shutdown()= 与 =close()= 的区别:
+
+- =shutdown()= 立即生效，不受引用计数影响
+- =close()= 只在引用计数为 0 时生效 (=dup()= / =fork()= 后可能有多个引用)
+
+* 数据结构详解
+
+** =struct sockaddr_un=: Unix 域地址
+
+#+begin_src c
+struct sockaddr_un {
+    sa_family_t sun_family;  // AF_UNIX
+    char        sun_path[108];  // 路径或抽象名
+};
+#+end_src
+
+*** 文件系统路径
+
+#+begin_src c
+struct sockaddr_un addr = {0};
+addr.sun_family = AF_UNIX;
+strncpy(addr.sun_path, "/var/run/myapp.sock", sizeof(addr.sun_path) - 1);
+#+end_src
+
+*路径长度限制*: 108 字节 (包括 NUL 终止符)，超过会被截断。
+
+*** 抽象命名空间 (Linux)
+
+#+begin_src c
+struct sockaddr_un addr = {0};
+addr.sun_family = AF_UNIX;
+addr.sun_path[0] = '\0';  // 首字节为 NUL
+memcpy(addr.sun_path + 1, "my_abstract_socket", 18);
+#+end_src
+
+*长度计算*:
+
+#+begin_src c
+socklen_t len = offsetof(struct sockaddr_un, sun_path) + 1 + 18;
+// = sizeof(sa_family_t) + 1 + strlen("my_abstract_socket")
+#+end_src
+
+*** 未命名 socket (Anonymous)
+
+如果不调用 =bind()=，socket 地址为空:
+
+#+begin_src c
+// 客户端 SOCK_DGRAM 无需 bind，内核自动分配匿名地址
+int sock = socket(AF_UNIX, SOCK_DGRAM, 0);
+sendto(sock, ...);  // 自动绑定到匿名地址
+#+end_src
+
+** =struct msghdr=: 消息头
+
+#+begin_src c
+struct msghdr {
+    void         *msg_name;       // 目的/源地址 (DGRAM 用)
+    socklen_t     msg_namelen;
+    struct iovec *msg_iov;        // 数据向量
+    size_t        msg_iovlen;
+    void         *msg_control;    // 辅助数据 (控制消息)
+    size_t        msg_controllen;
+    int           msg_flags;      // 接收标志
+};
+#+end_src
+
+*** =msg_control=: 控制消息缓冲区
+
+用于传递文件描述符、凭证等辅助数据:
+
+#+begin_src c
+char control[CMSG_SPACE(sizeof(int))];  // 容纳一个 int 的缓冲区
+struct msghdr msg = {0};
+msg.msg_control = control;
+msg.msg_controllen = sizeof(control);
+#+end_src
+
+宏说明:
+
+- =CMSG_SPACE(len)=: 计算存储 =len= 字节数据所需的总空间 (含对齐)
+- =CMSG_LEN(len)=: 计算 =cmsg_len= 字段的值 (不含对齐填充)
+
+** =struct cmsghdr=: 控制消息头
+
+#+begin_src c
+struct cmsghdr {
+    size_t cmsg_len;    // 数据长度 (含头)
+    int    cmsg_level;  // 协议层 (SOL_SOCKET)
+    int    cmsg_type;   // 消息类型 (SCM_RIGHTS, SCM_CREDENTIALS)
+    // 后跟: unsigned char cmsg_data[];
+};
+#+end_src
+
+*** 遍历控制消息
+
+#+begin_src c
+struct msghdr msg;
+recvmsg(sock, &msg, 0);
+
+for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
+     cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+    if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+        int *fds = (int *)CMSG_DATA(cmsg);
+        int nfds = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+        printf("Received %d file descriptors\n", nfds);
+    }
+}
+#+end_src
+
+宏说明:
+
+- =CMSG_FIRSTHDR(msg)=: 获取第一个控制消息
+- =CMSG_NXTHDR(msg, cmsg)=: 获取下一个控制消息
+- =CMSG_DATA(cmsg)=: 获取数据指针
+
+** =struct ucred=: 进程凭证
+
+#+begin_src c
+struct ucred {
+    pid_t pid;  // 进程 ID
+    uid_t uid;  // 用户 ID
+    gid_t gid;  // 组 ID
+};
+#+end_src
+
+获取对端凭证:
+
+#+begin_src c
+struct ucred cred;
+socklen_t len = sizeof(cred);
+if (getsockopt(sock, SOL_SOCKET, SO_PEERCRED, &cred, &len) == 0) {
+    printf("Peer: pid=%d, uid=%d, gid=%d\n", cred.pid, cred.uid, cred.gid);
+}
+#+end_src
+
+** =struct iovec=: 分散/聚集 I/O
+
+#+begin_src c
+struct iovec {
+    void  *iov_base;  // 缓冲区地址
+    size_t iov_len;   // 缓冲区长度
+};
+#+end_src
+
+示例 (一次读取到多个缓冲区):
+
+#+begin_src c
+char header[16];
+char body[1024];
+
+struct iovec iov[2];
+iov[0].iov_base = header;
+iov[0].iov_len = sizeof(header);
+iov[1].iov_base = body;
+iov[1].iov_len = sizeof(body);
+
+struct msghdr msg = {0};
+msg.msg_iov = iov;
+msg.msg_iovlen = 2;
+
+ssize_t n = recvmsg(sock, &msg, 0);
+// header 和 body 一次性填充
+#+end_src
+
+* 高级特性: 文件描述符传递
+
+** =SCM_RIGHTS=: 传递打开的文件描述符
+
+这是 UDS 最强大的功能，可以在进程间传递:
+
+- 普通文件 (=open()= 返回的 fd)
+- Socket (包括 TCP socket)
+- Pipe (=pipe()= 返回的 fd)
+- 设备文件 (=/dev/tty=, =/dev/null=)
+- 共享内存 (=memfd_create()=)
+
+** 发送端代码
+
+#+begin_src c
+void send_fd(int sock, int fd_to_send) {
+    struct msghdr msg = {0};
+    struct iovec iov;
+    char dummy = '*';  // 必须发送至少 1 字节数据
+
+    iov.iov_base = &dummy;
+    iov.iov_len = 1;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+
+    // 构造控制消息
+    char control[CMSG_SPACE(sizeof(int))];
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &fd_to_send, sizeof(int));
+
+    if (sendmsg(sock, &msg, 0) < 0) {
+        perror("sendmsg");
+    }
+}
+#+end_src
+
+** 接收端代码
+
+#+begin_src c
+int recv_fd(int sock) {
+    struct msghdr msg = {0};
+    struct iovec iov;
+    char dummy;
+
+    iov.iov_base = &dummy;
+    iov.iov_len = 1;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+
+    char control[CMSG_SPACE(sizeof(int))];
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+
+    if (recvmsg(sock, &msg, 0) < 0) {
+        perror("recvmsg");
+        return -1;
+    }
+
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+    if (cmsg && cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+        int received_fd;
+        memcpy(&received_fd, CMSG_DATA(cmsg), sizeof(int));
+        return received_fd;
+    }
+
+    return -1;
+}
+#+end_src
+
+** 实际应用案例
+
+*** 特权分离 (Privilege Separation)
+
+Postfix 邮件服务器架构:
+
+#+begin_example
+[Master 进程 (root)]
+    ↓ 打开特权端口 25
+    ↓ 通过 UDS 传递 socket fd
+[Worker 进程 (非 root)]
+    ↓ 接收 fd, 处理邮件
+#+end_example
+
+#+begin_src c
+// Master 进程 (root)
+int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+bind(listen_fd, ...);  // 绑定端口 25 (需要 root)
+listen(listen_fd, 128);
+
+// 降权并 fork worker
+setuid(1000);
+pid_t pid = fork();
+if (pid == 0) {
+    // Worker: 通过 UDS 接收 fd
+    int fd = recv_fd(uds_sock);
+    accept(fd, ...);  // 处理连接
+}
+
+// Master: 传递 fd 给 worker
+send_fd(uds_sock, listen_fd);
+close(listen_fd);
+#+end_src
+
+*** 容器运行时 (Docker/Podman)
+
+容器通过 UDS 从宿主机接收网络 socket:
+
+#+begin_example
+[容器运行时]
+    ↓ 创建 veth pair
+    ↓ 传递 socket fd 到容器
+[容器内应用]
+    ↓ 接收 fd, 直接通信
+#+end_example
+
+*** systemd socket activation
+
+systemd 在服务启动前打开 socket，通过环境变量 + fd 传递给服务:
+
+#+begin_src c
+// 服务进程
+int listen_fd = SD_LISTEN_FDS_START;  // fd 3
+accept(listen_fd, ...);  // 直接使用
+#+end_src
+
+* 高级特性: 凭证传递
+
+** =SO_PASSCRED= / =SO_PEERCRED=
+
+*** =SO_PEERCRED=: 获取对端凭证
+
+#+begin_src c
+struct ucred cred;
+socklen_t len = sizeof(cred);
+getsockopt(sock, SOL_SOCKET, SO_PEERCRED, &cred, &len);
+
+printf("Peer: pid=%d, uid=%d, gid=%d\n", cred.pid, cred.uid, cred.gid);
+
+// 安全检查
+if (cred.uid != 0 && cred.uid != getuid()) {
+    fprintf(stderr, "Unauthorized connection from uid %d\n", cred.uid);
+    close(sock);
+}
+#+end_src
+
+*注意*: =SO_PEERCRED= 只对 =SOCK_STREAM= / =SOCK_SEQPACKET= 有效，=SOCK_DGRAM= 需要 =SO_PASSCRED=。
+
+*** =SO_PASSCRED=: 接收凭证消息
+
+对于 =SOCK_DGRAM=，需要显式启用凭证传递:
+
+#+begin_src c
+// 服务器端启用
+int enable = 1;
+setsockopt(sock, SOL_SOCKET, SO_PASSCRED, &enable, sizeof(enable));
+
+// 接收消息
+struct msghdr msg = {0};
+char control[CMSG_SPACE(sizeof(struct ucred))];
+msg.msg_control = control;
+msg.msg_controllen = sizeof(control);
+
+recvmsg(sock, &msg, 0);
+
+// 解析凭证
+struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+if (cmsg && cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_CREDENTIALS) {
+    struct ucred *cred = (struct ucred *)CMSG_DATA(cmsg);
+    printf("From pid=%d, uid=%d\n", cred->pid, cred->uid);
+}
+#+end_src
+
+** =SCM_CREDENTIALS=: 显式发送凭证
+
+客户端可以显式发送凭证 (需要权限):
+
+#+begin_src c
+struct msghdr msg = {0};
+struct ucred cred = {
+    .pid = getpid(),
+    .uid = getuid(),
+    .gid = getgid()
+};
+
+char control[CMSG_SPACE(sizeof(cred))];
+msg.msg_control = control;
+msg.msg_controllen = sizeof(control);
+
+struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+cmsg->cmsg_level = SOL_SOCKET;
+cmsg->cmsg_type = SCM_CREDENTIALS;
+cmsg->cmsg_len = CMSG_LEN(sizeof(cred));
+memcpy(CMSG_DATA(cmsg), &cred, sizeof(cred));
+
+sendmsg(sock, &msg, 0);
+#+end_src
+
+*安全性*: 内核会验证凭证真实性，非特权进程不能伪造 =uid/gid=。
+
+* 套接字选项: =getsockopt()= / =setsockopt()=
+
+** 常用选项
+
+#+begin_src c
+int getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *optlen);
+int setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t optlen);
+#+end_src
+
+| 选项              | 级别         | 说明                  |
+|-----------------+------------+---------------------|
+| =SO_PEERCRED=     | =SOL_SOCKET= | 获取对端凭证 (只读)      |
+| =SO_PASSCRED=     | =SOL_SOCKET= | 启用凭证传递          |
+| =SO_RCVBUF=       | =SOL_SOCKET= | 设置接收缓冲区大小      |
+| =SO_SNDBUF=       | =SOL_SOCKET= | 设置发送缓冲区大小      |
+| =SO_RCVTIMEO=     | =SOL_SOCKET= | 设置接收超时          |
+| =SO_SNDTIMEO=     | =SOL_SOCKET= | 设置发送超时          |
+| =SO_REUSEADDR=    | =SOL_SOCKET= | 允许重用地址 (UDS 较少用) |
+
+** 示例: 设置接收超时
+
+#+begin_src c
+struct timeval tv = {
+    .tv_sec = 5,   // 5 秒
+    .tv_usec = 0
+};
+setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+// recv() 超时后返回 -1, errno = EAGAIN/EWOULDBLOCK
+ssize_t n = recv(sock, buf, sizeof(buf), 0);
+if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    printf("Timeout\n");
+}
+#+end_src
+
+** 示例: 增大缓冲区
+
+#+begin_src c
+int bufsize = 256 * 1024;  // 256 KB
+setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &bufsize, sizeof(bufsize));
+setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize));
+#+end_src
+
+*注意*: 内核可能限制最大值 (=/proc/sys/net/core/rmem_max=)。
+
+* 非阻塞 I/O 和多路复用
+
+** =fcntl()=: 设置非阻塞
+
+#+begin_src c
+int flags = fcntl(sock, F_GETFL, 0);
+fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+#+end_src
+
+非阻塞模式下，操作立即返回:
+
+- =connect()=: 返回 =-1=, =errno = EINPROGRESS=
+- =accept()=: 返回 =-1=, =errno = EAGAIN/EWOULDBLOCK=
+- =recv()=: 返回 =-1=, =errno = EAGAIN/EWOULDBLOCK=
+
+** =poll()=: 简单的多路复用
+
+#+begin_src c
+struct pollfd fds[2];
+fds[0].fd = listen_sock;
+fds[0].events = POLLIN;  // 监听可读
+fds[1].fd = client_sock;
+fds[1].events = POLLIN | POLLOUT;  // 可读 + 可写
+
+int ready = poll(fds, 2, 1000);  // 超时 1 秒
+if (ready > 0) {
+    if (fds[0].revents & POLLIN) {
+        accept(listen_sock, ...);
+    }
+    if (fds[1].revents & POLLIN) {
+        recv(client_sock, ...);
+    }
+}
+#+end_src
+
+** =epoll=: 高性能事件驱动
+
+#+begin_src c
+// 创建 epoll 实例
+int epfd = epoll_create1(0);
+
+// 添加监听 socket
+struct epoll_event ev = {0};
+ev.events = EPOLLIN;
+ev.data.fd = listen_sock;
+epoll_ctl(epfd, EPOLL_CTL_ADD, listen_sock, &ev);
+
+// 事件循环
+struct epoll_event events[10];
+while (1) {
+    int nfds = epoll_wait(epfd, events, 10, -1);
+    for (int i = 0; i < nfds; i++) {
+        if (events[i].data.fd == listen_sock) {
+            int client = accept(listen_sock, NULL, NULL);
+            ev.events = EPOLLIN | EPOLLET;  // Edge-Triggered
+            ev.data.fd = client;
+            epoll_ctl(epfd, EPOLL_CTL_ADD, client, &ev);
+        } else {
+            // 处理客户端数据
+            recv(events[i].data.fd, ...);
+        }
+    }
+}
+#+end_src
+
+*** Edge-Triggered vs Level-Triggered
+
+- *Level-Triggered (默认)*: 只要有数据就触发，可能重复通知
+- *Edge-Triggered (=EPOLLET=)*: 只在状态变化时触发，效率更高但需小心处理
+
+#+begin_src c
+// Edge-Triggered 必须读完所有数据
+while (1) {
+    ssize_t n = recv(sock, buf, sizeof(buf), 0);
+    if (n < 0) {
+        if (errno == EAGAIN) break;  // 读完了
+        perror("recv");
+        break;
+    }
+    if (n == 0) break;  // EOF
+    process(buf, n);
+}
+#+end_src
+
+* 地址查询: =getsockname()= / =getpeername()=
+
+** =getsockname()=: 获取本地地址
+
+#+begin_src c
+struct sockaddr_un addr;
+socklen_t len = sizeof(addr);
+getsockname(sock, (struct sockaddr *)&addr, &len);
+
+if (addr.sun_path[0] == '\0') {
+    printf("Abstract socket: %s\n", addr.sun_path + 1);
+} else {
+    printf("Filesystem socket: %s\n", addr.sun_path);
+}
+#+end_src
+
+** =getpeername()=: 获取对端地址
+
+#+begin_src c
+struct sockaddr_un peer;
+socklen_t len = sizeof(peer);
+getpeername(sock, (struct sockaddr *)&peer, &len);
+
+printf("Connected to: %s\n", peer.sun_path);
+#+end_src
+
+*注意*: 抽象 socket 可能无 =sun_path= (匿名客户端)。
+
+* 性能优化和最佳实践
+
+** 缓冲区大小调优
+
+默认缓冲区通常是 128 KB，高吞吐场景可以增大:
+
+#+begin_src sh
+# 查看默认值
+cat /proc/sys/net/core/wmem_default  # 发送缓冲区
+cat /proc/sys/net/core/rmem_default  # 接收缓冲区
+
+# 增大上限 (需要 root)
+echo 16777216 > /proc/sys/net/core/wmem_max  # 16 MB
+echo 16777216 > /proc/sys/net/core/rmem_max
+#+end_src
+
+应用层设置:
+
+#+begin_src c
+int bufsize = 4 * 1024 * 1024;  // 4 MB
+setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize));
+setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &bufsize, sizeof(bufsize));
+#+end_src
+
+** 批量操作
+
+使用 =sendmmsg()= / =recvmmsg()= 减少系统调用:
+
+#+begin_src c
+// 传统方式: 1000 次系统调用
+for (int i = 0; i < 1000; i++) {
+    sendmsg(sock, &msgs[i], 0);
+}
+
+// 批量方式: 50 次系统调用 (每次 20 条)
+for (int i = 0; i < 50; i++) {
+    sendmmsg(sock, msgs + i * 20, 20, 0);
+}
+#+end_src
+
+性能提升: *2~5 倍*。
+
+** Zero-Copy: =sendfile()= / =splice()=
+
+对于文件传输，避免用户态拷贝:
+
+#+begin_src c
+// 传统方式: 两次拷贝 (内核→用户→内核)
+char buf[8192];
+read(file_fd, buf, sizeof(buf));
+send(sock, buf, sizeof(buf), 0);
+
+// Zero-copy: 直接在内核传输
+sendfile(sock, file_fd, NULL, file_size);
+#+end_src
+
+*限制*: =sendfile()= 只支持文件到 socket，不支持 UDS 到 UDS。
+
+对于 pipe/socket 之间传输，用 =splice()=:
+
+#+begin_src c
+splice(pipe_fd, NULL, sock, NULL, len, SPLICE_F_MOVE);
+#+end_src
+
+** 文件系统路径 vs 抽象命名空间
+
+| 特性      | 文件系统路径          | 抽象命名空间      |
+|---------+------------------+----------------|
+| 清理     | 需要 =unlink()=      | 自动清理        |
+| 权限控制  | 文件权限 (=chmod=)   | 凭证验证        |
+| 可见性   | =ls /tmp/*.sock=   | =ss -lx=         |
+| 跨挂载点  | 支持              | 仅限本机        |
+| 性能     | 略慢 (文件系统开销) | 略快           |
+
+*推荐*:
+
+- 需要跨用户访问: 文件系统路径 + =chmod 666=
+- 单用户高性能: 抽象命名空间
+- 系统服务: 抽象命名空间 (如 D-Bus, X11)
+
+** 错误处理
+
+#+begin_src c
+// 必须检查所有返回值
+if (bind(sock, ...) < 0) {
+    if (errno == EADDRINUSE) {
+        // 地址已被占用, 尝试清理
+        unlink(path);
+        bind(sock, ...);
+    } else {
+        perror("bind");
+        exit(1);
+    }
+}
+
+// recv() 返回 0 = 对端关闭
+ssize_t n = recv(sock, buf, sizeof(buf), 0);
+if (n == 0) {
+    printf("Connection closed by peer\n");
+    close(sock);
+}
+
+// 处理 EINTR (信号中断)
+while (1) {
+    ssize_t n = recv(sock, buf, sizeof(buf), 0);
+    if (n < 0 && errno == EINTR) {
+        continue;  // 重试
+    }
+    if (n < 0) {
+        perror("recv");
+        break;
+    }
+    // 正常处理
+}
+#+end_src
+
+* 实战: 完整的客户端-服务器示例
+
+** 服务器端 (SOCK_STREAM)
+
+#+begin_src c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
+#define SOCKET_PATH "/tmp/example.sock"
+
+int main() {
+    int server_fd, client_fd;
+    struct sockaddr_un addr;
+    char buf[1024];
+
+    // 创建 socket
+    server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        perror("socket");
+        exit(1);
+    }
+
+    // 清理旧文件
+    unlink(SOCKET_PATH);
+
+    // 绑定地址
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
+
+    if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        exit(1);
+    }
+
+    // 监听
+    if (listen(server_fd, 5) < 0) {
+        perror("listen");
+        exit(1);
+    }
+
+    printf("Server listening on %s\n", SOCKET_PATH);
+
+    // 接受连接
+    while (1) {
+        client_fd = accept(server_fd, NULL, NULL);
+        if (client_fd < 0) {
+            perror("accept");
+            continue;
+        }
+
+        // 读取数据
+        ssize_t n = recv(client_fd, buf, sizeof(buf) - 1, 0);
+        if (n > 0) {
+            buf[n] = '\0';
+            printf("Received: %s\n", buf);
+
+            // 回复
+            send(client_fd, "ACK", 3, 0);
+        }
+
+        close(client_fd);
+    }
+
+    close(server_fd);
+    unlink(SOCKET_PATH);
+    return 0;
+}
+#+end_src
+
+** 客户端端 (SOCK_STREAM)
+
+#+begin_src c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
+#define SOCKET_PATH "/tmp/example.sock"
+
+int main() {
+    int sock;
+    struct sockaddr_un addr;
+    char buf[1024];
+
+    // 创建 socket
+    sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock < 0) {
+        perror("socket");
+        exit(1);
+    }
+
+    // 连接服务器
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
+
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("connect");
+        exit(1);
+    }
+
+    // 发送数据
+    const char *msg = "Hello, Unix Domain Socket!";
+    send(sock, msg, strlen(msg), 0);
+
+    // 接收回复
+    ssize_t n = recv(sock, buf, sizeof(buf) - 1, 0);
+    if (n > 0) {
+        buf[n] = '\0';
+        printf("Server replied: %s\n", buf);
+    }
+
+    close(sock);
+    return 0;
+}
+#+end_src
+
+** 编译和运行
+
+#+begin_src sh
+# 编译
+gcc -o server server.c
+gcc -o client client.c
+
+# 运行服务器
+./server &
+
+# 运行客户端
+./client
+# 输出: Server replied: ACK
+
+# 清理
+killall server
+rm /tmp/example.sock
+#+end_src
+
+* 常见问题和陷阱
+
+** 问题 1: =bind()= 失败 (EADDRINUSE)
+
+原因: 文件已存在 (上次未清理)。
+
+解决:
+
+#+begin_src c
+unlink(SOCKET_PATH);  // 先删除
+bind(sock, ...);
+#+end_src
+
+或使用抽象命名空间 (无需清理)。
+
+** 问题 2: =connect()= 失败 (ENOENT)
+
+原因: 服务器未启动或路径错误。
+
+检查:
+
+#+begin_src sh
+ls -l /tmp/*.sock
+#+end_src
+
+** 问题 3: 权限拒绝 (EACCES)
+
+原因: 文件权限不足。
+
+解决:
+
+#+begin_src c
+bind(sock, ...);
+chmod(addr.sun_path, 0666);  // 允许所有用户连接
+#+end_src
+
+** 问题 4: =recvmsg()= 解析控制消息失败
+
+原因: 缓冲区太小。
+
+解决:
+
+#+begin_src c
+// 错误
+char control[16];  // 太小
+
+// 正确
+char control[CMSG_SPACE(sizeof(int) * 10)];  // 可容纳 10 个 fd
+#+end_src
+
+** 问题 5: 抽象 socket 在 macOS 上不工作
+
+原因: 抽象命名空间是 *Linux 特有*，macOS/BSD 不支持。
+
+解决: 使用文件系统路径。
+
+* 调试工具
+
+** =ss=: 查看 socket 状态
+
+#+begin_src sh
+# 查看所有 Unix socket
+ss -x
+
+# 查看监听的 Unix socket
+ss -lx
+
+# 查看抽象 socket
+ss -lx | grep @
+
+# 详细信息
+ss -xp
+#+end_src
+
+** =lsof=: 查看进程打开的 socket
+
+#+begin_src sh
+# 查看进程打开的 socket
+lsof -U -p <pid>
+
+# 查看某个 socket 文件被哪些进程使用
+lsof /tmp/my.sock
+#+end_src
+
+** =strace=: 跟踪系统调用
+
+#+begin_src sh
+# 跟踪 socket 相关系统调用
+strace -e trace=socket,bind,connect,sendmsg,recvmsg ./program
+
+# 跟踪文件描述符传递
+strace -e trace=sendmsg,recvmsg -v ./program
+#+end_src
+
+** =netstat= (废弃, 用 =ss= 替代)
+
+#+begin_src sh
+netstat -lx  # 等价于 ss -lx
+#+end_src
+
+* 总结: UDS 最佳实践
+
+** 何时使用 UDS
+
+- *本地进程通信*: 高性能、低延迟
+- *特权分离*: 传递文件描述符
+- *安全控制*: 凭证验证
+- *系统服务*: D-Bus, systemd, X11
+
+** 何时不用 UDS
+
+- *跨网络通信*: 用 TCP/IP
+- *跨机器*: 用 TCP/IP 或消息队列
+- *极低延迟*: 用共享内存 + 信号量
+
+** 推荐配置
+
+1. *抽象命名空间* 优先 (Linux)
+2. =SOCK_STREAM= 用于可靠传输
+3. =SOCK_SEQPACKET= 用于保留消息边界
+4. =SOCK_CLOEXEC= / =SOCK_NONBLOCK= 标志
+5. =sendmmsg()= / =recvmmsg()= 批量操作
+6. =epoll= 实现高并发
+7. 凭证验证 + 文件权限双重保护
+
+** 性能检查清单
+
+- [ ] 增大缓冲区 (=SO_SNDBUF= / =SO_RCVBUF=)
+- [ ] 使用批量操作 (=sendmmsg= / =recvmmsg=)
+- [ ] 减少系统调用 (scatter/gather I/O)
+- [ ] 使用 =epoll= 而非 =select= / =poll=
+- [ ] 启用 =O_NONBLOCK= (非阻塞 I/O)
+- [ ] 避免频繁 =connect()= / =close()= (用连接池)
+
+** 安全检查清单
+
+- [ ] 验证对端凭证 (=SO_PEERCRED=)
+- [ ] 设置文件权限 (=chmod 600=)
+- [ ] 限制路径长度 (防止路径截断)
+- [ ] 检查 =recvmsg()= 返回的 fd 数量
+- [ ] 清理文件系统 socket (=unlink()=)
+- [ ] 处理 =SIGPIPE= (=MSG_NOSIGNAL=)
+
+Unix Domain Sockets 是 Linux 系统编程的基础设施，掌握它是构建高性能、安全系统服务的前提。从 D-Bus 到 Docker，从 X11 到 systemd，UDS 无处不在。深入理解其原理和最佳实践，才能写出真正健壮的系统级代码。

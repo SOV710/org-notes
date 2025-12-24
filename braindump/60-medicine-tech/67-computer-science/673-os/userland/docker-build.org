@@ -1,0 +1,1153 @@
+#+title: Docker Build System Deep Dive: From Basic Commands to BuildKit Internals
+#+author: SOV710
+#+date: 2025-12-23
+#+startup: showall
+#+options: toc:2 num:nil
+
+* Docker Build 的核心机制
+
+Docker 构建系统经历了从传统 builder 到 BuildKit 的革命性演进。理解这两者的差异，以及如何充分利用 BuildKit 的特性，是优化容器构建流程的关键。
+
+** 传统 Builder vs. BuildKit
+
+自 Docker Engine 23.0 起，BuildKit 已成为 *默认构建引擎*。但两者的差异远不止性能提升那么简单。
+
+*** 传统 Builder 的问题
+
+#+begin_quote
+传统 builder 会 *线性执行* Dockerfile 中的所有阶段，即使某些阶段的输出根本不会被使用。
+#+end_quote
+
+#+begin_src dockerfile
+# 传统 builder 会执行所有三个阶段
+FROM ubuntu AS base
+RUN echo "base"
+
+FROM base AS stage1
+RUN echo "stage1"
+
+FROM base AS stage2
+RUN echo "stage2"
+#+end_src
+
+#+begin_example
+$ DOCKER_BUILDKIT=0 docker build --target stage2 .
+# 输出: base → stage1 → stage2 (stage1 根本没用到！)
+#+end_example
+
+*** BuildKit 的智能依赖图
+
+BuildKit 通过构建一个 *有向无环图 (DAG)* 来分析阶段间的依赖关系，只构建必需的部分:
+
+#+begin_example
+$ DOCKER_BUILDKIT=1 docker build --target stage2 .
+# 输出: base → stage2 (stage1 被跳过)
+#+end_example
+
+BuildKit 的核心优势:
+
+- *并行构建*: 独立阶段可以并发执行 (如前端 + 后端同时构建)
+- *惰性拉取*: 只有需要读取内容的层才会被拉取
+- *远程缓存*: 支持 registry, inline, local, gha 等多种缓存后端
+- *高级特性*: cache mounts, bind mounts, secrets, SSH forwarding
+
+** 启用 BuildKit
+
+#+begin_src bash
+# 方法 1: 环境变量 (临时)
+export DOCKER_BUILDKIT=1
+
+# 方法 2: Docker 配置 (永久)
+# 编辑 /etc/docker/daemon.json
+{
+  "features": {
+    "buildkit": true
+  }
+}
+
+# 方法 3: docker buildx (推荐)
+docker buildx create --use --name mybuilder
+docker buildx build .
+#+end_src
+
+*验证 BuildKit 是否启用*:
+
+#+begin_src bash
+$ docker buildx version
+github.com/docker/buildx v0.12.0
+#+end_src
+
+* Docker Build 命令详解
+
+** 核心参数
+
+*** =-f, --file <文件名>=
+
+指定 Dockerfile 路径，默认是 =./Dockerfile=。
+
+#+begin_src bash
+# 使用不同的 Dockerfile
+docker build -f Dockerfile.prod -t myapp:prod .
+
+# 多环境构建
+docker build -f docker/dev.Dockerfile -t myapp:dev .
+docker build -f docker/prod.Dockerfile -t myapp:prod .
+#+end_src
+
+*最佳实践*: 为不同环境维护独立的 Dockerfile，而非用 =ARG= 在单个文件中做条件分支。
+
+*** =-t, --tag <name:tag>=
+
+为镜像打标签，格式为 =[registry/]repository:tag=。
+
+#+begin_src bash
+# 单个标签
+docker build -t myapp:latest .
+
+# 多个标签 (BuildKit 支持)
+docker build -t myapp:latest -t myapp:v1.2.3 -t ghcr.io/user/myapp:latest .
+
+# 推送到私有 registry
+docker build -t registry.example.com/team/myapp:${CI_COMMIT_SHA} .
+#+end_src
+
+*语义化版本 (SemVer) 标签策略*:
+
+#+begin_src bash
+VERSION=1.2.3
+docker build \
+  -t myapp:latest \
+  -t myapp:1 \
+  -t myapp:1.2 \
+  -t myapp:1.2.3 \
+  .
+#+end_src
+
+这样用户可以灵活选择:
+
+- =myapp:latest= → 追踪最新版 (不稳定)
+- =myapp:1= → 主版本锁定
+- =myapp:1.2.3= → 精确版本 (可复现构建)
+
+*** =--build-arg <KEY=VALUE>=
+
+传递构建时变量，必须在 Dockerfile 中用 =ARG= 声明。
+
+#+begin_src dockerfile
+ARG GO_VERSION=1.21
+ARG BUILD_DATE
+ARG COMMIT_SHA
+
+FROM golang:${GO_VERSION}-alpine AS builder
+LABEL build.date="${BUILD_DATE}" \
+      vcs.ref="${COMMIT_SHA}"
+#+end_src
+
+#+begin_src bash
+docker build \
+  --build-arg GO_VERSION=1.22 \
+  --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+  --build-arg COMMIT_SHA=$(git rev-parse HEAD) \
+  -t myapp:custom .
+#+end_src
+
+*安全警告*: =ARG= 值会保留在镜像元数据中！不要传递敏感信息 (密码, tokens)。使用 =--secret= 代替:
+
+#+begin_src dockerfile
+# syntax=docker/dockerfile:1.4
+FROM alpine
+RUN --mount=type=secret,id=github_token \
+    GITHUB_TOKEN=$(cat /run/secrets/github_token) \
+    git clone https://${GITHUB_TOKEN}@github.com/private/repo.git
+#+end_src
+
+#+begin_src bash
+docker buildx build --secret id=github_token,src=$HOME/.github_token .
+#+end_src
+
+*** =--no-cache=
+
+强制重新执行所有步骤，忽略缓存。
+
+#+begin_src bash
+# 完全重建 (慢但保证最新)
+docker build --no-cache -t myapp:fresh .
+
+# 只重建特定阶段之后的部分 (需要 BuildKit)
+docker build --no-cache-filter stage2 --target final .
+#+end_src
+
+*使用场景*:
+
+- 怀疑缓存导致的 bug (如依赖版本问题)
+- 强制更新 =apt-get update= / =yum update=
+- CI/CD 中的 "nightly build"
+
+*性能影响*: 对于大型项目，=--no-cache= 可能导致构建时间从 30 秒暴涨到 20 分钟。谨慎使用。
+
+*** =--pull=
+
+构建前拉取基础镜像的最新版本。
+
+#+begin_src dockerfile
+FROM node:18-alpine
+# 如果本地有 node:18-alpine 但是已经过期了怎么办？
+#+end_src
+
+#+begin_src bash
+# 总是拉取最新的 node:18-alpine
+docker build --pull -t myapp .
+#+end_src
+
+*风险*: 使用 =latest= 或 rolling tags (如 =alpine=, =ubuntu=) 时，不同时间构建的镜像可能基于 *不同的基础层*，导致不可复现的构建。
+
+*解决方案*: 使用 digest pinning:
+
+#+begin_src dockerfile
+# 不推荐
+FROM ubuntu:22.04
+
+# 推荐: 锁定到特定 digest
+FROM ubuntu:22.04@sha256:6042500cf4b44023ea1894effe7890666b0c5c7871ed83a97c36c76ae560bb9b
+#+end_src
+
+查找 digest:
+
+#+begin_src bash
+$ docker pull ubuntu:22.04
+$ docker inspect ubuntu:22.04 | jq -r '.[0].RepoDigests[0]'
+ubuntu@sha256:6042500cf4b44023ea1894effe7890666b0c5c7871ed83a97c36c76ae560bb9b
+#+end_src
+
+*** =--target <阶段名>=
+
+多阶段构建中，只构建到指定阶段。
+
+#+begin_src dockerfile
+# 三阶段构建: 依赖 → 构建 → 运行
+FROM node:18 AS deps
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+
+FROM node:18 AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine AS production
+COPY --from=builder /app/dist /usr/share/nginx/html
+#+end_src
+
+#+begin_src bash
+# 只构建依赖阶段 (用于缓存预热)
+docker build --target deps -t myapp:deps-cache .
+
+# 构建开发版本 (包含源码和 node_modules)
+docker build --target builder -t myapp:dev .
+
+# 构建生产版本 (最小化镜像)
+docker build --target production -t myapp:prod .
+#+end_src
+
+*BuildKit 优化*: 未被 target 依赖的阶段会被 *完全跳过*，包括 =FROM= 指令的镜像拉取。
+
+*** =--cache-from <镜像>=
+
+指定缓存源，用于 CI/CD 中的远程缓存。
+
+#+begin_src bash
+# 拉取上次构建的镜像作为缓存
+docker pull myapp:latest || true
+docker build --cache-from myapp:latest -t myapp:new .
+docker push myapp:new
+#+end_src
+
+*问题*: 传统 builder 只能利用 *最终镜像* 的缓存，中间阶段丢失！
+
+*BuildKit 解决方案*: inline cache 或 registry cache:
+
+#+begin_src bash
+# 构建时嵌入缓存元数据
+docker buildx build \
+  --build-arg BUILDKIT_INLINE_CACHE=1 \
+  --cache-from myapp:latest \
+  --cache-to type=inline \
+  -t myapp:latest \
+  --push .
+
+# 或使用独立的缓存清单 (推荐)
+docker buildx build \
+  --cache-from type=registry,ref=myapp:buildcache \
+  --cache-to type=registry,ref=myapp:buildcache,mode=max \
+  -t myapp:latest \
+  --push .
+#+end_src
+
+*cache mode*:
+
+- =mode=min= (默认): 只缓存最终镜像的层
+- =mode=max=: 缓存所有中间层 (推荐 CI/CD)
+
+*** =-o, --output <目标>=
+
+将构建产物导出到本地，而非打包成镜像。
+
+#+begin_src bash
+# 导出编译后的二进制文件
+docker build -o ./dist --target builder .
+
+# 导出静态网站
+docker build -o type=local,dest=./public --target static-files .
+#+end_src
+
+*高级用法*: 提取测试报告:
+
+#+begin_src dockerfile
+FROM golang:1.21 AS tester
+WORKDIR /app
+COPY . .
+RUN go test -v -coverprofile=coverage.out ./...
+
+FROM scratch AS artifacts
+COPY --from=tester /app/coverage.out /
+#+end_src
+
+#+begin_src bash
+docker build --target artifacts -o ./reports .
+cat reports/coverage.out
+#+end_src
+
+* 多阶段构建 (Multi-Stage Builds) 深度剖析
+
+多阶段构建是 Docker 最强大的特性之一，尤其在 BuildKit 下获得了质的飞跃。
+
+** 为什么需要多阶段构建？
+
+*** 问题: SDK 镜像臃肿
+
+编译型语言 (Go, Rust, C++) 需要完整的工具链，但运行时只需要二进制文件:
+
+#+begin_example
+golang:1.21 = 300+ MB (包含编译器, 标准库, 工具)
+编译后的二进制 = 10 MB
+
+最终镜像如果基于 golang:1.21 → 300 MB
+实际需要 → 10 MB
+#+end_example
+
+*** 解决方案: 分离构建和运行环境
+
+#+begin_src dockerfile
+# 阶段 1: 构建环境 (300 MB)
+FROM golang:1.21-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o main .
+
+# 阶段 2: 运行环境 (5 MB)
+FROM scratch
+COPY --from=builder /app/main /main
+ENTRYPOINT ["/main"]
+#+end_src
+
+*对比*:
+
+| 方案          | 镜像大小 | 攻击面        | 构建时间 |
+|-------------+--------+-------------+--------|
+| 单阶段 (golang) | 310 MB | 工具链、shell   | 慢      |
+| 多阶段 (scratch)| 10 MB  | 只有二进制      | 快 (缓存)|
+| 多阶段 (alpine) | 15 MB  | 最小 libc     | 快 (缓存)|
+
+** BuildKit 的并行构建魔法
+
+*** 示例: 前后端同时构建
+
+#+begin_src dockerfile
+# 后端构建 (独立)
+FROM golang:1.21 AS backend-builder
+WORKDIR /app/backend
+COPY backend/ .
+RUN go build -o api-server .
+
+# 前端构建 (独立)
+FROM node:18 AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ .
+RUN npm run build
+
+# 最终镜像 (依赖前两个)
+FROM nginx:alpine
+COPY --from=backend-builder /app/backend/api-server /usr/local/bin/
+COPY --from=frontend-builder /app/frontend/dist /usr/share/nginx/html
+#+end_src
+
+*传统 builder*: 顺序执行 (backend → frontend → final)
+
+*BuildKit*: =backend-builder= 和 =frontend-builder= *并行执行*，总时间约等于较慢的那个。
+
+#+begin_example
+传统: 120s (backend) + 90s (frontend) = 210s
+BuildKit: max(120s, 90s) = 120s
+加速比: 1.75x
+#+end_example
+
+** Cache Mounts: 跨构建复用依赖
+
+传统方式，每次构建都重新下载依赖:
+
+#+begin_src dockerfile
+FROM node:18
+COPY package*.json ./
+RUN npm ci  # 每次都从 registry 下载！
+#+end_src
+
+*BuildKit 的 cache mount*:
+
+#+begin_src dockerfile
+# syntax=docker/dockerfile:1.4
+FROM node:18
+COPY package*.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
+#+end_src
+
+BuildKit 会在 *宿主机* 维护一个持久化的 =/root/.npm= 缓存，所有构建共享:
+
+#+begin_example
+第一次构建: 下载 200 MB 依赖 (60s)
+第二次构建: 只更新变化的包 (5s)
+加速比: 12x
+#+end_example
+
+*支持的包管理器*:
+
+#+begin_src dockerfile
+# Go modules
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Rust cargo
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo build --release
+
+# Python pip
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
+
+# Maven
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn package
+#+end_src
+
+** 高级模式: 条件构建
+
+虽然 Dockerfile 没有 =IF/ELSE=，但可以通过多阶段 + =--target= 模拟:
+
+#+begin_src dockerfile
+# 基础阶段
+FROM node:18 AS base
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+
+# 开发环境
+FROM base AS dev
+COPY . .
+RUN npm install --only=dev
+CMD ["npm", "run", "dev"]
+
+# 生产环境
+FROM base AS prod
+COPY . .
+RUN npm prune --production
+RUN npm run build
+CMD ["npm", "start"]
+#+end_src
+
+#+begin_src bash
+# 构建开发镜像
+docker build --target dev -t myapp:dev .
+
+# 构建生产镜像
+docker build --target prod -t myapp:prod .
+#+end_src
+
+*结合 =ARG= 实现真正的条件构建*:
+
+#+begin_src dockerfile
+ARG BUILD_ENV=prod
+
+FROM base AS dev-config
+ENV NODE_ENV=development
+RUN npm install --only=dev
+
+FROM base AS prod-config
+ENV NODE_ENV=production
+RUN npm prune --production
+
+FROM ${BUILD_ENV}-config AS final
+COPY . .
+CMD ["npm", "start"]
+#+end_src
+
+#+begin_src bash
+docker build --build-arg BUILD_ENV=dev -t myapp:dev .
+docker build --build-arg BUILD_ENV=prod -t myapp:prod .
+#+end_src
+
+** =COPY --link=: 终极缓存优化
+
+BuildKit 0.10+ 引入的 =--link= 标志，彻底改变了 =COPY= 的语义。
+
+*** 传统 =COPY= 的问题
+
+#+begin_src dockerfile
+FROM ubuntu
+RUN apt-get update && apt-get install -y nginx  # 耗时 60s
+COPY app.py /app/
+#+end_src
+
+如果 =app.py= 改动，=COPY= 这层会失效，但问题是: =RUN apt-get= 这层 *也会失效*！因为 =COPY= 依赖前面所有层的 *目录状态*。
+
+*** =COPY --link= 的革命
+
+#+begin_src dockerfile
+# syntax=docker/dockerfile:1.4
+FROM ubuntu
+RUN apt-get update && apt-get install -y nginx
+COPY --link app.py /app/
+#+end_src
+
+=--link= 将 =COPY= 层变成 *独立层*，不依赖前面的目录状态。这意味着:
+
+- =app.py= 改动不会影响 =RUN apt-get= 的缓存
+- =COPY= 可以在 =RUN= 之前完成 (并行)
+- 镜像重建 (rebase) 成本极低
+
+*实测*:
+
+#+begin_example
+无 --link:
+  修改 app.py → 重建 COPY → 重建 RUN → 60s
+
+有 --link:
+  修改 app.py → 重建 COPY → 跳过 RUN → 2s
+#+end_example
+
+*限制*: =--link= 不能处理 *符号链接* 和 *特殊文件*，但 99% 的场景都不涉及这些。
+
+* Docker Layer Caching 内部机制
+
+** 缓存失效的触发条件
+
+Docker 通过 *校验和* (checksum) 判断层是否可复用:
+
+#+begin_src dockerfile
+FROM ubuntu:22.04           # Layer 1: 基础镜像 digest
+RUN apt-get update          # Layer 2: 命令字符串 hash
+COPY package.json /app/     # Layer 3: 文件内容 SHA256
+RUN npm install             # Layer 4: 命令 + Layer 3 hash
+#+end_src
+
+*缓存失效链*: Layer 3 改变 → Layer 4 失效 → Layer 5 失效 → ...
+
+*** 文件校验和计算
+
+对于 =COPY/ADD=，Docker 计算所有文件的 SHA256:
+
+#+begin_src bash
+# Docker 内部的等价逻辑
+find . -type f | sort | xargs sha256sum | sha256sum
+#+end_src
+
+*陷阱*: 即使文件内容相同，*时间戳* 或 *权限* 改变也会导致缓存失效！
+
+*解决*: 使用 =.dockerignore= 排除无关文件，或者设置确定性时间戳:
+
+#+begin_src bash
+# 在 CI 中统一时间戳
+find . -exec touch -t 202301010000.00 {} +
+docker build .
+#+end_src
+
+** BuildKit 的高级缓存后端
+
+*** Registry Cache (推荐 CI/CD)
+
+#+begin_src bash
+# 第一次构建
+docker buildx build \
+  --cache-to type=registry,ref=myregistry.com/myapp:buildcache,mode=max \
+  -t myapp:latest \
+  --push .
+
+# 后续构建 (可在不同机器上)
+docker buildx build \
+  --cache-from type=registry,ref=myregistry.com/myapp:buildcache \
+  -t myapp:latest \
+  --push .
+#+end_src
+
+*=mode=max= 的意义*:
+
+- 缓存 *所有* 中间层 (包括多阶段构建的每个阶段)
+- CI/CD 中必备，否则每次都要重建依赖层
+
+*存储位置*: 缓存清单存储为单独的 OCI artifact，与镜像并列。
+
+*** GitHub Actions Cache
+
+#+begin_src yaml
+- name: Build with cache
+  uses: docker/build-push-action@v5
+  with:
+    push: true
+    tags: myapp:latest
+    cache-from: type=gha
+    cache-to: type=gha,mode=max
+#+end_src
+
+*限制*: GitHub Actions 的 cache 服务有 *10 GB* 限额 (所有缓存共享)。
+
+*** Local Cache (开发环境)
+
+#+begin_src bash
+# 导出缓存到本地目录
+docker buildx build \
+  --cache-to type=local,dest=./buildcache,mode=max \
+  -t myapp .
+
+# 从本地导入缓存
+docker buildx build \
+  --cache-from type=local,src=./buildcache \
+  -t myapp .
+#+end_src
+
+*适用场景*: 在不同分支间共享缓存，避免重复下载依赖。
+
+** 缓存的垃圾回收
+
+BuildKit 的本地缓存是 *累积的*，不会自动清理:
+
+#+begin_src bash
+# 查看缓存占用
+docker buildx du
+
+# 输出示例
+ID                          RECLAIMABLE     SIZE            LAST ACCESSED
+abc123def456                true            1.2GB           2 days ago
+xyz789uvw012                false           450MB           5 hours ago
+Total:                      1.65GB
+#+end_src
+
+*清理策略*:
+
+#+begin_src bash
+# 清理所有未使用的缓存
+docker buildx prune
+
+# 清理超过 7 天的缓存
+docker buildx prune --keep-storage 50GB
+
+# 强制清理所有 (包括正在使用的)
+docker buildx prune -af
+#+end_src
+
+*CI/CD 建议*: 在每次构建前执行 =docker buildx prune --keep-storage 20GB=，避免 runner 磁盘满。
+
+* 其他常用 Docker 命令
+
+** 容器生命周期管理
+
+*** =docker run=
+
+创建并启动容器，核心参数:
+
+#+begin_src bash
+docker run \
+  -d \                          # 后台运行
+  --name myapp \                # 容器名称
+  --restart unless-stopped \    # 重启策略
+  -p 8000:8000 \                # 端口映射 (宿主:容器)
+  -v /host/data:/app/data \     # 卷挂载 (持久化)
+  -e DATABASE_URL=postgres://... \  # 环境变量
+  --network mynet \             # 自定义网络
+  --cpus 2 \                    # CPU 限制
+  --memory 1g \                 # 内存限制
+  --read-only \                 # 只读根文件系统 (安全)
+  --tmpfs /tmp \                # tmpfs 挂载 (临时文件)
+  myapp:latest
+#+end_src
+
+*=--restart= 策略*:
+
+- =no=: 不自动重启
+- =on-failure[:max-retries]=: 仅失败时重启
+- =always=: 总是重启 (即使手动停止)
+- =unless-stopped=: 总是重启，除非手动停止 (推荐)
+
+*端口映射陷阱*:
+
+#+begin_src bash
+# 错误: 监听 127.0.0.1，容器外无法访问
+docker run -p 127.0.0.1:8000:8000 myapp
+
+# 正确: 监听所有接口
+docker run -p 8000:8000 myapp
+
+# 或显式指定
+docker run -p 0.0.0.0:8000:8000 myapp
+#+end_src
+
+*** =docker ps=
+
+列出容器:
+
+#+begin_src bash
+# 运行中的容器
+docker ps
+
+# 所有容器 (包括已停止)
+docker ps -a
+
+# 只显示容器 ID (用于脚本)
+docker ps -q
+
+# 过滤
+docker ps --filter "status=exited" --filter "name=test"
+
+# 自定义格式
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+#+end_src
+
+*** =docker logs=
+
+查看容器日志:
+
+#+begin_src bash
+# 实时跟踪
+docker logs -f myapp
+
+# 显示时间戳
+docker logs -t myapp
+
+# 只看最近 100 行
+docker logs --tail 100 myapp
+
+# 查看特定时间范围
+docker logs --since 2023-01-01T10:00:00 --until 2023-01-01T11:00:00 myapp
+#+end_src
+
+*日志驱动*: 默认 =json-file=，可改为 =journald=, =syslog=, =fluentd= 等:
+
+#+begin_src bash
+docker run --log-driver=journald myapp
+#+end_src
+
+*** =docker exec=
+
+在运行中的容器内执行命令:
+
+#+begin_src bash
+# 进入 shell
+docker exec -it myapp bash
+
+# 执行单条命令
+docker exec myapp ls -la /app
+
+# 以特定用户运行
+docker exec -u 1000:1000 myapp whoami
+
+# 设置环境变量
+docker exec -e DEBUG=1 myapp python script.py
+#+end_src
+
+*=-it= 的含义*:
+
+- =-i= (interactive): 保持 STDIN 打开
+- =-t= (tty): 分配伪终端
+
+*调试技巧*:
+
+#+begin_src bash
+# 容器无 bash？用 sh
+docker exec -it myapp sh
+
+# 容器啥都没有？用 Alpine 镜像挂载
+docker run -it --rm \
+  --pid container:myapp \
+  --network container:myapp \
+  --cap-add SYS_PTRACE \
+  alpine sh
+#+end_src
+
+** 镜像管理
+
+*** =docker images=
+
+列出本地镜像:
+
+#+begin_src bash
+# 基本列表
+docker images
+
+# 包含中间层
+docker images -a
+
+# 只显示 digest
+docker images --digests
+
+# 过滤
+docker images --filter "dangling=true"  # 悬空镜像
+docker images --filter "before=myapp:v1.0"
+docker images --filter "label=version=1.0"
+#+end_src
+
+*** =docker rmi=
+
+删除镜像:
+
+#+begin_src bash
+# 删除单个
+docker rmi myapp:old
+
+# 批量删除悬空镜像
+docker rmi $(docker images -f "dangling=true" -q)
+
+# 强制删除 (即使有容器引用)
+docker rmi -f myapp:latest
+#+end_src
+
+*** =docker pull/push=
+
+#+begin_src bash
+# 拉取
+docker pull ubuntu:22.04
+docker pull --platform linux/arm64 ubuntu:22.04
+
+# 推送 (需先登录)
+docker login registry.example.com
+docker tag myapp:latest registry.example.com/team/myapp:v1.0
+docker push registry.example.com/team/myapp:v1.0
+#+end_src
+
+*多架构镜像*:
+
+#+begin_src bash
+# 构建多架构镜像
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t myapp:multi \
+  --push .
+#+end_src
+
+** 数据管理
+
+*** =docker volume=
+
+Docker volume 是 *推荐* 的持久化方式 (相比 bind mount):
+
+#+begin_src bash
+# 创建卷
+docker volume create mydata
+
+# 使用卷
+docker run -v mydata:/app/data myapp
+
+# 列出卷
+docker volume ls
+
+# 查看卷详情
+docker volume inspect mydata
+
+# 删除卷
+docker volume rm mydata
+
+# 清理未使用的卷
+docker volume prune
+#+end_src
+
+*卷的备份*:
+
+#+begin_src bash
+# 备份卷到 tar
+docker run --rm \
+  -v mydata:/data \
+  -v $(pwd):/backup \
+  alpine tar czf /backup/mydata.tar.gz -C /data .
+
+# 恢复卷
+docker run --rm \
+  -v mydata:/data \
+  -v $(pwd):/backup \
+  alpine tar xzf /backup/mydata.tar.gz -C /data
+#+end_src
+
+*** Volume vs. Bind Mount
+
+| 特性      | Volume                      | Bind Mount                  |
+|---------+----------------------------+-----------------------------|
+| 管理     | Docker 管理，位置透明              | 显式路径，宿主机可见                |
+| 性能     | 优化 (尤其 macOS/Windows)      | 原生文件系统性能                  |
+| 备份     | 需通过容器                       | 直接操作宿主机文件                 |
+| 权限     | 容器内用户自动匹配                   | 需手动处理 UID/GID 映射          |
+| 适用场景   | 数据库、日志、持久化存储                | 开发环境、配置文件、源码挂载            |
+
+** 网络管理
+
+*** =docker network=
+
+#+begin_src bash
+# 创建网络
+docker network create \
+  --driver bridge \
+  --subnet 172.20.0.0/16 \
+  --gateway 172.20.0.1 \
+  mynet
+
+# 查看网络
+docker network ls
+docker network inspect mynet
+
+# 将容器连接到网络
+docker network connect mynet myapp
+
+# 删除网络
+docker network rm mynet
+#+end_src
+
+*网络类型*:
+
+- =bridge=: 默认，容器间可通过名称通信
+- =host=: 共享宿主机网络栈 (无端口映射)
+- =none=: 无网络
+- =overlay=: Swarm 模式下的跨宿主机网络
+
+*容器间通信*:
+
+#+begin_src bash
+# 创建网络
+docker network create myapp-net
+
+# 启动数据库
+docker run -d --name db --network myapp-net postgres
+
+# 启动应用 (通过名称访问数据库)
+docker run -d --name app --network myapp-net \
+  -e DATABASE_URL=postgres://db:5432/mydb \
+  myapp
+#+end_src
+
+** 监控和调试
+
+*** =docker stats=
+
+实时查看容器资源占用:
+
+#+begin_src bash
+# 所有容器
+docker stats
+
+# 特定容器
+docker stats myapp db
+
+# 只显示一次 (用于脚本)
+docker stats --no-stream --format "{{.Name}}: {{.CPUPerc}} {{.MemUsage}}"
+#+end_src
+
+*输出示例*:
+
+#+begin_example
+CONTAINER  CPU %  MEM USAGE / LIMIT    MEM %  NET I/O        BLOCK I/O
+myapp      2.34%  512MiB / 1GiB        50%    1.2MB / 800kB  10MB / 5MB
+db         15.8%  800MiB / 2GiB        40%    5MB / 3MB      100MB / 50MB
+#+end_example
+
+*** =docker inspect=
+
+输出容器或镜像的完整 JSON 配置:
+
+#+begin_src bash
+# 查看容器配置
+docker inspect myapp
+
+# 提取特定字段 (使用 jq)
+docker inspect myapp | jq -r '.[0].NetworkSettings.IPAddress'
+docker inspect myapp | jq -r '.[0].State.Status'
+docker inspect myapp | jq -r '.[0].Config.Env[]'
+
+# 查看镜像层
+docker inspect myapp:latest | jq -r '.[0].RootFS.Layers[]'
+#+end_src
+
+* Docker Compose: 多容器编排
+
+虽然 =docker run= 可以启动单个容器，但对于多容器应用 (如 web + db + redis)，手动管理很繁琐。=docker-compose= 通过 YAML 文件定义整个服务栈。
+
+** 基本示例
+
+#+begin_src yaml
+# docker-compose.yml
+version: '3.9'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      cache_from:
+        - myapp:latest
+    image: myapp:latest
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgres://db:5432/mydb
+      REDIS_URL: redis://cache:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: mydb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  cache:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+
+volumes:
+  pgdata:
+  redis-data:
+#+end_src
+
+** 常用命令
+
+#+begin_src bash
+# 启动所有服务 (前台)
+docker-compose up
+
+# 后台启动
+docker-compose up -d
+
+# 重新构建镜像并启动
+docker-compose up --build
+
+# 停止所有服务
+docker-compose down
+
+# 停止并删除卷
+docker-compose down -v
+
+# 查看日志
+docker-compose logs -f web
+
+# 扩展服务 (运行多个实例)
+docker-compose up --scale web=3
+#+end_src
+
+** 开发环境优化
+
+#+begin_src yaml
+services:
+  web:
+    build:
+      context: .
+      target: dev  # 多阶段构建的开发阶段
+    volumes:
+      - .:/app  # 源码挂载，支持热重载
+      - /app/node_modules  # 匿名卷，避免覆盖容器内的 node_modules
+    environment:
+      NODE_ENV: development
+      DEBUG: "app:*"
+#+end_src
+
+* 最佳实践总结
+
+** Dockerfile 优化
+
+1. *最小化基础镜像*: 优先使用 =alpine= 或 =distroless=
+2. *合并 RUN 指令*: 减少层数
+3. *利用 .dockerignore*: 排除 =.git=, =node_modules= 等
+4. *分离依赖和代码*: 先 COPY =package.json=，再 COPY 源码
+5. *使用多阶段构建*: 分离构建和运行环境
+6. *启用 BuildKit*: 并行构建 + cache mounts
+7. *固定版本*: 避免 =latest= 标签，使用 digest pinning
+8. *非 root 用户*: =USER nobody= 提升安全性
+
+** CI/CD 缓存策略
+
+1. *使用 registry cache*: =--cache-to type=registry,mode=max=
+2. *缓存依赖阶段*: 显式 =--target deps --push=
+3. *定期清理*: =docker buildx prune --keep-storage 20GB=
+4. *避免 inline cache*: 生产环境用 registry cache
+
+** 安全建议
+
+1. *镜像扫描*: 使用 =trivy= 或 =grype= 检测漏洞
+2. *最小化攻击面*: 多阶段构建 + =distroless= / =scratch=
+3. *只读根文件系统*: =docker run --read-only=
+4. *禁止特权容器*: 避免 =--privileged=
+5. *secrets 管理*: 使用 =--secret= 而非 =ARG= 传递敏感信息
+
+** 性能调优
+
+1. *合理设置资源限制*: =--cpus=, =--memory=
+2. *使用卷而非 bind mount*: 尤其在 macOS/Windows
+3. *利用 BuildKit 并行构建*: 独立阶段互不干扰
+4. *减少镜像层数*: 合并 RUN 指令，使用 heredoc
+
+#+begin_src dockerfile
+# 传统方式 (3 层)
+RUN apt-get update
+RUN apt-get install -y curl git
+RUN apt-get clean
+
+# 优化方式 (1 层)
+RUN apt-get update && \
+    apt-get install -y curl git && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# BuildKit heredoc (1 层，更易读)
+RUN <<EOF
+apt-get update
+apt-get install -y curl git
+apt-get clean
+rm -rf /var/lib/apt/lists/*
+EOF
+#+end_src
+
+* 结语
+
+Docker 构建系统从简单的 =docker build= 发展到如今的 BuildKit + 多阶段构建 + 远程缓存，已经成为一个功能强大且复杂的工具链。理解其内部机制——从层的校验和计算、缓存失效链、到 BuildKit 的 DAG 执行模型——是优化构建流程的关键。
+
+*核心要点*:
+
+- BuildKit 是默认引擎 (Docker 23.0+)，提供并行构建和高级缓存
+- 多阶段构建 + =COPY --link= 可以极大提升缓存复用率
+- CI/CD 中务必使用 =--cache-to type=registry,mode=max=
+- =docker-compose= 简化多容器应用的开发和部署
+
+在实际生产环境中 (如你的机器人项目)，合理使用这些特性可以将构建时间从 10 分钟压缩到 30 秒，同时保证镜像体积最小化和安全性最大化。

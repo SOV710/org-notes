@@ -1,0 +1,1527 @@
+#+title: Signals and Systems Fundamentals: From Continuous Time to Digital Implementation
+#+author: SOV710
+#+date: 2025-12-24
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 两种信号：连续与离散的本质差异
+
+信号可以按时间的连续性分为两大类，它们在数学处理和物理实现上有本质区别。
+
+** 连续时间信号 (Continuous-Time Signal)
+
+连续时间信号 $x(t)$ 在时间轴上的 *任意细分* 都有意义。时间变量 $t \in \mathbb{R}$ 是实数。
+
+*数学特征*:
+
+- 导数、积分等微积分运算有意义
+- 可以在任意时刻 $t$ 求值
+- 两个无限接近的时刻 $t_1, t_2$ 对应不同的信号值
+
+*物理例子*:
+
+- 模拟音频信号 (麦克风输出的电压)
+- 温度随时间的变化
+- 机械系统的位移 $x(t)$
+- 模拟电路中的电压、电流
+
+*数学表示*:
+
+#+begin_example
+x(t) = A sin(ωt + φ)    // 连续正弦信号
+x(t) = e^(-t/τ)u(t)     // 指数衰减
+#+end_example
+
+** 离散时间信号 (Discrete-Time Signal)
+
+离散时间信号 $x[n]$ 只在 *整数时刻* 有定义。时间变量 $n \in \mathbb{Z}$ 是整数。
+
+*数学特征*:
+
+- 用 *差分* 代替微分: $\Delta x[n] = x[n] - x[n-1]$
+- 用 *求和* 代替积分: $\sum_{k=-\infty}^{n} x[k]$
+- 本质上是一个 *序列* (sequence)
+
+*物理例子*:
+
+- ADC 采样后的数字信号
+- 每天的股票收盘价
+- 控制系统的离散采样点
+- 你在 STM32 上处理的传感器数据数组
+
+*数学表示*:
+
+#+begin_example
+x[n] = A sin(Ωn + φ)    // 离散正弦序列
+x[n] = a^n u[n]         // 几何序列
+#+end_example
+
+** 连续到离散的转换：采样
+
+连续信号通过 *采样* (sampling) 转换为离散信号:
+
+$$x[n] = x(nT_s)$$
+
+其中:
+
+- $T_s$: 采样周期 (秒)
+- $f_s = 1/T_s$: 采样率 (Hz)
+- $n$: 采样点索引
+
+*奈奎斯特采样定理* (Nyquist-Shannon Sampling Theorem):
+
+要无失真地从离散信号恢复连续信号，采样率必须满足:
+
+$$f_s > 2f_{max}$$
+
+其中 $f_{max}$ 是原始信号的最高频率分量。
+
+*实际例子*:
+
+- 音频 CD: $f_s = 44.1$ kHz (人耳最高约 20 kHz)
+- 电话: $f_s = 8$ kHz (语音最高约 4 kHz)
+- 你的 IMU: 通常 100-1000 Hz 采样
+
+*混叠 (Aliasing) 问题*:
+
+如果 $f_s < 2f_{max}$，高频分量会被 "折叠" 回低频，无法区分:
+
+#+begin_src python
+# 1 Hz 信号以 1.5 Hz 采样 → 混叠为 0.5 Hz
+t = np.linspace(0, 2, 1000)
+x_true = np.sin(2*np.pi*1*t)         # 1 Hz
+t_sample = np.arange(0, 2, 1/1.5)    # 1.5 Hz 采样
+x_sample = np.sin(2*np.pi*1*t_sample)
+# x_sample 看起来像 0.5 Hz 信号！
+#+end_src
+
+*工程实践*: 采样前必须用 *抗混叠滤波器* (anti-aliasing filter) 去除高频。
+
+* 信号的强度：能量与功率
+
+信号的 "强度" 用 *能量* (Energy) 和 *功率* (Power) 两个指标量化。
+
+** 连续信号的能量和功率
+
+*能量*:
+
+$$E = \int_{-\infty}^{\infty} |x(t)|^2 \, dt$$
+
+*平均功率*:
+
+$$P = \lim_{T \to \infty} \frac{1}{T} \int_{-T/2}^{T/2} |x(t)|^2 \, dt$$
+
+** 离散信号的能量和功率
+
+*能量*:
+
+$$E = \sum_{n=-\infty}^{\infty} |x[n]|^2$$
+
+*平均功率*:
+
+$$P = \lim_{N \to \infty} \frac{1}{2N+1} \sum_{n=-N}^{N} |x[n]|^2$$
+
+** 为什么是平方？物理意义
+
+这个定义来源于 *电路功率公式*:
+
+- 电阻 $R$ 上的瞬时功率: $p(t) = \frac{v^2(t)}{R}$
+- 如果归一化 $R = 1$，功率正比于电压的平方
+
+即使对非电信号 (机械振动、声波)，这个定义也保持了 *数学一致性*:
+
+- 平方确保能量/功率非负
+- 对复信号用 $|x|^2 = x \cdot x^*$ (模的平方)
+
+** 信号分类
+
+根据能量和功率的有限性，信号分为三类:
+
+*** 能量信号 (Energy Signal)
+
+- $E < \infty$，$P = 0$
+- 信号在有限时间内消失 (衰减到零)
+
+*例子*:
+
+- 矩形脉冲: $x(t) = \begin{cases} 1, & |t| < T/2 \\ 0, & |t| \geq T/2 \end{cases}$
+  - $E = T$，$P = 0$
+- 指数衰减: $x(t) = e^{-at}u(t)$，$a > 0$
+  - $E = \frac{1}{2a}$，$P = 0$
+- 有限长序列: $x[n] = \begin{cases} 1, & 0 \leq n < N \\ 0, & \text{otherwise} \end{cases}$
+  - $E = N$，$P = 0$
+
+*** 功率信号 (Power Signal)
+
+- $E = \infty$，$0 < P < \infty$
+- 信号永远持续，但幅度有界
+
+*例子*:
+
+- 周期信号: $x(t) = A\cos(\omega_0 t)$
+  - $E = \infty$，$P = \frac{A^2}{2}$
+- 常数: $x(t) = C$
+  - $E = \infty$，$P = C^2$
+- 随机噪声 (白噪声): 功率有限但能量无限
+
+*** 既非能量也非功率信号
+
+- $E = \infty$，$P = \infty$
+- 信号不断增长，无界
+
+*例子*:
+
+- 斜坡: $x(t) = t$
+  - $E = \infty$，$P = \infty$
+- 指数增长: $x(t) = e^{at}$，$a > 0$
+  - $E = \infty$，$P = \infty$
+
+** Parseval 定理：时频域能量守恒
+
+*Parseval 定理* 是信号分析中的基本定理，表明 *时域能量 = 频域能量*。
+
+*连续时间*:
+
+$$\int_{-\infty}^{\infty} |x(t)|^2 \, dt = \int_{-\infty}^{\infty} |X(f)|^2 \, df$$
+
+其中 $X(f)$ 是 $x(t)$ 的傅里叶变换。
+
+*离散时间*:
+
+$$\sum_{n=-\infty}^{\infty} |x[n]|^2 = \frac{1}{2\pi}\int_{-\pi}^{\pi} |X(e^{j\omega})|^2 \, d\omega$$
+
+其中 $X(e^{j\omega})$ 是 $x[n]$ 的离散时间傅里叶变换 (DTFT)。
+
+*物理意义*:
+
+- 你可以在 *任一域* 计算能量，结果相同
+- 在频域看能量分布就是 *功率谱密度* (Power Spectral Density, PSD)
+- 这对分析系统振动频率成分很有用
+
+*应用实例*:
+
+假设你在分析机械振动信号 $x(t)$:
+
+1. 时域计算能量: $E = \int |x(t)|^2 \, dt$
+2. 频域计算能量: $E = \int |X(f)|^2 \, df$
+3. 查看 $|X(f)|^2$，找出主要振动频率 (共振峰)
+
+在 Python 中:
+
+#+begin_src python
+import numpy as np
+from scipy.fft import fft, fftfreq
+
+# 时域信号
+fs = 1000  # 采样率
+t = np.arange(0, 1, 1/fs)
+x = np.sin(2*np.pi*50*t) + 0.5*np.sin(2*np.pi*120*t)
+
+# 时域能量
+E_time = np.sum(x**2) / fs  # 归一化
+
+# 频域能量
+X = fft(x)
+E_freq = np.sum(np.abs(X)**2) / (fs * len(x))
+
+# 验证 Parseval 定理
+print(f"时域能量: {E_time:.6f}")
+print(f"频域能量: {E_freq:.6f}")
+# 两者应该相等 (数值误差内)
+#+end_src
+
+* 信号的变换：时间轴操作
+
+信号变换是对 *自变量* (时间轴) 本身做变换，而不是改变信号的幅度。
+
+** 基本变换类型
+
+*** 时移 (Time Shift / Delay)
+
+*连续*: $y(t) = x(t - t_0)$
+
+*离散*: $y[n] = x[n - n_0]$
+
+- $t_0 > 0$ (或 $n_0 > 0$): 信号 *右移* (延迟)
+- $t_0 < 0$ (或 $n_0 < 0$): 信号 *左移* (提前)
+
+*物理意义*: 信号在时间轴上平移，波形形状不变。
+
+*例子*:
+
+- 延迟的回声: $y(t) = x(t - \tau)$
+- 数字延迟线: $y[n] = x[n - D]$
+- 你的控制器如果有 3 个采样周期的延迟: $y[n] = x[n - 3]$
+
+*** 时间反转 (Time Reversal)
+
+*连续*: $y(t) = x(-t)$
+
+*离散*: $y[n] = x[-n]$
+
+*直观理解*: 就像倒着播放录像，$t=1$ 的值变成 $t=-1$ 的值。
+
+*应用*:
+
+- 卷积计算中，需要反转其中一个信号
+- 匹配滤波器: 用 $h(t) = x(-t)$ 检测信号 $x(t)$
+- 你在写卷积算法时经常要反转其中一个序列
+
+#+begin_src python
+# Python 中的时间反转
+x = np.array([1, 2, 3, 4, 5])
+x_reversed = x[::-1]  # [5, 4, 3, 2, 1]
+#+end_src
+
+*** 时间尺度变换 (Time Scaling)
+
+*连续*: $y(t) = x(at)$，$a > 0$
+
+*离散*: $y[n] = x[an]$ (这个在离散时间比较复杂，因为 $an$ 必须是整数)
+
+- $a > 1$: *压缩* - 信号变快，持续时间变短
+- $0 < a < 1$: *拉伸* - 信号变慢，持续时间变长
+
+*重要性质*: 时间压缩 $a$ 倍，频率就扩展 $a$ 倍:
+
+$$x(at) \xleftrightarrow{\text{FT}} \frac{1}{|a|}X\left(\frac{f}{a}\right)$$
+
+*这就是为什么快放音频会音调变高！*
+
+*例子*:
+
+假设 $x(t) = \sin(2\pi f_0 t)$:
+
+- $y(t) = x(2t) = \sin(4\pi f_0 t)$ → 频率变为 $2f_0$ (高八度)
+- $y(t) = x(0.5t) = \sin(\pi f_0 t)$ → 频率变为 $0.5f_0$ (低八度)
+
+** 组合变换：先缩放后平移
+
+实际中常常是几种变换的组合: $y(t) = x(at - b)$。
+
+*处理顺序很关键！* 有两种等价的理解方式:
+
+1. *先缩放后平移* (推荐):
+   $$y(t) = x(at - b) = x\left(a\left(t - \frac{b}{a}\right)\right)$$
+   - 步骤 1: 先做尺度变换 $x(at)$
+   - 步骤 2: 再右移 $b/a$ 得到 $x(a(t - b/a))$
+
+2. *先平移后缩放*:
+   - 这种方法容易出错，不推荐
+
+*举例*:
+
+假设 $x(t) = \begin{cases} 1, & 0 \leq t \leq 2 \\ 0, & \text{otherwise} \end{cases}$
+
+求 $y(t) = x(2t - 3)$:
+
+1. 改写为 $y(t) = x(2(t - 1.5))$
+2. 先压缩 2 倍: 信号从 $[0, 2]$ 变到 $[0, 1]$
+3. 再右移 1.5: 信号在 $[1.5, 2.5]$
+
+所以 $y(t) = \begin{cases} 1, & 1.5 \leq t \leq 2.5 \\ 0, & \text{otherwise} \end{cases}$
+
+** 离散时间的尺度变换：采样率转换
+
+离散时间的尺度变换比较麻烦，因为 $x[an]$ 要求 $an$ 是整数。
+
+*** 下采样 (Decimation / Downsampling)
+
+$y[n] = x[Mn]$，$M$ 是整数 (抽取因子)。
+
+- 每隔 $M$ 个样本取一个
+- 采样率降低 $M$ 倍: $f_s' = f_s / M$
+
+*例子*:
+
+你的 ADC 如果原本以 48 kHz 采样，每 3 个取 1 个就变成 16 kHz。
+
+#+begin_src c
+// 下采样代码 (M = 3)
+int M = 3;
+for (int n = 0; n < N_out; n++) {
+    y[n] = x[M * n];
+}
+#+end_src
+
+*注意*: 下采样前必须 *低通滤波*，否则会混叠！
+
+*** 上采样 (Upsampling / Interpolation)
+
+在样本之间插入零或插值。
+
+*零插值* (Zero-Padding):
+
+$$y[n] = \begin{cases} x[n/L], & n = 0, \pm L, \pm 2L, \ldots \\ 0, & \text{otherwise} \end{cases}$$
+
+其中 $L$ 是插值因子。
+
+*例子*:
+
+原始信号: =[1, 2, 3]=
+上采样 $L=2$: =[1, 0, 2, 0, 3, 0]=
+
+*线性插值*:
+
+在零插值后，用低通滤波器平滑过渡。
+
+#+begin_src python
+# SciPy 中的上采样 + 插值
+from scipy.signal import resample
+
+x = np.array([1, 2, 3, 4, 5])
+y = resample(x, len(x) * 2)  # 上采样 2 倍
+# y 长度为 10，通过插值得到中间值
+#+end_src
+
+*** 时间反转 (容易)
+
+$y[n] = x[-n]$ 很直接。
+
+*写卷积算法时经常要反转其中一个序列*:
+
+#+begin_src python
+# 卷积的实现
+def convolve(x, h):
+    h_flipped = h[::-1]  # 反转 h
+    result = []
+    for n in range(len(x) + len(h) - 1):
+        sum_val = 0
+        for k in range(len(h)):
+            if 0 <= n - k < len(x):
+                sum_val += x[n - k] * h_flipped[len(h) - 1 - k]
+        result.append(sum_val)
+    return result
+#+end_src
+
+** 偶信号与奇信号
+
+时间反转还引出信号的 *对称性*。
+
+*** 偶信号 (Even Signal)
+
+$x(t) = x(-t)$
+
+- 关于 $t=0$ 对称
+- 例子: $\cos(t)$，$t^2$，$e^{-t^2}$
+
+*** 奇信号 (Odd Signal)
+
+$x(t) = -x(-t)$
+
+- 关于原点反对称
+- 例子: $\sin(t)$，$t$，$t^3$
+
+*** 任意信号的分解
+
+*任何信号* 都可以唯一分解为偶部和奇部:
+
+$$x(t) = \underbrace{\frac{x(t) + x(-t)}{2}}_{x_e(t) \text{ (偶部)}} + \underbrace{\frac{x(t) - x(-t)}{2}}_{x_o(t) \text{ (奇部)}}$$
+
+*验证*:
+
+- $x_e(-t) = \frac{x(-t) + x(t)}{2} = x_e(t)$ ✓ (偶)
+- $x_o(-t) = \frac{x(-t) - x(t)}{2} = -x_o(t)$ ✓ (奇)
+- $x_e(t) + x_o(t) = x(t)$ ✓
+
+*在傅里叶分析中的意义*:
+
+- *偶信号* 的傅里叶变换是 *实函数*
+- *奇信号* 的傅里叶变换是 *纯虚函数*
+
+这简化了频域分析。
+
+* 周期信号：时间的循环
+
+周期信号是信号分析中的基础，因为任何信号都可以用周期信号 (正弦/复指数) 叠加表示。
+
+** 连续时间周期信号
+
+如果存在正数 $T_0$ 使得:
+
+$$x(t + T_0) = x(t), \quad \forall t \in \mathbb{R}$$
+
+则 $x(t)$ 是周期信号，$T_0$ 称为 *周期*。
+
+满足条件的 *最小正数* $T_0$ 称为 *基本周期* (fundamental period)。
+
+对应的 *基本频率*:
+
+$$f_0 = \frac{1}{T_0} \quad (\text{Hz}), \quad \omega_0 = \frac{2\pi}{T_0} = 2\pi f_0 \quad (\text{rad/s})$$
+
+*例子*:
+
+- $x(t) = \cos(2\pi f_0 t)$: 周期 $T_0 = 1/f_0$
+- $x(t) = \sin(\omega_0 t) + \sin(3\omega_0 t)$: 周期 $T_0 = 2\pi/\omega_0$
+- 方波、三角波、锯齿波: 都是周期信号
+
+** 离散时间周期信号
+
+如果存在正整数 $N_0$ 使得:
+
+$$x[n + N_0] = x[n], \quad \forall n \in \mathbb{Z}$$
+
+则 $x[n]$ 是周期信号，$N_0$ 称为周期 (*必须是整数*)。
+
+基本周期是满足条件的 *最小正整数* $N_0$。
+
+对应的基本频率:
+
+$$\Omega_0 = \frac{2\pi}{N_0} \quad (\text{rad/sample})$$
+
+*** 关键差异：不是所有频率都产生周期信号！
+
+只有当 $\Omega_0 / (2\pi)$ 是 *有理数* 时才周期:
+
+$$\frac{\Omega_0}{2\pi} = \frac{m}{N_0}, \quad m, N_0 \in \mathbb{Z}$$
+
+*例子*:
+
+- $x[n] = \cos(\pi n / 4)$: $\Omega_0 = \pi/4$，$\frac{\pi/4}{2\pi} = 1/8$，周期 $N_0 = 8$ ✓
+- $x[n] = \cos(n)$: $\Omega_0 = 1$，$\frac{1}{2\pi}$ 是无理数，*不周期* ✗
+
+*这是连续和离散信号的重要区别！*
+
+在实际应用中:
+
+#+begin_src python
+import numpy as np
+
+# 周期信号
+n = np.arange(100)
+x1 = np.cos(np.pi * n / 4)  # 周期 8
+# 验证: x1[0] == x1[8] == x1[16] ...
+
+# 非周期信号
+x2 = np.cos(n)  # 不周期
+# x2 不会精确重复
+#+end_src
+
+** 周期信号的能量和功率
+
+周期信号 (只要幅度有界) 都是 *功率信号*:
+
+- 能量: $E = \infty$ (信号无限持续)
+- 功率: $P = \frac{1}{T_0}\int_0^{T_0} |x(t)|^2 \, dt$ (在一个周期内平均)
+
+*例子*: $x(t) = A\cos(\omega_0 t)$
+
+$$P = \frac{1}{T_0}\int_0^{T_0} A^2\cos^2(\omega_0 t) \, dt = \frac{A^2}{2}$$
+
+*这就是为什么交流电的有效值 (RMS) 是峰值的 $1/\sqrt{2}$！*
+
+- 峰值: $A$
+- RMS: $A / \sqrt{2}$
+- 功率: $(A / \sqrt{2})^2 = A^2 / 2$
+
+** 不同周期信号的和
+
+如果 $x_1(t)$ 周期 $T_1$，$x_2(t)$ 周期 $T_2$，则 $y(t) = x_1(t) + x_2(t)$ 的周期是？
+
+*只有当 $T_1/T_2$ 是有理数时，$y(t)$ 才周期！*
+
+周期为 $T_0 = \text{lcm}(T_1, T_2)$ (最小公倍数的概念推广)。
+
+*例子*:
+
+- $x_1(t) = \sin(2\pi \cdot 3t)$，$T_1 = 1/3$
+- $x_2(t) = \sin(2\pi \cdot 5t)$，$T_2 = 1/5$
+- $y(t) = x_1(t) + x_2(t)$，$T_0 = \text{lcm}(1/3, 1/5) = 1$ ✓
+
+但如果:
+
+- $x_1(t) = \sin(2\pi t)$，$T_1 = 1$
+- $x_2(t) = \sin(2\pi \sqrt{2} t)$，$T_2 = 1/\sqrt{2}$
+- $T_1/T_2 = \sqrt{2}$ (无理数)，$y(t)$ *不周期* ✗
+
+** 离散时间频率参数的周期性
+
+这是离散信号的 *关键特性*:
+
+$$e^{j(\Omega_0 + 2\pi)n} = e^{j\Omega_0 n} \cdot e^{j2\pi n} = e^{j\Omega_0 n} \cdot 1$$
+
+因为 $n$ 是整数，所以 $e^{j2\pi n} = (\cos(2\pi) + j\sin(2\pi))^n = 1^n = 1$。
+
+*结果*: 频率 $\Omega$ 和 $\Omega + 2\pi k$ 产生 *完全相同的离散序列*，无法区分！
+
+*类比*: 就像电影的频闪效应 (Wagon-Wheel Effect):
+
+- 车轮转得太快 (高频)
+- 在固定帧率 (采样) 下看起来像慢转甚至倒转 (低频)
+- 这两个不同的转速在你的采样点上 "重合" 了
+
+*重要推论*:
+
+- 离散时间的有效频率范围只有 $[0, 2\pi)$ 或 $[-\pi, \pi)$
+- 超出范围的频率会 *混叠* (alias) 回这个范围
+- 这就是为什么采样频率必须 > 2 倍信号频率 (奈奎斯特定理)
+
+对于采样率 $f_s$ 的离散信号:
+
+- 最高可区分频率: $f_s/2$ (奈奎斯特频率)
+- 对应 $\Omega = \pi$
+
+超过这个频率会发生混叠，就是因为离散时间频率的周期性。
+
+** 傅里叶级数预告
+
+周期信号可以表示为 *谐波* 的叠加:
+
+$$x(t) = \sum_{k=-\infty}^{\infty} a_k e^{jk\omega_0 t}$$
+
+这就是 *傅里叶级数*，每一项 $e^{jk\omega_0 t}$ 的频率是基本频率的整数倍。
+
+*这解释了为什么周期信号的频谱是离散的* (一系列谱线)，而非周期信号的频谱是连续的。
+
+你在做频谱分析时，看到的那些尖峰就对应周期成分的谐波。
+
+* 指数和正弦信号：LTI 系统的特征函数
+
+指数和正弦信号是信号分析中最基础也最重要的信号，因为它们是 *LTI 系统的特征函数*。
+
+** 连续时间复指数信号
+
+$$x(t) = Ce^{st}$$
+
+其中 $C, s \in \mathbb{C}$ (复数)。
+
+将 $s$ 写成 $s = \sigma + j\omega$:
+
+$$x(t) = Ce^{(\sigma + j\omega)t} = Ce^{\sigma t}e^{j\omega t}$$
+
+*** 纯实指数 ($\omega = 0$, $\sigma \neq 0$)
+
+$$x(t) = Ce^{\sigma t}$$
+
+- $\sigma > 0$: *指数增长*
+  - 例子: 失控的正反馈系统、复利增长、核链式反应
+- $\sigma < 0$: *指数衰减*
+  - 例子: RC 电路放电 $v(t) = V_0 e^{-t/RC}$
+  - 放射性衰变: $N(t) = N_0 e^{-\lambda t}$
+- $\sigma = 0$: 常数
+
+*时间常数*: $\tau = -1/\sigma$ (衰减到 $1/e \approx 37\%$ 的时间)
+
+*** 纯虚指数 ($\sigma = 0$, $\omega \neq 0$)
+
+$$x(t) = Ce^{j\omega t} = C[\cos(\omega t) + j\sin(\omega t)]$$
+
+这是 *周期信号*，周期 $T = 2\pi/\omega$。
+
+*在复平面上*，$e^{j\omega t}$ 以角速度 $\omega$ 绕单位圆旋转。
+
+*这是傅里叶分析的基础！* 任何信号都可以表示为这些复指数的叠加。
+
+*** 一般复指数 ($\sigma \neq 0$, $\omega \neq 0$)
+
+$$x(t) = Ce^{\sigma t}e^{j\omega t}$$
+
+- $\sigma < 0$: *衰减振荡* - 欠阻尼二阶系统
+  - 例子: 阻尼弹簧振子、RLC 电路
+- $\sigma > 0$: *增长振荡* - 不稳定振荡系统
+  - 例子: 自激振荡、不稳定的反馈系统
+
+*在你的机器人控制中*:
+
+- 极点在左半平面 ($\sigma < 0$): 稳定
+- 极点在右半平面 ($\sigma > 0$): 不稳定
+- 极点在虚轴上 ($\sigma = 0$): 临界稳定
+
+** 连续时间正弦信号
+
+*欧拉公式* (Euler's Formula):
+
+$$e^{j\omega t} = \cos(\omega t) + j\sin(\omega t)$$
+
+反过来:
+
+$$\cos(\omega t) = \frac{e^{j\omega t} + e^{-j\omega t}}{2}$$
+
+$$\sin(\omega t) = \frac{e^{j\omega t} - e^{-j\omega t}}{2j}$$
+
+所以 *正弦信号是复指数的实部或虚部*。
+
+*一般形式*:
+
+$$x(t) = A\cos(\omega_0 t + \phi)$$
+
+- $A$: 幅度
+- $\omega_0 = 2\pi f_0$: 角频率 (弧度/秒)
+- $\phi$: 相位 (弧度)
+- 周期: $T_0 = 2\pi/\omega_0 = 1/f_0$
+
+*复数表示*:
+
+$$x(t) = \text{Re}\{Ae^{j\phi}e^{j\omega_0 t}\} = \text{Re}\{\tilde{A}e^{j\omega_0 t}\}$$
+
+其中 $\tilde{A} = Ae^{j\phi}$ 是 *复振幅* (包含幅度和相位)。
+
+*这种表示在分析相位关系时非常方便*:
+
+- 两个信号相位差: $\Delta\phi = \arg(\tilde{A}_1 / \tilde{A}_2)$
+- 叠加: $\tilde{A}_1 + \tilde{A}_2$ (相量加法)
+
+** 离散时间复指数信号
+
+$$x[n] = C\alpha^n$$
+
+其中 $C, \alpha \in \mathbb{C}$。
+
+将 $\alpha$ 写成极坐标 $\alpha = |\alpha|e^{j\Omega_0}$:
+
+$$x[n] = C|\alpha|^n e^{j\Omega_0 n}$$
+
+*** 实指数 ($\Omega_0 = 0$ 或 $\pi$)
+
+$$x[n] = C\alpha^n, \quad \alpha \in \mathbb{R}$$
+
+- $|\alpha| > 1$: 指数增长
+- $|\alpha| < 1$: 指数衰减
+- $\alpha < 0$: 符号交替 ($(-1)^n$ 因子)
+
+*例子*:
+
+#+begin_src python
+import numpy as np
+
+n = np.arange(20)
+x1 = 0.9**n       # 衰减
+x2 = 1.1**n       # 增长
+x3 = (-0.9)**n    # 衰减 + 交替
+#+end_src
+
+*** 复指数
+
+$$x[n] = e^{j\Omega_0 n}$$
+
+*关键差异*:
+
+- 连续时间 $e^{j\omega t}$ 对所有 $\omega$ 都不同
+- 离散时间 $e^{j\Omega_0 n}$ 关于 $\Omega_0$ 是 *周期的* (周期 $2\pi$):
+
+$$e^{j(\Omega_0 + 2\pi)n} = e^{j\Omega_0 n}$$
+
+所以离散时间只需考虑 $\Omega_0 \in [0, 2\pi)$ 或 $[-\pi, \pi)$。
+
+另一个差异: $e^{j\Omega_0 n}$ 只有当 $\Omega_0/(2\pi)$ 是有理数时才周期！
+
+*** 一般形式
+
+$$x[n] = C|\alpha|^n e^{j\Omega_0 n}$$
+
+** 离散时间正弦信号
+
+$$x[n] = A\cos(\Omega_0 n + \phi)$$
+
+同样可以用复指数表示:
+
+$$\cos(\Omega_0 n) = \frac{e^{j\Omega_0 n} + e^{-j\Omega_0 n}}{2}$$
+
+*重要性质*:
+
+1. 周期性条件: $\Omega_0/(2\pi) = m/N$ (有理数)
+2. 频率的模糊性: $\cos((\Omega_0 + 2\pi)n) = \cos(\Omega_0 n)$
+3. 高频等价于低频: $\cos((2\pi - \Omega_0)n) = \cos(\Omega_0 n)$
+
+*最后一点很重要*: 在离散时间，频率 $\Omega$ 和 $2\pi - \Omega$ 产生相同信号！
+
+*这就是混叠 (aliasing) 的根源。*
+
+** 为什么这些信号特殊？
+
+*** LTI 系统的特征函数
+
+如果输入是 $x(t) = e^{st}$，LTI 系统的输出是:
+
+$$y(t) = H(s)e^{st}$$
+
+其中 $H(s)$ 是系统的 *传递函数*，只是一个复数 (不依赖时间)。
+
+*这意味着*:
+
+- *信号形式不变* (仍是同频率的复指数)
+- *只改变幅度和相位* (由 $H(s)$ 决定)
+
+*这就是为什么用正弦波测试系统 (频率响应)！*
+
+*例子*: 你给机器人关节输入正弦参考信号 $\theta_{ref}(t) = \sin(\omega t)$，输出也是正弦，只是幅度变了、相位滞后了。通过扫频可以得到系统的 Bode 图。
+
+*** 傅里叶分析的基础
+
+*任何信号* 都可以表示为复指数的叠加:
+
+*连续时间*:
+
+$$x(t) = \int_{-\infty}^{\infty} X(j\omega)e^{j\omega t} \, d\omega$$
+
+*离散时间*:
+
+$$x[n] = \frac{1}{2\pi}\int_{-\pi}^{\pi} X(e^{j\Omega})e^{j\Omega n} \, d\Omega$$
+
+所以只要知道系统对每个频率复指数的响应 $H(j\omega)$，就能预测对任意输入的响应！
+
+所有这些信号的核心是:
+
+$$e^{st} \quad \text{或} \quad z^n$$
+
+它们是线性系统的 "自然振荡模式"。系统的所有动态行为都可以分解为这些模式的叠加。
+
+这就是为什么拉普拉斯变换、傅里叶变换、Z 变换都基于这些函数 —— 它们揭示了系统的本质结构。
+
+* 单位冲激和阶跃函数：系统分析的探针
+
+单位冲激和单位阶跃是信号分析中最基础的 "测试信号" 和 "构建模块"。
+
+** 离散时间 (更直观)
+
+*** 单位脉冲 (Unit Impulse / Unit Sample)
+
+*定义*:
+
+$$\delta[n] = \begin{cases} 1, & n = 0 \\ 0, & n \neq 0 \end{cases}$$
+
+*图形*: 只在 $n=0$ 处有一个高度为 1 的脉冲，其他地方都是 0。
+
+*性质*:
+
+*1. 采样性质* (最重要！):
+
+$$x[n]\delta[n] = x[0]\delta[n]$$
+
+$$x[n]\delta[n-n_0] = x[n_0]\delta[n-n_0]$$
+
+冲激 "挑出" 了信号在某个时刻的值。
+
+*2. 筛选性质*:
+
+$$\sum_{k=-\infty}^{\infty} x[k]\delta[n-k] = x[n]$$
+
+*这说明任何信号都可以表示为移位冲激的加权和*:
+
+$$x[n] = \sum_{k=-\infty}^{\infty} x[k]\delta[n-k]$$
+
+*这是卷积的基础！*
+
+*3. 归一化*:
+
+$$\sum_{n=-\infty}^{\infty} \delta[n] = 1$$
+
+*物理意义*:
+
+- 一个瞬间的脉冲
+- 在数组中就是 =[..., 0, 0, 1, 0, 0, ...]=
+- 你在 STM32 处理信号时，=delta[i]= 就是这个
+
+*** 单位阶跃 (Unit Step)
+
+*定义*:
+
+$$u[n] = \begin{cases} 1, & n \geq 0 \\ 0, & n < 0 \end{cases}$$
+
+*图形*: 在 $n=0$ 处从 0 跳变到 1，之后保持为 1。
+
+*物理意义*:
+
+- 开关在 $n=0$ 时刻合闭
+- 系统在 $n=0$ 开始工作
+- 你的机器人在某时刻启动
+
+*** 它们之间的关系
+
+*阶跃是冲激的累加*:
+
+$$u[n] = \sum_{k=-\infty}^{n} \delta[k] = \sum_{k=0}^{\infty} \delta[n-k]$$
+
+直观理解: 把从 $-\infty$ 到 $n$ 的所有冲激加起来，得到阶跃。
+
+*冲激是阶跃的一阶差分*:
+
+$$\delta[n] = u[n] - u[n-1]$$
+
+这就是 "离散导数" 的概念。
+
+** 连续时间 (更抽象)
+
+*** 单位阶跃函数
+
+*定义*:
+
+$$u(t) = \begin{cases} 1, & t > 0 \\ 0, & t < 0 \end{cases}$$
+
+在 $t=0$ 处的值通常定义为 $1/2$ 或不定义 (不影响积分)。
+
+*物理例子*:
+
+- 开关在 $t=0$ 合闭，电路通电
+- 阶跃输入到控制系统
+- 突然施加的恒定力
+
+*** 单位冲激函数 (Dirac Delta Function)
+
+*这个比较 tricky，因为它不是普通意义的函数！*
+
+*非正式定义*:
+
+$$\delta(t) = \begin{cases} \infty, & t = 0 \\ 0, & t \neq 0 \end{cases}$$
+
+但满足:
+
+$$\int_{-\infty}^{\infty} \delta(t) \, dt = 1$$
+
+*更严格的定义* (通过极限):
+
+可以看作矩形脉冲的极限:
+
+$$\delta(t) = \lim_{\Delta \to 0} \delta_\Delta(t)$$
+
+其中:
+
+$$\delta_\Delta(t) = \begin{cases} \frac{1}{\Delta}, & |t| < \Delta/2 \\ 0, & |t| \geq \Delta/2 \end{cases}$$
+
+- 宽度 $\Delta \to 0$
+- 高度 $1/\Delta \to \infty$
+- 面积始终为 1
+
+*数学上*: $\delta(t)$ 是一个 "广义函数" 或 "分布" (distribution)，只在积分符号下有意义。
+
+*性质*:
+
+*1. 筛选性质* (定义性质):
+
+$$\int_{-\infty}^{\infty} x(t)\delta(t) \, dt = x(0)$$
+
+$$\int_{-\infty}^{\infty} x(t)\delta(t-t_0) \, dt = x(t_0)$$
+
+冲激 "挑出" 函数在某点的值。
+
+*2. 尺度变换*:
+
+$$\delta(at) = \frac{1}{|a|}\delta(t)$$
+
+这是因为积分必须保持为 1。
+
+*3. 与阶跃的关系*:
+
+$$u(t) = \int_{-\infty}^{t} \delta(\tau) \, d\tau$$
+
+$$\delta(t) = \frac{du(t)}{dt}$$
+
+阶跃是冲激的积分，冲激是阶跃的导数。
+
+*4. 偶函数*:
+
+$$\delta(-t) = \delta(t)$$
+
+*5. 卷积单位元*:
+
+$$x(t) * \delta(t) = x(t)$$
+
+$$x(t) * \delta(t-t_0) = x(t-t_0)$$
+
+** 为什么需要 $\delta(t)$？
+
+虽然物理上不存在真正的 "无限窄、无限高" 脉冲，但 $\delta(t)$ 作为数学工具非常有用:
+
+*1. 简化表示*
+
+采样可以写成:
+
+$$x_s(t) = x(t) \sum_{n=-\infty}^{\infty} \delta(t - nT_s)$$
+
+*2. 描述瞬时作用*
+
+- 点电荷的电场
+- 瞬时的冲击力 (碰撞)
+- 理想化的脉冲输入
+
+*3. 系统分析*
+
+系统的冲激响应 $h(t)$ 完全刻画了 LTI 系统:
+
+$$y(t) = x(t) * h(t) = \int_{-\infty}^{\infty} x(\tau)h(t-\tau) \, d\tau$$
+
+** 一个统一的视角
+
+单位冲激和单位阶跃是 "最简单" 的信号:
+
+- $\delta$: 最局部化 (只在一点非零)
+- $u$: 最简单的跳变
+
+所有其他信号都可以用它们构造:
+
+- *时域*: 信号是移位冲激的叠加
+- *频域*: 冲激对应全频谱，阶跃对应低频 + 直流
+
+在系统分析中:
+
+- *冲激响应* $h(t)$ 包含系统的所有信息
+- *阶跃响应* $s(t) = \int_{-\infty}^t h(\tau) \, d\tau$ 描述系统的稳态特性
+
+你在做控制和信号处理时，这两个函数无处不在。它们是最基础的 "测试探针"。
+
+* 系统：从输入到输出的变换
+
+*系统* 是一个过程，将输入信号变换为输出信号。
+
+*连续时间系统*:
+
+$$x(t) \xrightarrow{\text{System}} y(t)$$
+
+或写成 $y(t) = \mathcal{T}\{x(t)\}$
+
+*离散时间系统*:
+
+$$x[n] \xrightarrow{\text{System}} y[n]$$
+
+或写成 $y[n] = \mathcal{T}\{x[n]\}$
+
+$\mathcal{T}$ 是系统的变换算子。
+
+*物理例子*:
+
+- 放大器: 输入信号 → 放大的信号
+- 你的 PID 控制器: 误差信号 → 控制量
+- 数字滤波器: 原始数据 → 滤波后数据
+- 机械系统: 输入力 → 位移
+
+** 系统的基本性质
+
+*** 记忆性 (Memory)
+
+*无记忆系统 (Memoryless)*: 输出只依赖 *当前时刻* 的输入。
+
+$$y(t) = f(x(t))$$
+
+$$y[n] = f(x[n])$$
+
+*例子*:
+
+- 电阻: $v(t) = Ri(t)$ (欧姆定律)
+- 放大器: $y(t) = Kx(t)$
+- ADC: 电压 → 数字值 (瞬时转换)
+- 平方器: $y(t) = x^2(t)$
+
+*有记忆系统 (With Memory)*: 输出依赖 *过去或未来* 的输入。
+
+*例子*:
+
+- 电容: $v(t) = \frac{1}{C}\int_{-\infty}^t i(\tau) \, d\tau$ (依赖过去所有电流)
+- 累加器: $y[n] = \sum_{k=-\infty}^n x[k]$
+- IIR 滤波器: $y[n] = ay[n-1] + bx[n]$ (依赖过去输出)
+
+*** 因果性 (Causality)
+
+*因果系统*: 输出只依赖 *当前和过去* 的输入，不依赖未来。
+
+数学表达: 如果对所有 $t < t_0$ (或 $n < n_0$) 有 $x_1(t) = x_2(t)$，则 $y_1(t_0) = y_2(t_0)$。
+
+*物理意义*: 所有 *实时*、*物理可实现* 的系统都必须是因果的。
+
+*因果系统例子*:
+
+- 所有物理系统 (电路、机械系统)
+- 实时控制器: 不能用未来的传感器数据
+- FIR 滤波器: $y[n] = \sum_{k=0}^{M} h[k]x[n-k]$ (只用过去)
+
+*非因果系统例子*:
+
+- 理想低通滤波器 (数学上存在，物理不可实现)
+- 中心差分: $y[n] = x[n+1] - x[n-1]$ (用了未来的 $x[n+1]$)
+- 零相位滤波: 先正向过滤，再反向过滤 (=filtfilt= in MATLAB)
+
+*应用*:
+
+- 在线控制: 必须因果
+- 离线数据分析: 可以非因果 (比如用零相位滤波)
+
+*** 稳定性 (Stability)
+
+*BIBO 稳定 (Bounded-Input Bounded-Output)*: 有界输入产生有界输出。
+
+数学表达: 如果 $|x(t)| < M_x < \infty$ 对所有 $t$，则存在 $M_y < \infty$ 使得 $|y(t)| < M_y$。
+
+*稳定系统例子*:
+
+- 带阻尼的弹簧: 输入有限力，位移有限
+- 稳定的 PID 控制器: 误差有界，控制量有界
+- 低通滤波器: $y[n] = 0.5y[n-1] + 0.5x[n]$ (系数 $<1$)
+
+*不稳定系统例子*:
+
+- 积分器: $y(t) = \int_{-\infty}^t x(\tau) \, d\tau$
+  - 输入常数 $x(t) = 1$，输出线性增长 $y(t) = t$ → 无界！
+- 正反馈放大器: $y[n] = 2y[n-1] + x[n]$
+  - 系数 $>1$，输出指数增长
+
+*判据*: 对 LTI 系统，稳定性等价于:
+
+$$\int_{-\infty}^{\infty} |h(t)| \, dt < \infty \quad \text{或} \quad \sum_{n=-\infty}^{\infty} |h[n]| < \infty$$
+
+其中 $h$ 是冲激响应。
+
+*** 时不变性 (Time Invariance)
+
+*时不变系统*: 系统特性不随时间改变。
+
+如果 $x(t) \to y(t)$，则对任意时移 $t_0$:
+
+$$x(t - t_0) \to y(t - t_0)$$
+
+离散时间同理: $x[n-n_0] \to y[n-n_0]$
+
+*物理意义*: 系统参数不随时间变化。今天做的实验和明天做的结果一样。
+
+*时不变系统例子*:
+
+- RC 电路 ($R, C$ 是常数)
+- 理想放大器
+- 数字滤波器 (固定系数): $y[n] = 0.5x[n] + 0.3x[n-1]$
+
+*时变系统例子*:
+
+- 调制: $y(t) = x(t)\cos(\omega_c t)$ (乘以时间相关的载波)
+- 增益随时间变化: $y(t) = g(t)x(t)$，其中 $g(t)$ 变化
+- 自适应滤波器: 系数 $h[n,k]$ 随 $n$ 更新
+- 机器人如果电池电压下降，电机响应会改变 (时变)
+
+*测试时不变性*: 输入 $x(t)$ 得到 $y(t)$，然后输入延迟版本 $x(t-1)$，看输出是否是 $y(t-1)$。
+
+*** 线性 (Linearity)
+
+*线性系统* 满足 *叠加原理*:
+
+$$\mathcal{T}\{ax_1(t) + bx_2(t)\} = a\mathcal{T}\{x_1(t)\} + b\mathcal{T}\{x_2(t)\}$$
+
+或写成两个性质:
+
+*1. 可加性 (Additivity)*:
+
+$$\mathcal{T}\{x_1 + x_2\} = \mathcal{T}\{x_1\} + \mathcal{T}\{x_2\}$$
+
+*2. 齐次性 (Homogeneity)*:
+
+$$\mathcal{T}\{ax\} = a\mathcal{T}\{x\}$$
+
+*线性系统例子*:
+
+- 理想放大器: $y(t) = Kx(t)$
+- 微分: $y(t) = \frac{dx(t)}{dt}$
+- 积分: $y(t) = \int x(t) \, dt$
+- FIR 滤波器: $y[n] = \sum_k h[k]x[n-k]$
+
+*非线性系统例子*:
+
+- 平方器: $y(t) = x^2(t)$
+  - 测试: $\mathcal{T}\{2x\} = (2x)^2 = 4x^2 \neq 2x^2 = 2\mathcal{T}\{x\}$ ✗
+- 整流器: $y(t) = |x(t)|$
+- 饱和: $y = \text{sat}(x) = \begin{cases} 1, & x > 1 \\ x, & |x| \leq 1 \\ -1, & x < -1 \end{cases}$
+- PWM 信号生成 (比较器，非线性)
+
+*为什么线性重要？*
+
+- 可以分析简单信号 (如正弦)，然后叠加得到复杂响应
+- 傅里叶分析依赖线性
+- 大多数物理系统在小信号下近似线性
+
+** LTI 系统：最重要的类别
+
+*LTI = Linear Time-Invariant* (线性时不变系统)
+
+同时满足线性和时不变性。
+
+*为什么 LTI 系统特殊？*
+
+*1. 完全由冲激响应刻画*:
+
+$$y(t) = x(t) * h(t) = \int_{-\infty}^{\infty} x(\tau)h(t-\tau) \, d\tau$$
+
+$$y[n] = x[n] * h[n] = \sum_{k=-\infty}^{\infty} x[k]h[n-k]$$
+
+知道 $h(t)$ 或 $h[n]$，就知道系统对 *任意* 输入的响应！
+
+*2. 复指数是特征函数*:
+
+输入 $e^{st}$ → 输出 $H(s)e^{st}$
+
+频率响应 $H(j\omega)$ 或 $H(e^{j\Omega})$ 完全描述系统。
+
+*3. 可以用微分方程或差分方程描述*:
+
+$$\sum_{k=0}^N a_k \frac{d^k y}{dt^k} = \sum_{k=0}^M b_k \frac{d^k x}{dt^k}$$
+
+$$\sum_{k=0}^N a_k y[n-k] = \sum_{k=0}^M b_k x[n-k]$$
+
+*4. 频域分析简化为代数*:
+
+卷积 → 乘法
+
+*应用中的 LTI 系统*:
+
+- 线性电路
+- 理想的 PID 控制器 (无饱和)
+- FIR/IIR 滤波器
+- 小信号模型下的机械系统
+
+** 系统的数学描述
+
+*** 连续时间
+
+*1. 微分方程*:
+
+$$\frac{dy(t)}{dt} + ay(t) = bx(t)$$
+
+例子: RC 电路
+
+$$RC\frac{dv(t)}{dt} + v(t) = v_{in}(t)$$
+
+*2. 积分方程*:
+
+$$y(t) = \int_{-\infty}^{\infty} h(t-\tau)x(\tau) \, d\tau$$
+
+*3. 传递函数* (拉普拉斯域):
+
+$$H(s) = \frac{Y(s)}{X(s)}$$
+
+例如: $H(s) = \frac{b}{s+a}$ (一阶低通)
+
+*** 离散时间
+
+*1. 差分方程*:
+
+$$y[n] = -\sum_{k=1}^N a_k y[n-k] + \sum_{k=0}^M b_k x[n-k]$$
+
+例子: 一阶递归滤波器
+
+$$y[n] = 0.8y[n-1] + 0.2x[n]$$
+
+你在 STM32 上实现就是:
+
+#+begin_src c
+y = 0.8 * y_prev + 0.2 * x;
+y_prev = y;
+#+end_src
+
+*2. 卷积和*:
+
+$$y[n] = \sum_{k=-\infty}^{\infty} h[k]x[n-k]$$
+
+*3. 传递函数* (Z 域):
+
+$$H(z) = \frac{Y(z)}{X(z)} = \frac{\sum_{k=0}^M b_k z^{-k}}{1 + \sum_{k=1}^N a_k z^{-k}}$$
+
+** 系统互联
+
+*** 串联 (Cascade)
+
+#+begin_example
+x(t) → [h₁] → [h₂] → y(t)
+#+end_example
+
+等效冲激响应:
+
+$$h(t) = h_1(t) * h_2(t)$$
+
+频域: $H(\omega) = H_1(\omega)H_2(\omega)$ (卷积变乘法！)
+
+*例子*: 前置放大器 + 滤波器
+
+*** 并联 (Parallel)
+
+#+begin_example
+       → [h₁] →
+x(t) →          → (+) → y(t)
+       → [h₂] →
+#+end_example
+
+等效冲激响应:
+
+$$h(t) = h_1(t) + h_2(t)$$
+
+频域: $H(\omega) = H_1(\omega) + H_2(\omega)$
+
+*例子*: 多通道信号处理
+
+*** 反馈 (Feedback)
+
+#+begin_example
+      → [h₁] → (+) →
+x(t) →        ↑     y(t)
+              ← [h₂] ←
+#+end_example
+
+等效传递函数:
+
+$$H(s) = \frac{H_1(s)}{1 + H_1(s)H_2(s)}$$
+
+*例子*: 你的 PID 闭环控制系统！
+
+* 实际例子详解
+
+** 例 1: 移动平均滤波器 (离散)
+
+$$y[n] = \frac{1}{M}\sum_{k=0}^{M-1} x[n-k]$$
+
+*性质*:
+
+- 线性: ✓ (是加权和)
+- 时不变: ✓ (系数固定)
+- 因果: ✓ (只用过去)
+- 记忆: ✓ (用过去 $M-1$ 个样本)
+- 稳定: ✓ (有界输入 → 有界输出)
+
+*冲激响应*:
+
+$$h[n] = \begin{cases} \frac{1}{M}, & 0 \leq n \leq M-1 \\ 0, & \text{otherwise} \end{cases}$$
+
+这就是 FIR (有限冲激响应) 滤波器。
+
+你在处理传感器噪声时常用这个。
+
+#+begin_src c
+// STM32 实现
+#define M 5
+float buffer[M] = {0};
+int idx = 0;
+
+float moving_average(float new_sample) {
+    buffer[idx] = new_sample;
+    idx = (idx + 1) % M;
+
+    float sum = 0;
+    for (int i = 0; i < M; i++) {
+        sum += buffer[i];
+    }
+    return sum / M;
+}
+#+end_src
+
+** 例 2: RC 低通滤波器 (连续)
+
+电路: $R$ 和 $C$ 串联，输出取电容电压。
+
+*微分方程*:
+
+$$RC\frac{dv_o(t)}{dt} + v_o(t) = v_i(t)$$
+
+*冲激响应*:
+
+$$h(t) = \frac{1}{RC}e^{-t/(RC)}u(t)$$
+
+*传递函数*:
+
+$$H(s) = \frac{1}{1 + RCs}$$
+
+*频率响应*:
+
+$$H(j\omega) = \frac{1}{1 + j\omega RC}$$
+
+截止频率: $\omega_c = 1/(RC)$
+
+*性质*: 线性、时不变、因果、有记忆、稳定
+
+这是最简单的模拟滤波器。
+
+** 例 3: PID 控制器
+
+$$u(t) = K_p e(t) + K_i \int_0^t e(\tau) \, d\tau + K_d \frac{de(t)}{dt}$$
+
+- 比例项: 无记忆
+- 积分项: 有记忆 (累积误差)
+- 微分项: 预测 (对噪声敏感)
+
+*离散化* (你在 STM32 上实现):
+
+$$u[n] = K_p e[n] + K_i T_s \sum_{k=0}^n e[k] + K_d \frac{e[n]-e[n-1]}{T_s}$$
+
+#+begin_src c
+// PID 实现
+float integral = 0;
+float prev_error = 0;
+
+float pid_update(float error, float dt) {
+    integral += error * dt;
+    float derivative = (error - prev_error) / dt;
+    prev_error = error;
+
+    return Kp * error + Ki * integral + Kd * derivative;
+}
+#+end_src
+
+*性质*: 线性、时不变 (参数固定)、因果
+
+但如果有 *饱和* ($|u| \leq u_{max}$)，就变成非线性了！
+
+** 例 4: 累加器 (离散)
+
+$$y[n] = \sum_{k=-\infty}^n x[k]$$
+
+或递归形式:
+
+$$y[n] = y[n-1] + x[n]$$
+
+*冲激响应*:
+
+$$h[n] = u[n]$$
+
+*性质*:
+
+- 线性: ✓
+- 时不变: ✓
+- 因果: ✓
+- 稳定: ✗ (输入常数 → 输出线性增长)
+
+这是 *积分器* 的离散版本，不稳定但有用 (比如速度积分得位置)。
+
+* 连续 vs 离散系统对比
+
+| 方面         | 连续时间                               | 离散时间                    |
+|------------|------------------------------------|-----------------------|
+| 变量         | $t \in \mathbb{R}$                 | $n \in \mathbb{Z}$    |
+| 微分/差分      | $\frac{dy}{dt}$                    | $y[n] - y[n-1]$       |
+| 积分/累加      | $\int y(t) \, dt$                  | $\sum y[k]$           |
+| 卷积         | $\int h(\tau)x(t-\tau) \, d\tau$   | $\sum h[k]x[n-k]$     |
+| 变换         | 拉普拉斯/傅里叶                           | Z 变换/DTFT             |
+| 实现         | 模拟电路                               | 数字处理器                 |
+
+* 一个完整的例子：数字滤波器设计
+
+假设你要在 STM32 上实现低通滤波器，去除传感器高频噪声。
+
+** 1. 连续原型
+
+一阶 RC 滤波器:
+
+$$H(s) = \frac{1}{1 + s/\omega_c}$$
+
+截止频率 $f_c = 10$ Hz，$\omega_c = 2\pi f_c$。
+
+** 2. 离散化
+
+使用双线性变换:
+
+$$s = \frac{2}{T_s} \frac{z - 1}{z + 1}$$
+
+其中 $T_s = 1/f_s$ 是采样周期。
+
+假设 $f_s = 100$ Hz，$T_s = 0.01$ s。
+
+代入后得到:
+
+$$H(z) = \frac{b_0 + b_1 z^{-1}}{1 + a_1 z^{-1}}$$
+
+计算系数 (省略推导):
+
+- $\alpha = 2\pi f_c T_s = 0.628$
+- $b_0 = b_1 = \alpha / (2 + \alpha) = 0.239$
+- $a_1 = (\alpha - 2) / (2 + \alpha) = -0.522$
+
+** 3. 差分方程
+
+$$y[n] = -a_1 y[n-1] + b_0 x[n] + b_1 x[n-1]$$
+
+$$y[n] = 0.522 y[n-1] + 0.239 x[n] + 0.239 x[n-1]$$
+
+** 4. 代码实现
+
+#+begin_src c
+// STM32 实现
+float a1 = -0.522;
+float b0 = 0.239;
+float b1 = 0.239;
+
+float y_prev = 0;
+float x_prev = 0;
+
+float lowpass_filter(float x) {
+    float y = -a1 * y_prev + b0 * x + b1 * x_prev;
+
+    // 更新状态
+    y_prev = y;
+    x_prev = x;
+
+    return y;
+}
+#+end_src
+
+** 5. 验证
+
+*冲激响应*: 输入单个脉冲 $x[0] = 1$，$x[n] = 0$ (for $n \neq 0$)，观察响应。
+
+*阶跃响应*: 输入阶跃 $x[n] = u[n]$，看上升时间和稳态值。
+
+*频率响应*: 扫频正弦，测量幅频特性。
+
+#+begin_src python
+# Python 验证
+import numpy as np
+import matplotlib.pyplot as plt
+
+# 系数
+a1 = -0.522
+b0 = 0.239
+b1 = 0.239
+
+# 冲激响应
+N = 50
+h = np.zeros(N)
+y_prev = 0
+x_prev = 0
+
+for n in range(N):
+    x = 1 if n == 0 else 0
+    y = -a1 * y_prev + b0 * x + b1 * x_prev
+    h[n] = y
+    y_prev = y
+    x_prev = x
+
+plt.stem(h)
+plt.title('Impulse Response')
+plt.xlabel('n')
+plt.ylabel('h[n]')
+plt.show()
+#+end_src
+
+这个流程贯穿了系统的所有概念: 连续原型、离散化、差分方程、实现、验证。
+
+* 总结：从信号到系统
+
+本文介绍了信号与系统的基础理论，为下一篇 LTI 系统的深入分析打下基础。
+
+*核心要点*:
+
+1. *信号的分类*:
+   - 连续 vs 离散
+   - 能量 vs 功率
+   - 周期 vs 非周期
+   - 偶 vs 奇
+
+2. *信号的变换*:
+   - 时移、反转、尺度变换
+   - 采样 (连续 → 离散)
+   - 插值和抽取 (改变采样率)
+
+3. *基本信号*:
+   - 冲激和阶跃 (测试探针)
+   - 指数和正弦 (LTI 系统的特征函数)
+
+4. *系统的性质*:
+   - 记忆性、因果性、稳定性
+   - 时不变性、线性
+   - LTI 系统的特殊地位
+
+5. *实际应用*:
+   - 数字滤波器设计
+   - 嵌入式系统实现
+   - 控制系统分析
+
+*下一步*:
+
+下一篇笔记将深入探讨 LTI 系统，包括:
+
+- 卷积的深入理解
+- 傅里叶变换和频域分析
+- 拉普拉斯变换和 Z 变换
+- 系统的频率响应和 Bode 图
+- 采样定理和数字信号处理
+
+这些工具将帮助你在实际工程中 (机器人控制、信号处理、嵌入式系统) 设计和分析系统。

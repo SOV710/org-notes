@@ -1,0 +1,1202 @@
+#+title: Rust Trait System: A Comprehensive Cheatsheet from std to Ecosystem
+#+author: SOV710
+#+date: 2025-12-24
+#+startup: showall
+#+options: toc:3 num:nil
+
+* Trait 系统: Rust 的灵魂
+
+Trait 是 Rust 最核心的抽象机制，相当于其他语言中的 "接口" (interface)，但更强大。它定义了类型必须实现的行为 (behavior)，是 Rust 实现 *零成本抽象* 和 *编译期多态* 的基石。
+
+** Trait 的三大用途
+
+1. *约束泛型*: 限定泛型参数必须实现某些行为
+
+   #+begin_src rust
+   fn print_debug<T: Debug>(x: T) {
+       println!("{:?}", x);
+   }
+   #+end_src
+
+2. *代码复用*: 通过 trait 提供默认实现
+
+   #+begin_src rust
+   trait Logger {
+       fn log(&self, msg: &str) {
+           println!("[LOG] {}", msg);  // 默认实现
+       }
+   }
+   #+end_src
+
+3. *类型转换*: 定义类型之间的转换规则 (=From=, =Into=, =TryFrom=)
+
+** Trait Object vs 泛型
+
+| 特性    | 泛型 =<T: Trait>=            | Trait Object =dyn Trait= |
+|---------+----------------------------+------------------------|
+| 分发方式 | 静态分发 (monomorphization) | 动态分发 (vtable)       |
+| 性能    | *零成本* (编译期展开)           | 运行时开销 (一次间接跳转)  |
+| 代码体积 | 可能膨胀 (每种类型生成一份代码)  | 较小                   |
+| 返回值   | 可以返回具体类型              | 只能返回 =Box<dyn Trait>= |
+| 使用场景 | 已知具体类型，追求性能         | 运行时多态，类型不确定     |
+
+#+begin_src rust
+// 静态分发: 编译器为 Vec<i32> 和 Vec<String> 各生成一份代码
+fn process<T: Iterator>(iter: T) { }
+
+// 动态分发: 只生成一份代码，运行时通过 vtable 调用
+fn process_dyn(iter: &mut dyn Iterator<Item = i32>) { }
+#+end_src
+
+* 标准库核心 Traits
+
+** 基础 Traits: 类型的身份证
+
+*** =Debug= - 调试输出
+
+用于 ={:?}= 格式化输出，*几乎所有类型都应该实现*。
+
+#+begin_src rust
+#[derive(Debug)]
+struct Point { x: i32, y: i32 }
+
+let p = Point { x: 1, y: 2 };
+println!("{:?}", p);    // Point { x: 1, y: 2 }
+println!("{:#?}", p);   // 美化输出 (pretty-print)
+#+end_src
+
+*手动实现*:
+
+#+begin_src rust
+impl Debug for Point {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Point")
+            .field("x", &self.x)
+            .field("y", &self.y)
+            .finish()
+    }
+}
+#+end_src
+
+*何时用*: 日志、断言、错误信息
+
+*** =Display= - 用户友好的输出
+
+用于 ={}= 格式化输出，*不能自动 derive*，需要手动实现。
+
+#+begin_src rust
+impl Display for Point {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({}, {})", self.x, self.y)
+    }
+}
+
+println!("{}", p);  // (1, 2)
+#+end_src
+
+*何时用*: 面向最终用户的输出 (UI、报告)
+
+*** =Clone= - 显式深拷贝
+
+创建类型的 *深拷贝* (heap 数据也复制)。
+
+#+begin_src rust
+#[derive(Clone)]
+struct Data {
+    buffer: Vec<u8>,  // heap 分配，clone 时会复制整个 Vec
+}
+
+let d1 = Data { buffer: vec![1, 2, 3] };
+let d2 = d1.clone();  // 显式克隆，避免意外
+#+end_src
+
+*实现要求*: 所有字段都必须实现 =Clone=
+
+*性能警告*: =clone()= 可能很昂贵！优先考虑:
+- 借用 (=&T=)
+- =Rc<T>= / =Arc<T>= (引用计数)
+- =Cow<T>= (写时复制)
+
+*** =Copy= - 隐式按位复制
+
+标记 trait，表示类型可以通过 *按位复制* (memcpy) 来复制，*不需要调用 clone()*。
+
+#+begin_src rust
+#[derive(Copy, Clone)]  // Copy 必须同时实现 Clone
+struct Point { x: i32, y: i32 }
+
+let p1 = Point { x: 1, y: 2 };
+let p2 = p1;  // 隐式复制，p1 仍然有效
+println!("{:?}", p1);  // OK
+#+end_src
+
+*实现条件*:
+- 所有字段都是 =Copy=
+- *不能有 heap 分配* (=Vec=, =String=, =Box= 等不是 =Copy=)
+- *不能实现 Drop*
+
+*何时用*: 小型类型 (基础类型、小结构体)
+
+#+begin_src rust
+// 错误示例: Vec 不是 Copy
+#[derive(Copy, Clone)]  // 编译错误!
+struct Data {
+    buffer: Vec<u8>,
+}
+#+end_src
+
+*** =Default= - 默认值
+
+提供类型的 "零值" 或 "默认值"。
+
+#+begin_src rust
+#[derive(Default)]
+struct Config {
+    timeout: u32,      // 默认 0
+    verbose: bool,     // 默认 false
+}
+
+let cfg = Config::default();
+let cfg2 = Config { verbose: true, ..Default::default() };
+#+end_src
+
+*手动实现*:
+
+#+begin_src rust
+impl Default for Config {
+    fn default() -> Self {
+        Config { timeout: 30, verbose: false }
+    }
+}
+#+end_src
+
+*何时用*: 构建器模式、配置初始化
+
+*** =PartialEq= / =Eq= - 相等性比较
+
+- =PartialEq=: 部分等价关系 (允许 NaN != NaN)
+- =Eq=: 完全等价关系 (自反、对称、传递)
+
+#+begin_src rust
+#[derive(PartialEq, Eq)]
+struct User {
+    id: u64,
+    name: String,
+}
+
+let u1 = User { id: 1, name: "Alice".into() };
+let u2 = User { id: 1, name: "Alice".into() };
+assert_eq!(u1, u2);
+#+end_src
+
+*浮点数陷阱*:
+
+#+begin_src rust
+assert!(f64::NAN != f64::NAN);  // PartialEq 但不是 Eq
+#+end_src
+
+*** =PartialOrd= / =Ord= - 排序
+
+- =PartialOrd=: 部分顺序 (某些元素不可比)
+- =Ord=: 全序 (任意两元素都可比)
+
+#+begin_src rust
+#[derive(PartialOrd, Ord, PartialEq, Eq)]
+struct Version(u32, u32, u32);
+
+let v1 = Version(1, 0, 0);
+let v2 = Version(1, 2, 3);
+assert!(v1 < v2);
+#+end_src
+
+*何时用*: =BTreeMap=, =BTreeSet=, =sort()=
+
+*** =Hash= - 哈希
+
+计算类型的哈希值，用于 =HashMap=, =HashSet=。
+
+#+begin_src rust
+#[derive(Hash, PartialEq, Eq)]
+struct Key {
+    id: u64,
+    version: u32,
+}
+
+let mut map = HashMap::new();
+map.insert(Key { id: 1, version: 2 }, "value");
+#+end_src
+
+*要求*: 如果 =a == b=，则 =hash(a) == hash(b)=
+
+** 操作符重载: 让自定义类型像内置类型一样用
+
+*** =Add= / =Sub= / =Mul= / =Div= - 算术运算
+
+#+begin_src rust
+use std::ops::Add;
+
+#[derive(Debug, Copy, Clone)]
+struct Point { x: i32, y: i32 }
+
+impl Add for Point {
+    type Output = Point;
+    fn add(self, other: Point) -> Point {
+        Point { x: self.x + other.x, y: self.y + other.y }
+    }
+}
+
+let p1 = Point { x: 1, y: 2 };
+let p2 = Point { x: 3, y: 4 };
+let p3 = p1 + p2;  // Point { x: 4, y: 6 }
+#+end_src
+
+*关联类型 =Output=*: 定义运算结果的类型 (可以与 =Self= 不同)
+
+#+begin_src rust
+impl Mul<f64> for Point {
+    type Output = Point;
+    fn mul(self, scalar: f64) -> Point {
+        Point {
+            x: (self.x as f64 * scalar) as i32,
+            y: (self.y as f64 * scalar) as i32,
+        }
+    }
+}
+
+let p = Point { x: 2, y: 3 } * 2.5;  // Point { x: 5, y: 7 }
+#+end_src
+
+*** =AddAssign= / =SubAssign= - 复合赋值
+
+#+begin_src rust
+use std::ops::AddAssign;
+
+impl AddAssign for Point {
+    fn add_assign(&mut self, other: Point) {
+        self.x += other.x;
+        self.y += other.y;
+    }
+}
+
+let mut p = Point { x: 1, y: 2 };
+p += Point { x: 3, y: 4 };  // p 现在是 (4, 6)
+#+end_src
+
+*** =Index= / =IndexMut= - 下标访问
+
+#+begin_src rust
+use std::ops::{Index, IndexMut};
+
+struct Grid {
+    data: Vec<Vec<i32>>,
+}
+
+impl Index<(usize, usize)> for Grid {
+    type Output = i32;
+    fn index(&self, (row, col): (usize, usize)) -> &i32 {
+        &self.data[row][col]
+    }
+}
+
+impl IndexMut<(usize, usize)> for Grid {
+    fn index_mut(&mut self, (row, col): (usize, usize)) -> &mut i32 {
+        &mut self.data[row][col]
+    }
+}
+
+let mut grid = Grid { data: vec![vec![1, 2], vec![3, 4]] };
+println!("{}", grid[(0, 1)]);  // 2
+grid[(1, 0)] = 99;
+#+end_src
+
+*** =Deref= / =DerefMut= - 智能指针的魔法
+
+实现 =Deref= 让类型可以 *自动解引用* 到目标类型。
+
+#+begin_src rust
+use std::ops::Deref;
+
+struct MyBox<T>(T);
+
+impl<T> Deref for MyBox<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+let x = MyBox(String::from("hello"));
+println!("{}", x.len());  // 自动调用 (*x).len()，即 String::len()
+#+end_src
+
+*Deref Coercion*: 编译器自动插入多次 =deref()= 调用
+
+#+begin_src rust
+fn print_str(s: &str) {
+    println!("{}", s);
+}
+
+let s = MyBox(String::from("world"));
+print_str(&s);  // &MyBox<String> -> &String -> &str
+#+end_src
+
+*警告*: 不要滥用 =Deref= 模拟继承！它只用于智能指针。
+
+** 转换 Traits: 类型之间的桥梁
+
+*** =From= / =Into= - 无错转换
+
+=From= 定义 *如何从其他类型创建自己*，=Into= 是其镜像。
+
+#+begin_src rust
+impl From<u32> for MyType {
+    fn from(value: u32) -> Self {
+        MyType { inner: value as u64 }
+    }
+}
+
+let x = MyType::from(42u32);
+let y: MyType = 42u32.into();  // Into 自动实现
+#+end_src
+
+*标准库示例*:
+
+#+begin_src rust
+let s: String = "hello".into();  // &str -> String
+let v: Vec<u8> = vec![1, 2, 3].into();
+#+end_src
+
+*惯例*: 只手动实现 =From=，编译器会自动提供 =Into=
+
+#+begin_src rust
+// 错误示例
+impl Into<MyType> for u32 { }  // 不要这样！
+
+// 正确示例
+impl From<u32> for MyType { }  // 编译器会生成 Into
+#+end_src
+
+*** =TryFrom= / =TryInto= - 可能失败的转换
+
+#+begin_src rust
+use std::convert::TryFrom;
+
+struct EvenNumber(i32);
+
+impl TryFrom<i32> for EvenNumber {
+    type Error = &'static str;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        if value % 2 == 0 {
+            Ok(EvenNumber(value))
+        } else {
+            Err("not an even number")
+        }
+    }
+}
+
+let n = EvenNumber::try_from(4)?;  // Ok
+let m = EvenNumber::try_from(5)?;  // Err
+#+end_src
+
+*** =AsRef= / =AsMut= - 借用转换
+
+将 =&Self= 转换为 =&T= (廉价转换)。
+
+#+begin_src rust
+fn open_file<P: AsRef<Path>>(path: P) -> io::Result<File> {
+    File::open(path.as_ref())
+}
+
+open_file("file.txt");           // &str
+open_file(String::from("file.txt"));  // String
+open_file(PathBuf::from("file.txt")); // PathBuf
+#+end_src
+
+*何时用*: 函数参数支持多种借用形式
+
+*** =Borrow= / =BorrowMut= - HashMap 的秘密
+
+比 =AsRef= 更严格: *借用值必须与拥有值具有相同的 Hash 和 Eq*。
+
+#+begin_src rust
+use std::collections::HashMap;
+
+let mut map: HashMap<String, i32> = HashMap::new();
+map.insert("key".to_string(), 42);
+
+// 可以用 &str 查询 HashMap<String, V>
+let value = map.get("key");  // &str 自动 borrow 为 String 的借用
+#+end_src
+
+** 迭代器 Traits: Rust 的函数式编程核心
+
+*** =Iterator= - 惰性迭代
+
+#+begin_src rust
+trait Iterator {
+    type Item;
+    fn next(&mut self) -> Option<Self::Item>;
+
+    // 大量默认实现的方法
+    fn map<F>(self, f: F) -> Map<Self, F> { }
+    fn filter<P>(self, predicate: P) -> Filter<Self, P> { }
+    fn collect<B>(self) -> B where B: FromIterator<Self::Item> { }
+}
+#+end_src
+
+*手动实现*:
+
+#+begin_src rust
+struct Counter {
+    count: u32,
+    max: u32,
+}
+
+impl Iterator for Counter {
+    type Item = u32;
+    fn next(&mut self) -> Option<u32> {
+        if self.count < self.max {
+            self.count += 1;
+            Some(self.count)
+        } else {
+            None
+        }
+    }
+}
+
+let counter = Counter { count: 0, max: 5 };
+for n in counter {
+    println!("{}", n);  // 1, 2, 3, 4, 5
+}
+#+end_src
+
+*** =IntoIterator= - 转换为迭代器
+
+让类型可以用于 =for= 循环。
+
+#+begin_src rust
+impl IntoIterator for MyCollection {
+    type Item = MyType;
+    type IntoIter = MyIterator;
+
+    fn into_iter(self) -> Self::IntoIter {
+        MyIterator { /* ... */ }
+    }
+}
+
+for item in my_collection {  // 调用 into_iter()
+    // ...
+}
+#+end_src
+
+*三种迭代方式*:
+
+#+begin_src rust
+let v = vec![1, 2, 3];
+
+for x in &v { }       // iter()       -> &T
+for x in &mut v { }   // iter_mut()   -> &mut T
+for x in v { }        // into_iter()  -> T (消耗所有权)
+#+end_src
+
+*** =FromIterator= - 从迭代器收集
+
+#+begin_src rust
+let v: Vec<_> = (0..10).collect();
+let set: HashSet<_> = vec![1, 2, 2, 3].into_iter().collect();
+
+// 自定义实现
+impl FromIterator<MyItem> for MyCollection {
+    fn from_iter<I: IntoIterator<Item = MyItem>>(iter: I) -> Self {
+        let mut collection = MyCollection::new();
+        for item in iter {
+            collection.add(item);
+        }
+        collection
+    }
+}
+#+end_src
+
+** 并发 Traits: 线程安全的保证
+
+*** =Send= - 可以跨线程转移所有权
+
+#+begin_src rust
+fn spawn<F>(f: F) where F: FnOnce() + Send + 'static { }
+#+end_src
+
+*自动实现*: 如果所有字段都是 =Send=，则类型自动是 =Send=
+
+*不是 Send 的类型*:
+- =Rc<T>=: 非原子引用计数
+- 裸指针 =*const T=, =*mut T=
+
+*** =Sync= - 可以跨线程共享引用
+
+=T: Sync= 意味着 =&T: Send= (引用可以发送到其他线程)。
+
+#+begin_src rust
+fn share<T: Sync>(x: &T) { }
+#+end_src
+
+*不是 Sync 的类型*:
+- =Cell<T>=, =RefCell<T>=: 内部可变性，非线程安全
+- =Rc<T>=
+
+*Arc 是 Send + Sync*:
+
+#+begin_src rust
+let data = Arc::new(vec![1, 2, 3]);
+let data2 = Arc::clone(&data);
+thread::spawn(move || {
+    println!("{:?}", data2);  // Arc 可以跨线程
+});
+#+end_src
+
+** 错误处理 Traits
+
+*** =Error= - 标准错误 trait
+
+#+begin_src rust
+pub trait Error: Debug + Display {
+    fn source(&self) -> Option<&(dyn Error + 'static)> { None }
+}
+#+end_src
+
+*手动实现*:
+
+#+begin_src rust
+#[derive(Debug)]
+struct MyError {
+    message: String,
+}
+
+impl Display for MyError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "MyError: {}", self.message)
+    }
+}
+
+impl Error for MyError {}
+#+end_src
+
+** 智能指针 Traits
+
+*** =Drop= - 析构函数
+
+#+begin_src rust
+impl Drop for MyType {
+    fn drop(&mut self) {
+        println!("Dropping MyType!");
+        // 释放资源 (关闭文件、socket 等)
+    }
+}
+#+end_src
+
+*执行顺序*:
+1. 先执行 =drop()= 方法
+2. 再递归 drop 所有字段 (从后往前)
+
+*不能手动调用*:
+
+#+begin_src rust
+let x = MyType::new();
+x.drop();  // 错误! drop() 不能手动调用
+drop(x);   // 正确: 使用 std::mem::drop
+#+end_src
+
+* Ecosystem Traits: 生态系统中的重要 Traits
+
+** Serde: 序列化/反序列化
+
+*** =Serialize= / =Deserialize=
+
+#+begin_src rust
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize, Debug)]
+struct User {
+    id: u64,
+    name: String,
+    email: Option<String>,
+}
+
+// JSON 序列化
+let user = User { id: 1, name: "Alice".into(), email: None };
+let json = serde_json::to_string(&user)?;
+
+// JSON 反序列化
+let user2: User = serde_json::from_str(&json)?;
+#+end_src
+
+*** 自定义序列化
+
+#+begin_src rust
+use serde::Serializer;
+
+impl Serialize for MyType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // 自定义序列化逻辑
+        serializer.serialize_str(&format!("custom: {}", self.value))
+    }
+}
+#+end_src
+
+*** Serde 属性
+
+#+begin_src rust
+#[derive(Serialize, Deserialize)]
+struct Config {
+    #[serde(rename = "serverPort")]
+    server_port: u16,
+
+    #[serde(default)]
+    timeout: u32,
+
+    #[serde(skip)]
+    internal_state: bool,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    optional_field: Option<String>,
+}
+#+end_src
+
+** Clap: 命令行参数解析
+
+*** =Parser= - 主程序参数
+
+#+begin_src rust
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(name = "mytool")]
+#[command(about = "A cool tool", long_about = None)]
+struct Cli {
+    /// Input file path
+    #[arg(short, long)]
+    input: PathBuf,
+
+    /// Verbosity level
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
+
+    /// Output format
+    #[arg(long, default_value = "json")]
+    format: String,
+}
+
+fn main() {
+    let cli = Cli::parse();
+    println!("{:?}", cli);
+}
+#+end_src
+
+*** =Subcommand= - 子命令
+
+#+begin_src rust
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Add a new item
+    Add {
+        #[arg(short, long)]
+        name: String,
+    },
+    /// Remove an item
+    Remove {
+        #[arg(short, long)]
+        id: u64,
+    },
+}
+
+fn main() {
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::Add { name } => println!("Adding: {}", name),
+        Commands::Remove { id } => println!("Removing: {}", id),
+    }
+}
+#+end_src
+
+*** =ValueEnum= - 枚举值
+
+#+begin_src rust
+use clap::ValueEnum;
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+enum Format {
+    Json,
+    Yaml,
+    Toml,
+}
+
+#[derive(Parser)]
+struct Cli {
+    #[arg(short, long, value_enum)]
+    format: Format,
+}
+
+// 用法: mytool --format json
+#+end_src
+
+** Thiserror: 优雅的错误定义
+
+*** =Error= derive macro
+
+#+begin_src rust
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+enum MyError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("parse error at line {line}: {msg}")]
+    Parse { line: usize, msg: String },
+
+    #[error("invalid value: {0}")]
+    Invalid(String),
+
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+#+end_src
+
+*属性说明*:
+
+- =#[error("...")]= : 定义 =Display= 输出
+- =#[from]= : 自动实现 =From= 转换
+- =#[transparent]= : 直接透传内部错误的 Display
+- =#[source]= : 指定错误源 (用于 =Error::source()=)
+
+#+begin_src rust
+// 使用示例
+fn read_config(path: &Path) -> Result<Config, MyError> {
+    let content = std::fs::read_to_string(path)?;  // io::Error 自动转为 MyError::Io
+    parse_config(&content)
+}
+#+end_src
+
+** Anyhow: 应用层错误处理
+
+*** =Context= trait
+
+#+begin_src rust
+use anyhow::{Context, Result};
+
+fn process_file(path: &Path) -> Result<()> {
+    let content = std::fs::read_to_string(path)
+        .context("failed to read config file")?;
+
+    let config: Config = toml::from_str(&content)
+        .with_context(|| format!("failed to parse config at {:?}", path))?;
+
+    Ok(())
+}
+#+end_src
+
+*与 thiserror 的区别*:
+
+| 特性    | thiserror              | anyhow                    |
+|---------+------------------------+---------------------------|
+| 用途    | 库 (library) 定义错误类型 | 应用 (application) 错误处理 |
+| 类型信息 | 强类型 (具体的 enum)     | 类型擦除 (=Box<dyn Error>=)  |
+| 错误转换 | 需要手动 =From= 或 =#[from]= | 自动转换任何 =Error=          |
+| 上下文   | 需要手动实现             | =.context()= 添加上下文       |
+| 性能    | 更快 (静态分发)          | 稍慢 (动态分发)             |
+
+** Tokio: 异步运行时
+
+*** =AsyncRead= / =AsyncWrite=
+
+#+begin_src rust
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+async fn copy_file(src: &Path, dst: &Path) -> io::Result<()> {
+    let mut src_file = tokio::fs::File::open(src).await?;
+    let mut dst_file = tokio::fs::File::create(dst).await?;
+
+    let mut buffer = vec![0; 8192];
+    loop {
+        let n = src_file.read(&mut buffer).await?;
+        if n == 0 { break; }
+        dst_file.write_all(&buffer[..n]).await?;
+    }
+    Ok(())
+}
+#+end_src
+
+*** =Future= trait (手动实现)
+
+#+begin_src rust
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+struct MyFuture {
+    state: u32,
+}
+
+impl Future for MyFuture {
+    type Output = u32;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<u32> {
+        if self.state < 10 {
+            self.state += 1;
+            cx.waker().wake_by_ref();  // 请求再次轮询
+            Poll::Pending
+        } else {
+            Poll::Ready(self.state)
+        }
+    }
+}
+#+end_src
+
+*一般不需要手动实现*: 用 =async/await= 即可
+
+** Rayon: 并行迭代器
+
+*** =ParallelIterator=
+
+#+begin_src rust
+use rayon::prelude::*;
+
+let sum: i32 = (0..1000)
+    .into_par_iter()
+    .map(|x| x * x)
+    .sum();
+
+let results: Vec<_> = vec![1, 2, 3, 4]
+    .par_iter()
+    .map(|x| expensive_computation(x))
+    .collect();
+#+end_src
+
+*** =IntoParallelIterator=
+
+#+begin_src rust
+impl IntoParallelIterator for MyCollection {
+    type Item = MyType;
+    type Iter = MyParIter;
+
+    fn into_par_iter(self) -> Self::Iter {
+        // ...
+    }
+}
+#+end_src
+
+** Diesel: ORM
+
+*** =Queryable= - 从查询结果反序列化
+
+#+begin_src rust
+#[derive(Queryable, Debug)]
+struct User {
+    id: i32,
+    name: String,
+    email: String,
+}
+
+let users = users::table
+    .load::<User>(&mut conn)?;
+#+end_src
+
+*** =Insertable= - 插入数据
+
+#+begin_src rust
+#[derive(Insertable)]
+#[diesel(table_name = users)]
+struct NewUser<'a> {
+    name: &'a str,
+    email: &'a str,
+}
+
+diesel::insert_into(users::table)
+    .values(&new_user)
+    .execute(&mut conn)?;
+#+end_src
+
+** Axum: Web 框架
+
+*** =FromRequest= - 提取请求数据
+
+#+begin_src rust
+use axum::{
+    extract::{Path, Query, Json},
+    response::IntoResponse,
+};
+
+async fn handler(
+    Path(id): Path<u64>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(payload): Json<MyPayload>,
+) -> impl IntoResponse {
+    // ...
+}
+#+end_src
+
+*** =IntoResponse= - 构造响应
+
+#+begin_src rust
+impl IntoResponse for MyResponse {
+    fn into_response(self) -> Response {
+        (StatusCode::OK, Json(self.data)).into_response()
+    }
+}
+#+end_src
+
+** 其他重要生态 Traits
+
+*** Tower: =Service= trait
+
+#+begin_src rust
+use tower::Service;
+
+impl<Request> Service<Request> for MyService {
+    type Response = MyResponse;
+    type Error = MyError;
+    type Future = Pin<Box<dyn Future<Output = Result<MyResponse, MyError>>>>;
+
+    fn call(&mut self, req: Request) -> Self::Future {
+        // 处理请求
+    }
+}
+#+end_src
+
+*** Tracing: =Instrument=
+
+#+begin_src rust
+use tracing::instrument;
+
+#[instrument]
+async fn my_function(x: u32) -> Result<u32> {
+    // 自动添加 span 跟踪
+    Ok(x * 2)
+}
+#+end_src
+
+* 实战技巧与陷阱
+
+** 孤儿规则 (Orphan Rule)
+
+*不能为外部类型实现外部 trait*:
+
+#+begin_src rust
+// 错误: 不能为 Vec<T> 实现 Display
+impl Display for Vec<i32> { }  // 编译错误!
+#+end_src
+
+*解决方案*:
+
+1. *Newtype 模式*:
+
+   #+begin_src rust
+   struct MyVec(Vec<i32>);
+
+   impl Display for MyVec {
+       fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+           write!(f, "{:?}", self.0)
+       }
+   }
+   #+end_src
+
+2. *扩展 trait*:
+
+   #+begin_src rust
+   trait VecExt {
+       fn my_method(&self);
+   }
+
+   impl VecExt for Vec<i32> {
+       fn my_method(&self) { }
+   }
+   #+end_src
+
+** Trait Object 的限制
+
+*不是所有 trait 都能变成 trait object*！
+
+*** Object Safety 规则
+
+Trait 必须满足:
+
+1. *不能有关联类型* (除非有 =where= 约束)
+2. *不能有泛型方法*
+3. *不能返回 Self*
+4. *不能要求 Sized*
+
+#+begin_src rust
+// 不是 object-safe
+trait NotObjectSafe {
+    fn generic<T>(&self, x: T);  // 泛型方法
+    fn returns_self(&self) -> Self;  // 返回 Self
+}
+
+// 无法编译
+let x: Box<dyn NotObjectSafe> = ...;  // 错误!
+#+end_src
+
+*** 解决方案
+
+#+begin_src rust
+// 方案 1: 拆分 trait
+trait ObjectSafe {
+    fn non_generic(&self);
+}
+
+trait WithGeneric: ObjectSafe {
+    fn generic<T>(&self, x: T);
+}
+
+// 方案 2: 用关联类型替代泛型
+trait Better {
+    type Item;
+    fn process(&self, item: Self::Item);
+}
+#+end_src
+
+** 生命周期与 Trait Bound
+
+*** Trait 对象的生命周期
+
+#+begin_src rust
+// 默认是 'static
+fn process(x: Box<dyn Trait>) { }
+// 等价于
+fn process(x: Box<dyn Trait + 'static>) { }
+
+// 接受非 'static 引用
+fn process_ref(x: &dyn Trait) { }
+// 等价于
+fn process_ref<'a>(x: &'a (dyn Trait + 'a)) { }
+#+end_src
+
+*** HRTB (Higher-Rank Trait Bounds)
+
+#+begin_src rust
+// 接受任意生命周期的闭包
+fn apply<F>(f: F)
+where
+    F: for<'a> Fn(&'a str) -> &'a str
+{
+    let result = f("hello");
+}
+#+end_src
+
+** Derive Macro 的顺序
+
+某些 derive 有 *依赖关系*:
+
+#+begin_src rust
+// 正确顺序
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct MyType { }
+
+// 依赖关系:
+// - Ord 需要 PartialOrd + Eq
+// - Eq 需要 PartialEq
+// - Hash 建议配合 Eq
+#+end_src
+
+** 常见错误模式
+
+*** 忘记 =move= 捕获所有权
+
+#+begin_src rust
+let s = String::from("hello");
+thread::spawn(|| {
+    println!("{}", s);  // 错误: s 的借用活不过线程
+});
+
+// 正确
+thread::spawn(move || {
+    println!("{}", s);  // s 的所有权移入闭包
+});
+#+end_src
+
+*** =Clone= 的隐性开销
+
+#+begin_src rust
+fn process(data: Vec<u8>) {
+    let copy = data.clone();  // 可能拷贝几 MB 数据!
+    // ...
+}
+
+// 更好: 只在需要时克隆
+fn process(data: &[u8]) {
+    // 按需克隆部分数据
+    let copy = data[0..100].to_vec();
+}
+#+end_src
+
+*** =Deref= 不是继承
+
+#+begin_src rust
+// 错误理解: MyString "继承" String
+struct MyString(String);
+
+impl Deref for MyString {
+    type Target = String;
+    fn deref(&self) -> &String { &self.0 }
+}
+
+// 问题: 不能用 MyString 的地方期望 String
+fn takes_string(s: String) { }
+let my_s = MyString(String::from("hi"));
+takes_string(my_s);  // 错误! 需要 my_s.0
+#+end_src
+
+* 总结: Trait 设计的最佳实践
+
+** 设计原则
+
+1. *小而专注*: 每个 trait 只做一件事 (Unix 哲学)
+2. *默认实现*: 为常见模式提供默认实现
+3. *组合优于继承*: 用多个 trait 组合，而非复杂的继承层次
+4. *object-safe 优先*: 除非确定不需要 trait object，否则保持 object-safe
+
+** 命名惯例
+
+- 能力 trait: =Read=, =Write=, =Parse=
+- 转换 trait: =From=, =Into=, =AsRef=
+- 标记 trait: =Send=, =Sync=, =Copy=
+- 形容词: =Sized=, =Unpin=
+- 名词化: =Iterator=, =Future=
+
+** 何时用 Trait vs Struct/Enum
+
+| 场景       | 用 Trait            | 用 Struct/Enum |
+|------------+---------------------+----------------|
+| 定义行为接口 | ✓                   |                |
+| 已知所有实现 |                     | ✓ (enum)       |
+| 需要动态分发 | ✓ (trait object)    |                |
+| 需要存储数据 |                     | ✓              |
+| 外部扩展    | ✓ (extension trait) |                |
+| 类型参数约束 | ✓                   |                |
+
+** 一份 Trait 实现 Checklist
+
+实现自定义类型时，考虑实现以下 traits:
+
+- [ ] =Debug= (几乎必须)
+- [ ] =Clone= (如果可以安全克隆)
+- [ ] =PartialEq= / =Eq= (如果有相等性语义)
+- [ ] =PartialOrd= / =Ord= (如果有排序语义)
+- [ ] =Hash= (如果用于 HashMap/HashSet)
+- [ ] =Default= (如果有合理的默认值)
+- [ ] =Display= (如果有用户友好的表示)
+- [ ] =Error= (如果是错误类型)
+- [ ] =Send= / =Sync= (自动实现，除非需要手动 =unsafe impl=)
+- [ ] =Serialize= / =Deserialize= (如果需要序列化)
+
+*记住*: Rust 的 trait 系统是零成本的抽象——用好它，能写出既优雅又高效的代码。

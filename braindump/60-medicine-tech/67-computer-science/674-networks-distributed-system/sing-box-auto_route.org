@@ -1,0 +1,1267 @@
+#+title: Understanding sing-box auto_route: From System Routes to Transparent Proxy
+#+author: SOV710
+#+date: 2025-12-23
+#+startup: showall
+#+options: toc:2 num:nil
+
+* =auto_route= 的核心功能: 劫持系统默认路由
+
+** 一句话定义
+
+=auto_route= 的官方定义非常直白: *"Set the default route to the Tun."* (将系统默认路由指向 TUN 接口)。
+
+这意味着启用 =auto_route= 后，sing-box 会自动修改操作系统的路由表，让所有流量 *优先进入 TUN 虚拟网卡*，从而实现 *系统级透明代理*。
+
+** 为什么需要劫持默认路由
+
+在传统的代理模式下 (如 SOCKS5, HTTP proxy)，应用程序需要 *主动配置* 代理地址。但 TUN 模式的目标是 *透明代理*，即:
+
+- *无需应用感知*: 应用程序不知道代理存在，正常发送网络请求
+- *全局生效*: 所有进程的流量都会被捕获 (除非显式排除)
+- *L3 层劫持*: 在网络层 (IP 层) 就拦截数据包，而非传输层 (TCP/UDP)
+
+要实现这一点，必须让操作系统认为 "默认网关" 就是 TUN 接口，这样所有出站流量自然会先进入 TUN。
+
+** 平台实现差异
+
+=auto_route= 在不同平台的底层实现机制不同:
+
+*** Linux: iproute2 策略路由
+
+Linux 使用 *策略路由* (policy routing) + *路由表* (routing table) 实现:
+
+#+begin_src bash
+# 查看 sing-box 创建的路由规则 (默认起始索引 9000)
+ip rule show
+
+# 输出示例:
+# 9000: from all fwmark 0x2023 lookup 2022
+# 9001: from all iif lo lookup 2022
+# 9002: not from all iif tun0 lookup 2022
+
+# 查看 sing-box 的路由表 (默认表号 2022)
+ip route show table 2022
+
+# 输出示例:
+# default dev tun0 scope link
+# 172.18.0.0/30 dev tun0 scope link
+#+end_src
+
+这些魔法数字 (2022, 9000) 是可配置的:
+
+- =iproute2_table_index=: 路由表编号，默认 *2022*
+- =iproute2_rule_index=: 规则起始索引，默认 *9000*
+
+*** Windows/macOS: 原生路由 API
+
+- *Windows*: 使用 =SetIpForwardEntry= 等 Win32 API 直接操作路由表
+- *macOS*: 使用 =route(8)= 命令或 =SystemConfiguration= framework
+
+这两个平台的行为对用户透明，无需像 Linux 那样手动检查 =ip rule/route=。
+
+*** Android: VPNService
+
+Android 的实现最特殊，因为 TUN 是通过 =VpnService= API 创建的:
+
+- Android 系统会 *自动* 将流量路由到 VPN 接口
+- *无需* 手动设置路由表
+- 但 =auto_route= 选项仍然必须启用 (触发内部初始化逻辑)
+
+* 避免路由回环: 必须设置出口网卡
+
+** 路由回环的灾难场景
+
+启用 =auto_route= 后，如果不设置 *物理出口网卡*，会出现死循环:
+
+#+begin_example
+1. 应用发包 → 进入 TUN 接口
+2. sing-box 处理后，决定直连/代理
+3. sing-box 发出新包 → 又进入 TUN 接口！(因为默认路由指向 TUN)
+4. sing-box 再次处理 → 无限递归 → 路由回环 (routing loop)
+#+end_example
+
+结果:
+
+- CPU 暴涨 (内核不断转发同一个包)
+- 网络完全不通
+- 日志刷屏 (sing-box 不断收到自己的包)
+
+** 三种解决方案 (三选一)
+
+官方 *强烈建议* 启用以下任意一个选项:
+
+*** 方案 1: 自动探测默认网卡 (推荐)
+
+#+begin_src json
+{
+  "route": {
+    "auto_detect_interface": true
+  }
+}
+#+end_src
+
+sing-box 会 *自动识别* 当前系统的默认出站网卡 (如 =eth0=, =wlan0=, =en0=)，并将所有出站流量绑定到该网卡。
+
+*优点*: 无需手动配置，适应网络环境变化 (如切换 Wi-Fi)。
+
+*注意*: 在 Android 上，如果需要将 Android 系统 VPN 作为上游，需额外设置:
+
+#+begin_src json
+{
+  "route": {
+    "auto_detect_interface": true,
+    "override_android_vpn": true  // 让流量先进 TUN，再走系统 VPN
+  }
+}
+#+end_src
+
+*** 方案 2: 手动指定默认网卡
+
+#+begin_src json
+{
+  "route": {
+    "default_interface": "eth0"  // 替换为实际网卡名
+  }
+}
+#+end_src
+
+*优点*: 精确控制，适合服务器/路由器场景 (网卡固定)。
+
+*缺点*: 网卡名变化时需要手动更新配置。
+
+*** 方案 3: 在出站中绑定网卡
+
+#+begin_src json
+{
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct",
+      "bind_interface": "eth0"  // 每个出站单独绑定
+    },
+    {
+      "type": "vless",
+      "tag": "proxy",
+      "bind_interface": "eth0"
+    }
+  ]
+}
+#+end_src
+
+*优点*: 最灵活，可以让不同出站用不同网卡 (如多 WAN 路由器)。
+
+*缺点*: 配置繁琐，容易遗漏。
+
+** 为什么不自动避免回环？
+
+理论上，sing-box 可以通过 *连接标记* (connection mark) 或 *cgroup* 识别自己的出站流量并自动排除。但这样做会:
+
+- 增加内核开销 (每个包都要检查标记)
+- 降低性能
+- 在某些平台上不可用 (如 Windows/macOS 没有 =SO_MARK=)
+
+所以 *手动指定出口网卡* 是最可靠的方案。
+
+* =auto_redirect=: nftables 加速与冲突规避
+
+** 什么是 =auto_redirect=
+
+=auto_redirect= 是 Linux 专属的 *增强功能*，需要 =auto_route= 启用后才能使用。
+
+官方描述:
+
+#+begin_quote
+=auto_redirect= provides better routing, higher performance (better than tproxy), and avoids conflicts between TUN and Docker bridge networks.
+#+end_quote
+
+核心作用:
+
+1. *自动配置 nftables 规则*，实现更高效的流量重定向
+2. *优于传统 TPROXY 的性能* (减少上下文切换和内核态拷贝)
+3. *解决 TUN 与 Docker 网桥的冲突* (自动插入兼容规则)
+
+** 与 TPROXY 的性能对比
+
+传统透明代理方案 (TPROXY) 的流程:
+
+#+begin_example
+客户端 → iptables TPROXY 规则 → 代理程序监听端口 → 内核重定向
+#+end_example
+
+问题:
+
+- 需要内核做 *目标地址替换* (DNAT)
+- 每个连接都要经过 *conntrack* (连接跟踪)
+- 代理程序必须用 =IP_TRANSPARENT= 选项才能接收非本地目标的包
+
+=auto_redirect= 的优化:
+
+#+begin_example
+客户端 → nftables 标记包 → policy routing 直接送入 TUN → sing-box 处理
+#+end_example
+
+优势:
+
+- *无需 DNAT*: 保持原始目标地址
+- *减少 conntrack 开销*: 只对需要代理的流量做标记
+- *与 TUN 天然集成*: 不需要额外的 socket 选项
+
+社区测试显示，在 OpenWrt 路由器上，=auto_redirect= 比 TPROXY 模式的吞吐量提升约 *20-30%*。
+
+** 连接标记机制
+
+=auto_redirect= 使用两个 *连接标记* (fwmark) 区分流量方向:
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "auto_redirect": true,
+    "auto_redirect_input_mark": "0x2023",   // 入站标记
+    "auto_redirect_output_mark": "0x2024"   // 出站标记
+  }]
+}
+#+end_src
+
+工作流程:
+
+1. nftables 在 =prerouting= 链中标记入站流量为 =0x2023=
+2. sing-box 处理后，出站流量标记为 =0x2024=
+3. policy routing 根据标记 =0x2024= 将流量送回物理网卡，避免再次进入 TUN
+
+** 与 Docker 的冲突解决
+
+问题场景:
+
+- Docker 创建 =docker0= 网桥 (默认 =172.17.0.0/16=)
+- TUN 的地址可能与 Docker 网段重叠
+- 容器流量可能被错误地送入 TUN
+
+=auto_redirect= 的处理:
+
+#+begin_src bash
+# 自动插入 nftables 规则，排除 Docker 网桥
+sudo nft list ruleset | grep -A5 "chain sing-box"
+
+# 输出示例:
+# chain sing-box {
+#   iifname "docker0" return
+#   oifname "docker0" return
+#   ...
+# }
+#+end_src
+
+这确保了 Docker 容器间通信不受影响。
+
+** 与 OpenWrt fw4 的集成
+
+OpenWrt 23.05+ 使用 *fw4* (基于 nftables) 管理防火墙。=auto_redirect= 能 *自动识别并兼容* fw4 的链结构:
+
+#+begin_src bash
+# sing-box 会将规则插入 fw4 的 mangle 表
+nft list table inet fw4 | grep -i sing
+
+# 输出示例:
+# chain mangle_prerouting {
+#   jump sing-box_redirect
+# }
+#+end_src
+
+这意味着在路由器上 *无需额外配置*，开箱即用。
+
+** =auto_redirect= 的限制
+
+1. *仅支持 Linux*: 需要 nftables (内核 3.13+)
+2. *与路由标记互斥*: 不能同时使用 =route.default_mark= 或 =outbound.routing_mark=
+3. *Android 仅支持 IPv4 TCP*: 由于缺少 nftables, Android 上只能做简单的 TCP 重定向
+
+** Android 上的特殊处理
+
+Android 虽然没有 nftables/iptables (用户态无权限)，但 =auto_redirect= 仍能启用，功能受限:
+
+- *仅处理 IPv4 TCP* 流量
+- 通过 =VpnService= 的内部机制实现简单重定向
+- UDP 和 IPv6 流量走传统 TUN 路径
+
+如果要在 Android 上共享 VPN (热点模式)，官方推荐使用 [[https://github.com/Mygod/VPNHotspot][VPNHotspot]] 应用。
+
+* =strict_route=: 严格路由与 DNS 防漏
+
+** 什么是 =strict_route=
+
+=strict_route= 在 =auto_route= 的基础上，*更严格地控制* 网络可达性:
+
+#+begin_quote
+Enforce strict routing rules when =auto_route= is enabled.
+#+end_quote
+
+支持平台: *Linux*, *Windows*
+
+** Linux 上的行为
+
+*** 1. 强制路由一致性
+
+启用 =strict_route= 后，Linux 会:
+
+- 禁用 *反向路径过滤* (rp_filter) 在 TUN 接口上
+- 确保回程流量 (return traffic) 走正确的接口
+
+例如，防止这种情况:
+
+#+begin_example
+请求: eth0 → Internet
+响应: Internet → tun0 (错误！)
+#+end_example
+
+*** 2. 排除接口的回程处理
+
+官方文档特别强调:
+
+#+begin_quote
+When =strict_route= enabled, return traffic to excluded interfaces will not be automatically excluded, so add them as well.
+#+end_quote
+
+假设你排除了 =br-lan= (LAN 网桥) 和 =pppoe-wan= (WAN 接口):
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "exclude_interface": ["br-lan", "pppoe-wan"]
+  }]
+}
+#+end_src
+
+启用 =strict_route= 后，还需要在 *路由规则* 中排除它们的回程:
+
+#+begin_src bash
+# 手动添加路由规则
+ip rule add iif br-lan lookup main priority 8999
+ip rule add iif pppoe-wan lookup main priority 8998
+#+end_src
+
+否则回程流量可能被错误地送入 TUN。
+
+*** 3. ICMP 流量的历史问题
+
+官方文档指出一个 *历史遗留行为*:
+
+#+begin_quote
+For legacy reasons, when neither =strict_route= nor =auto_redirect= are enabled, all ICMP traffic will not go through TUN.
+#+end_quote
+
+这意味着:
+
+- *不启用* =strict_route= 和 =auto_redirect= → ICMP (如 =ping=) 直接走物理网卡，不进 TUN
+- *启用* 任意一个 → ICMP 正常进入 TUN
+
+实际影响:
+
+#+begin_src bash
+# 场景 1: 未启用 strict_route 和 auto_redirect
+ping 8.8.8.8  # 直接走物理网卡，不经过代理
+
+# 场景 2: 启用 strict_route
+ping 8.8.8.8  # 进入 TUN，可能被代理或路由
+#+end_src
+
+** Windows 上的行为
+
+=strict_route= 在 Windows 上主要用于 *防止 DNS 泄漏*:
+
+#+begin_quote
+It may prevent some Windows applications (such as VirtualBox) from working properly in certain situations.
+#+end_quote
+
+*** Multi-homed DNS 漏洞
+
+Windows 的 *多宿主 DNS* (multi-homed DNS) 机制允许同时使用多个网络接口的 DNS 服务器。问题:
+
+#+begin_example
+1. 用户启用 TUN，期望所有 DNS 查询走代理的 DNS 服务器
+2. 但 Windows 仍然会向物理网卡的 DNS (如 ISP DNS) 发送查询
+3. ISP 看到用户访问的域名 → DNS 泄漏
+#+end_example
+
+=strict_route= 的处理:
+
+- 临时 *禁用* 非 TUN 接口的 DNS 配置
+- 强制所有 DNS 查询走 TUN 接口
+- sing-box 停止后自动恢复原配置
+
+*** 与 VirtualBox 的冲突
+
+VirtualBox 的 *Host-Only Adapter* 和 *NAT Network* 依赖多宿主路由。启用 =strict_route= 可能导致:
+
+- 虚拟机无法访问宿主机
+- 虚拟机网络完全中断
+
+*解决方案*: 将 VirtualBox 的虚拟网卡加入 =exclude_interface= (Linux) 或暂时禁用 =strict_route=。
+
+** 是否应该启用 =strict_route=?
+
+*推荐场景*:
+
+- 路由器/服务器部署 (需要精确控制路由)
+- 对 DNS 防漏有严格要求
+- 配合 =auto_redirect= 使用 (Linux)
+
+*不推荐场景*:
+
+- Windows 桌面环境 + VirtualBox/VMware
+- 复杂的多网卡环境 (需要手动测试)
+
+* 细粒度控制: 按接口/UID/应用选择性代理
+
+=auto_route= 提供了丰富的 *流量过滤选项*，可以精确控制哪些流量进入 TUN。
+
+*重要前提*: 所有这些选项都 *要求 =auto_route= 已启用*。
+
+** 按网络接口过滤 (Linux)
+
+*** =include_interface= vs =exclude_interface=
+
+这两个选项 *互斥*，只能选其一:
+
+*选项 1: 白名单模式 (只代理指定接口)*
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "include_interface": ["br-lan"]  // 只代理 br-lan 接口的流量
+  }]
+}
+#+end_src
+
+适用场景: 路由器模式，只代理 LAN 侧设备。
+
+*选项 2: 黑名单模式 (排除指定接口)*
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "exclude_interface": ["pppoe-wan", "eth1"]  // 不代理 WAN 口流量
+  }]
+}
+#+end_src
+
+适用场景: 服务器模式，避免代理管理接口。
+
+*** 回程流量的坑
+
+如前文所述，启用 =strict_route= 时，排除接口的 *回程流量* 不会自动排除。
+
+实际案例 (OpenWrt 路由器):
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "auto_route": true,
+    "strict_route": true,
+    "exclude_interface": ["pppoe-wan"]
+  }]
+}
+#+end_src
+
+如果不手动处理，会出现:
+
+#+begin_example
+1. 路由器发包到 Internet → 走 pppoe-wan (正确)
+2. Internet 回包 → 进入 tun0 (错误！)
+3. sing-box 无法识别 → 连接超时
+#+end_example
+
+解决方案:
+
+#+begin_src bash
+# 添加 policy routing 规则，回程流量走 main 表
+ip rule add iif pppoe-wan lookup main priority 8999
+#+end_src
+
+或者干脆 *不启用 =strict_route=*，让内核自动处理。
+
+** 按 Linux UID 过滤
+
+*限制*: 仅 Linux，需要 =auto_route=。
+
+*** 场景 1: 只代理特定用户
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "include_uid": [1000],             // 只代理 UID 1000 的流量
+    "include_uid_range": ["1000:1999"] // 或者范围 1000-1999
+  }]
+}
+#+end_src
+
+适用: 多用户服务器，只给某些用户开代理。
+
+*** 场景 2: 排除特定用户
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "exclude_uid": [0],                // 排除 root
+    "exclude_uid_range": ["100:999"]   // 排除系统用户
+  }]
+}
+#+end_src
+
+适用: 避免系统服务 (如 =systemd=) 走代理。
+
+*** 实现原理
+
+sing-box 会创建 nftables 规则:
+
+#+begin_src bash
+nft list ruleset | grep -A3 "meta skuid"
+
+# 输出示例:
+# meta skuid 1000 mark set 0x2023
+# meta skuid >= 1000 meta skuid <= 1999 mark set 0x2023
+#+end_src
+
+内核根据进程的 *UID* 标记流量，policy routing 据此分流。
+
+** 按 Android 用户/应用过滤
+
+*限制*: 仅 Android，需要 =auto_route=。
+
+*** Android 多用户机制
+
+Android 支持多用户 (如 "访客模式"):
+
+- 主用户: User 0
+- 工作资料 (Work Profile): User 10
+- 访客用户: User 11+
+
+*** =include_android_user= / =include_package=
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "include_android_user": [0, 10],  // 只代理主用户和工作资料
+    "include_package": [
+      "com.android.chrome",           // Chrome 浏览器
+      "com.termux"                    // Termux 终端
+    ]
+  }]
+}
+#+end_src
+
+*注意*: =include_package= 是 *白名单*，只有列出的应用走代理，其他应用直连。
+
+*** =exclude_package=
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "exclude_package": [
+      "com.tencent.mm",               // 微信 (避免被封号)
+      "com.eg.android.AlipayGphone",  // 支付宝 (金融应用)
+      "com.android.vending"           // Google Play (避免区域检测)
+    ]
+  }]
+}
+#+end_src
+
+*常见排除列表*:
+
+- 金融/银行应用 (风控敏感)
+- 国内社交应用 (防封号)
+- 游戏应用 (延迟敏感)
+- VPN 应用 (避免嵌套)
+
+*** 实现原理
+
+Android 的 =VpnService= API 允许按 =ApplicationInfo.uid= 过滤:
+
+#+begin_src java
+VpnService.Builder builder = new VpnService.Builder();
+builder.addAllowedApplication("com.android.chrome");  // 白名单
+builder.addDisallowedApplication("com.tencent.mm");   // 黑名单
+#+end_src
+
+sing-box 的 Go 代码通过 JNI 调用这些 API。
+
+* 路由表与策略路由: 深入 Linux 实现
+
+** iproute2 表号与规则索引
+
+前文提到，Linux 上 =auto_route= 会创建自定义路由表和策略路由规则。
+
+*** 默认值
+
+- =iproute2_table_index=: *2022*
+- =iproute2_rule_index=: *9000*
+
+为什么选这些数字?
+
+- 表号 2022: 避开常用表 (0-255) 和保留表 (254=main, 255=local)
+- 规则索引 9000: 确保优先级高于大多数默认规则 (32766=main rule)
+
+*** 查看路由表内容
+
+#+begin_src bash
+# 查看 sing-box 的路由表
+ip route show table 2022
+
+# 典型输出:
+# default dev tun0 scope link
+# 172.18.0.0/30 dev tun0 proto kernel scope link src 172.18.0.1
+#+end_src
+
+*解读*:
+
+- =default dev tun0=: 默认路由指向 TUN
+- =172.18.0.0/30=: TUN 接口的本地网段
+
+*** 查看策略路由规则
+
+#+begin_src bash
+# 查看所有规则
+ip rule show
+
+# sing-box 创建的规则 (以 9000 起):
+# 9000: from all fwmark 0x2024 lookup 2022
+# 9001: from all iif lo lookup 2022
+# 9002: not from all iif tun0 lookup 2022
+#+end_src
+
+*规则含义*:
+
+1. *9000*: 标记为 =0x2024= 的包查表 2022 (=auto_redirect= 的出站标记)
+2. *9001*: 来自 loopback 的包查表 2022 (本机流量)
+3. *9002*: *不是* 来自 tun0 的包查表 2022 (避免回环)
+
+*** 自定义表号/索引
+
+在多个 sing-box 实例共存时，可以修改这些值避免冲突:
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "interface_name": "tun-proxy",
+    "iproute2_table_index": 3000,  // 自定义表号
+    "iproute2_rule_index": 10000   // 自定义规则起始索引
+  }]
+}
+#+end_src
+
+** 与 nftables 的联动
+
+启用 =auto_redirect= 后，还会创建 nftables 规则:
+
+#+begin_src bash
+# 查看 sing-box 的 nftables 链
+sudo nft list table inet sing-box
+
+# 典型输出:
+# table inet sing-box {
+#   chain prerouting {
+#     type filter hook prerouting priority mangle; policy accept;
+#     iifname "tun0" return
+#     meta mark 0x2024 return
+#     ip daddr { 127.0.0.0/8, 192.168.0.0/16 } return
+#     meta mark set 0x2023
+#   }
+#
+#   chain output {
+#     type route hook output priority mangle; policy accept;
+#     oifname "tun0" return
+#     meta mark 0x2023 return
+#     ip daddr { 127.0.0.0/8, 192.168.0.0/16 } return
+#     meta mark set 0x2023
+#   }
+# }
+#+end_src
+
+*流程图*:
+
+#+begin_example
+入站包 → prerouting 链:
+  来自 tun0? → return (避免重复处理)
+  已有标记 0x2024? → return (sing-box 出站，放行)
+  目标是内网? → return (不代理内网)
+  否则 → 标记 0x2023 → policy routing → 送入 tun0
+
+出站包 → output 链:
+  去往 tun0? → return (避免回环)
+  已有标记 0x2023? → return (已被处理)
+  目标是内网? → return
+  否则 → 标记 0x2023 → policy routing → 送入 tun0
+#+end_example
+
+*** 调试 nftables 规则
+
+#+begin_src bash
+# 查看完整规则集
+sudo nft list ruleset
+
+# 只看 sing-box 相关
+sudo nft list ruleset | sed -n '/sing-box/I,+50p'
+
+# 动态监控匹配计数
+watch -n1 'sudo nft list table inet sing-box'
+#+end_src
+
+** route_address 与 route_exclude_address
+
+这两个选项控制 *哪些目标地址* 进入 TUN，独立于 =auto_route=。
+
+*** 只代理特定网段
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "route_address": [
+      "0.0.0.0/1",     // 0.0.0.0 - 127.255.255.255
+      "128.0.0.0/1"    // 128.0.0.0 - 255.255.255.255
+    ]
+  }]
+}
+#+end_src
+
+技巧: 用两个 /1 网段覆盖全部 IPv4，而不是 =0.0.0.0/0=，可以避免与默认路由冲突。
+
+*** 排除内网
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "route_exclude_address": [
+      "192.168.0.0/16",  // 私有网段
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "fc00::/7"         // IPv6 ULA
+    ]
+  }]
+}
+#+end_src
+
+*实际效果*: 这些地址段不会进入 TUN，直接走物理网卡。
+
+*** IPv4/IPv6 分离配置
+
+如果需要对 IPv4 和 IPv6 分别配置:
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "inet4_route_address": ["0.0.0.0/1", "128.0.0.0/1"],
+    "inet6_route_address": ["::/1", "8000::/1"],
+    "inet4_route_exclude_address": ["192.168.0.0/16"],
+    "inet6_route_exclude_address": ["fc00::/7"]
+  }]
+}
+#+end_src
+
+** route_address_set 与 route_exclude_address_set
+
+这是 sing-box 1.10.0+ 引入的 *高级功能*，允许从 *rule-set* 动态加载大量 IP 规则。
+
+*** 问题背景
+
+假设你想排除所有 "中国 IP" 不走代理:
+
+- 中国 IP 段有约 8000+ 条 CIDR
+- 全部写入 =route_exclude_address= → 配置文件巨大
+- Android =VpnService= 路由数量限制 (>3000 条会触发 =DeadSystemException=)
+
+*** 使用 rule-set
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "auto_route": true,
+    "auto_redirect": true,  // 必须启用
+    "route_exclude_address_set": ["geoip-cn"]  // 引用 rule-set
+  }],
+  "route": {
+    "rule_set": [{
+      "type": "remote",
+      "tag": "geoip-cn",
+      "format": "binary",
+      "url": "https://github.com/SagerNet/sing-geoip/raw/rule-set/geoip-cn.srs"
+    }]
+  }
+}
+#+end_src
+
+*工作原理*:
+
+1. sing-box 下载 =geoip-cn.srs= (二进制格式，约 100 KB)
+2. 解析出 8000+ 条 IP CIDR
+3. *直接添加到 nftables 的 IP set*:
+
+#+begin_src bash
+sudo nft list set inet sing-box geoip-cn
+
+# 输出:
+# set geoip-cn {
+#   type ipv4_addr
+#   flags interval
+#   elements = { 1.0.1.0/24, 1.0.2.0/23, 1.0.8.0/21, ... }
+# }
+#+end_src
+
+4. nftables 规则引用 set:
+
+#+begin_src bash
+ip daddr @geoip-cn return  # 匹配中国 IP，不进 TUN
+#+end_src
+
+*** 性能优势
+
+nftables 的 *interval set* 使用 *红黑树* 查找，时间复杂度 O(log n)。即使 8000 条规则，查找延迟也只有约 *10-20 ns*。
+
+相比之下，Android =VpnService= 必须遍历所有路由 (O(n))，会导致严重的性能问题和稳定性问题。
+
+*** 平台限制
+
+| 平台                    | =route_address_set= | =route_exclude_address_set= |
+|-----------------------+-------------------+---------------------------|
+| Linux (nftables)      | ✅ 支持            | ✅ 支持                     |
+| Windows/macOS         | ✅ 支持            | ✅ 支持                     |
+| Android 命令行          | ✅ 支持            | ✅ 支持                     |
+| Android 图形客户端        | ❌ 不支持          | ❌ 不支持 (路由数量限制)        |
+
+官方文档明确说明:
+
+#+begin_quote
+Note that it doesn't work on the Android graphical client due to the Android VpnService not being able to handle a large number of routes (DeadSystemException).
+#+end_quote
+
+* 版本演进与平台注意事项
+
+** Changelog 中的关键节点
+
+*** 1.10.0-alpha: 路由器场景修复
+
+官方在 1.10.0-alpha 版本中 *重写了路由器场景的处理逻辑*:
+
+#+begin_quote
+Tun inbounds with =auto_route= and =auto_redirect= now works as expected on routers without intervention.
+#+end_quote
+
+改进:
+
+- 自动识别路由器环境 (检测 forwarding 和多网卡)
+- 正确处理 LAN/WAN 接口分离
+- 与 OpenWrt fw4 的兼容性增强
+
+*** 1.10.0: =exclude_interface= 行为调整
+
+#+begin_quote
+Tun inbounds with =auto_route= and =strict_route= now works as expected on routers and servers, but the usages of =exclude_interface= need to be updated.
+#+end_quote
+
+变化:
+
+- 启用 =strict_route= 后，排除接口的 *回程流量* 不再自动排除
+- 需要用户手动添加 policy routing 规则
+
+影响: 旧配置可能在升级后出现连接问题。
+
+*** 1.11.0: Docker 冲突修复
+
+#+begin_quote
+Now =auto_redirect= fixes compatibility issues between TUN and Docker bridge networks.
+#+end_quote
+
+背景:
+
+- Docker 默认网桥 =docker0= (172.17.0.0/16)
+- TUN 地址可能与之冲突
+- 容器流量被错误地送入 TUN
+
+修复:
+
+- =auto_redirect= 自动排除 =docker0= 网桥
+- 容器间通信不受影响
+
+*** 1.12.0: 性能优化与 GSO
+
+官方对 TUN 性能做了重大优化，特别是 macOS/iOS:
+
+#+begin_quote
+We have significantly improved the performance of tun inbound on Apple platforms, especially in the gVisor stack.
+#+end_quote
+
+测试数据 (M4 MacBook Pro):
+
+| Stack  | 旧版本吞吐量 | 1.12.0 吞吐量 | 提升     |
+|--------|------------|------------|--------|
+| system | 4.2 Gbps   | 4.5 Gbps   | +7%    |
+| gVisor | 1.8 Gbps   | 3.9 Gbps   | +116%  |
+
+原因:
+
+- 启用 *GSO* (Generic Segmentation Offload)
+- 优化 gVisor 网络栈的 buffer 管理
+- 减少 syscall 次数
+
+** 路由器性能问题排查
+
+社区反馈显示，某些低端路由器 (如 Redmi AX6000) 在启用 TUN 后性能下降:
+
+*** 症状
+
+- 带宽只能跑到 100-120 Mbps (千兆网卡)
+- CPU 占用率 80%+
+- sing-box 进程占用大量内存
+
+*** 可能原因
+
+1. *软件加速问题*: OpenWrt 的 software flow offload 可能与 TUN 冲突
+2. *MTU 过大*: 默认 MTU 9000 在某些 SoC 上性能反而差
+3. *栈选择*: gVisor 栈在低端 CPU 上性能不佳
+4. *缺少硬件 offload*: 路由器芯片的 NAT/转发 offload 被 TUN 绕过
+
+*** 优化方案
+
+*1. 调整 MTU*
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "mtu": 1500  // 从 9000 降到 1500
+  }]
+}
+#+end_src
+
+*2. 切换到 system 栈*
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "stack": "system"  // 而非 gVisor
+  }]
+}
+#+end_src
+
+=system= 栈直接使用内核网络栈，性能更好但功能受限 (如无法实现某些高级特性)。
+
+*3. 启用 auto_redirect*
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "auto_redirect": true  // 减少内核转发开销
+  }]
+}
+#+end_src
+
+*4. 使用 route_address_set 减少路由条目*
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "route_exclude_address_set": ["geoip-cn"]  // 而非 8000 条路由
+  }]
+}
+#+end_src
+
+*5. 调整加密算法*
+
+某些代理协议 (如 Shadowsocks) 在路由器 SoC 上的加密性能差:
+
+- 避免 =aes-256-gcm= (需要 AES-NI 硬件加速)
+- 改用 =chacha20-poly1305= (纯软件实现更快)
+
+** 平台特殊性总结
+
+| 平台       | =auto_route= | =auto_redirect= | =strict_route= | 性能                          |
+|----------|------------|---------------|--------------|------------------------------|
+| Linux    | ✅ 完整支持   | ✅ nftables     | ✅ 支持        | 最佳 (nftables + policy routing) |
+| Windows  | ✅ 完整支持   | ❌ 不支持        | ✅ 防 DNS 漏     | 良好 (Win32 API)                |
+| macOS    | ✅ 完整支持   | ❌ 不支持        | ❌ 不支持       | 良好 (1.12.0+ 大幅优化)            |
+| Android  | ✅ VpnService | ⚠️ 仅 IPv4 TCP | ❌ 不支持       | 中等 (受限于 VpnService)           |
+| OpenWrt  | ✅ fw4 集成   | ✅ 自动兼容      | ⚠️ 需手动调整    | 视硬件而定 (低端 SoC 需优化)           |
+
+* 实战配置示例
+
+** 场景 1: Linux 桌面透明代理
+
+*需求*: 全局代理，排除内网，防 DNS 漏。
+
+#+begin_src json
+{
+  "log": {
+    "level": "info"
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "cloudflare",
+        "address": "https://1.1.1.1/dns-query",
+        "detour": "proxy"
+      },
+      {
+        "tag": "local",
+        "address": "223.5.5.5",
+        "detour": "direct"
+      }
+    ],
+    "rules": [
+      {"geosite": "cn", "server": "local"}
+    ],
+    "final": "cloudflare"
+  },
+  "inbounds": [{
+    "type": "tun",
+    "tag": "tun-in",
+    "interface_name": "tun0",
+    "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+    "mtu": 9000,
+    "auto_route": true,
+    "auto_redirect": true,
+    "strict_route": true,
+    "route_exclude_address": [
+      "192.168.0.0/16",
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "fc00::/7"
+    ]
+  }],
+  "outbounds": [
+    {"type": "vless", "tag": "proxy", /* ... */},
+    {"type": "direct", "tag": "direct"}
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "rules": [
+      {"geoip": "private", "outbound": "direct"},
+      {"geoip": "cn", "outbound": "direct"}
+    ],
+    "final": "proxy"
+  }
+}
+#+end_src
+
+** 场景 2: OpenWrt 路由器网关模式
+
+*需求*: LAN 设备走代理，WAN 口直连，国内直连。
+
+#+begin_src json
+{
+  "log": {
+    "level": "warn",
+    "output": "/var/log/sing-box.log"
+  },
+  "dns": {
+    "servers": [
+      {"tag": "cf", "address": "https://1.1.1.1/dns-query"},
+      {"tag": "ali", "address": "223.5.5.5"}
+    ],
+    "rules": [
+      {"rule_set": "geosite-cn", "server": "ali"}
+    ],
+    "final": "cf"
+  },
+  "inbounds": [{
+    "type": "tun",
+    "interface_name": "singtun0",
+    "address": ["172.18.0.1/30"],
+    "mtu": 1500,
+    "auto_route": true,
+    "auto_redirect": true,
+    "iproute2_table_index": 2022,
+    "iproute2_rule_index": 9000,
+    "exclude_interface": ["pppoe-wan", "eth1"],
+    "route_exclude_address_set": ["geoip-cn"]
+  }],
+  "outbounds": [
+    {"type": "shadowsocks", "tag": "proxy", "bind_interface": "pppoe-wan", /* ... */},
+    {"type": "direct", "tag": "direct", "bind_interface": "pppoe-wan"}
+  ],
+  "route": {
+    "rules": [
+      {"rule_set": "geoip-cn", "outbound": "direct"}
+    ],
+    "rule_set": [
+      {
+        "type": "remote",
+        "tag": "geoip-cn",
+        "format": "binary",
+        "url": "https://github.com/SagerNet/sing-geoip/raw/rule-set/geoip-cn.srs"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-cn",
+        "format": "binary",
+        "url": "https://github.com/SagerNet/sing-geosite/raw/rule-set/geosite-cn.srs"
+      }
+    ],
+    "final": "proxy"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "/var/cache/sing-box.db"
+    }
+  }
+}
+#+end_src
+
+*关键点*:
+
+- =exclude_interface=: 排除 WAN 口 (=pppoe-wan=) 和管理接口 (=eth1=)
+- =bind_interface=: 所有出站绑定 WAN 口，防止回环
+- =route_exclude_address_set=: 使用 rule-set 高效排除 8000+ 中国 IP
+- =cache_file=: 缓存 rule-set，避免每次重启重新下载
+
+** 场景 3: Android 分应用代理
+
+*需求*: 只代理 Chrome 和 Telegram，排除微信/支付宝。
+
+#+begin_src json
+{
+  "inbounds": [{
+    "type": "tun",
+    "address": ["172.19.0.1/30"],
+    "auto_route": true,
+    "stack": "system",
+    "include_package": [
+      "com.android.chrome",
+      "org.telegram.messenger"
+    ],
+    "exclude_package": [
+      "com.tencent.mm",
+      "com.eg.android.AlipayGphone",
+      "com.tencent.mobileqq"
+    ]
+  }],
+  "outbounds": [
+    {"type": "vmess", "tag": "proxy", /* ... */},
+    {"type": "direct", "tag": "direct"}
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "override_android_vpn": false,
+    "final": "proxy"
+  }
+}
+#+end_src
+
+*注意*:
+
+- *不要* 同时配置 =include_package= 和 =exclude_package=，选其一
+- =override_android_vpn=: 如果你有其他 VPN 应用 (如公司 VPN)，设为 =true= 可以让流量先进 sing-box
+
+* 源码阅读指引
+
+对于想深入理解 =auto_route= 实现的开发者，官方仓库的以下路径值得关注:
+
+** TUN 入站核心
+
+- =protocol/tun/inbound.go=: TUN 入站的初始化和配置解析
+- =protocol/tun/tun.go=: TUN 设备的创建和管理
+
+** 路由配置生成
+
+- =adapter/router.go=: 路由规则的处理逻辑
+- =route/router.go=: 路由决策引擎
+
+** 平台特定实现
+
+- =common/tun/tun_linux.go=: Linux iproute2 策略路由
+- =common/tun/tun_windows.go=: Windows 路由 API
+- =common/tun/tun_darwin.go=: macOS 路由处理
+
+** nftables 集成
+
+- =common/redir/tproxy_linux.go=: TPROXY 和 nftables 规则生成
+- =experimental/libbox/platform/android.go=: Android VpnService 封装
+
+** 推荐阅读顺序
+
+1. 阅读 =protocol/tun/inbound.go= 理解配置如何解析
+2. 跟踪 =auto_route= 启用后调用的平台特定函数
+3. 查看 =common/tun/tun_linux.go= 中 =iproute2= 命令的构造
+4. 研究 =common/redir= 中 nftables 规则的生成逻辑
+
+* 总结: 何时使用 =auto_route=
+
+** 必须启用的场景
+
+- *系统级透明代理*: 需要所有应用无感知地走代理
+- *路由器/网关模式*: 为局域网设备提供统一代理
+- *TUN 模式部署*: 只要用 TUN 入站就必须启用 (否则流量进不来)
+
+** 建议配合 =auto_redirect= (Linux)
+
+- 性能提升 20-30%
+- 解决 TUN 与 Docker 冲突
+- 自动兼容 OpenWrt fw4
+
+** 谨慎启用 =strict_route=
+
+*推荐*:
+
+- 路由器/服务器 (需要精确控制路由)
+- 对 DNS 防漏有严格要求
+
+*不推荐*:
+
+- Windows 桌面 + VirtualBox (会冲突)
+- 复杂多网卡环境 (需要仔细测试)
+
+** 性能优化 checklist
+
+- [ ] 使用 =auto_redirect= (Linux)
+- [ ] 设置合适的 MTU (1500 或 9000)
+- [ ] 选择合适的 =stack= (system vs gVisor)
+- [ ] 用 =route_address_set= 替代大量路由条目
+- [ ] 绑定出口网卡 (=auto_detect_interface= 或 =default_interface=)
+- [ ] 排除不需要代理的接口/应用
+
+** 排查问题的工具命令
+
+#+begin_src bash
+# 检查路由表
+ip route show
+ip route show table 2022
+
+# 检查策略路由
+ip rule show
+
+# 检查 nftables 规则
+sudo nft list ruleset | grep -A20 sing-box
+
+# 动态监控流量
+sudo tcpdump -i tun0 -n
+sudo tcpdump -i eth0 -n
+
+# 检查进程连接
+ss -tunap | grep sing-box
+
+# 查看 sing-box 日志
+journalctl -u sing-box -f
+#+end_src
+
+-----
+
+*参考资料*:
+
+- [[https://sing-box.sagernet.org/configuration/inbound/tun/][官方 TUN 文档]]
+- [[https://sing-box.sagernet.org/configuration/route/][官方路由文档]]
+- [[https://sing-box.sagernet.org/changelog/][官方 Changelog]]
+- [[https://github.com/SagerNet/sing-box][sing-box GitHub 仓库]]

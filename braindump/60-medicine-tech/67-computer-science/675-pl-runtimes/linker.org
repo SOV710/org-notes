@@ -1,0 +1,1040 @@
+#+title: The Linker Demystified: From Object Files to Executables
+#+author: SOV710
+#+date: 2025-12-24
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 链接器的功能
+
+链接器的功能很简单: 它将 object files 转换为可执行文件和 shared libraries。让我们深入探讨这一过程的含义。
+
+在使用链接器的场景中，软件开发流程包括用某种语言编写程序代码: 例如 C, C++ 或 Fortran (但通常不包括 Java，因为 Java 的工作方式不同，它使用 loader 而非 linker)。编译器将这些人类可读的程序代码翻译成另一种人类可读的文本形式，即 *assembly code*。Assembly code 是机器语言的可读形式，计算机可以直接执行这种机器语言。汇编器被用来将 assembly code 转换为 object file。
+
+为求完整性，我需要指出，某些编译器内部集成了汇编器，可以直接生成 object file。例如:
+
+- GCC 的 =cc1= 前端生成汇编代码，然后调用 =as= (GNU assembler)
+- LLVM 的 =clang= 可以直接生成目标代码，跳过文本形式的汇编阶段
+- MSVC 的 =cl.exe= 同样内置了汇编器
+
+无论采用哪种方式，这正是事情开始变得有趣的地方。
+
+** 远古时代: 从汇编器到链接器的诞生
+
+在远古时代，当恐龙还在数据中心漫步时，许多程序都是自包含的完整体。在那个年代通常没有编译器——人们直接用 assembly code 编写程序——而汇编器实际上生成的是机器可以直接执行的 *可执行文件*。
+
+随着 Fortran 和 Cobol 等语言开始出现，人们开始以 *subroutine libraries* 的概念进行思考，这意味着必须有某种方式能够在不同时间运行汇编器，并将输出组合成单个可执行文件。这要求汇编器生成一种不同类型的输出，即后来被称为 *object file* 的文件 (我不知道这个名称的由来，可能是因为它们代表 "对象化" 的代码片段)。
+
+而且需要一个新程序来将不同的 object files 组合成单个可执行文件。这个新程序被称为 *linker* (这个名称的来源应该是显而易见的——它将多个文件 "链接" 在一起)。
+
+链接器至今仍在履行相同的职责。在随后的几十年中，增加了一项新特性: *shared libraries*。
+
+** Shared Libraries: 虚拟内存时代的优化
+
+Shared libraries 的发明是对同时运行多个进程的虚拟内存系统的一种优化。人们注意到几乎每个程序中都会出现一组基本函数。在 shared libraries 出现之前，在同时运行多个进程的系统中，这意味着几乎每个进程都拥有完全相同代码的副本。
+
+例如，假设你同时运行 10 个使用标准 C 库的程序:
+
+- 每个进程都有 =printf()=, =malloc()=, =strcmp()= 等函数的副本
+- 如果 C 库占用 2 MB，那么 10 个进程就需要 20 MB 物理内存
+- 但这些代码是 *完全相同* 的！
+
+这表明在虚拟内存系统上，有可能对代码进行编排，使得单个副本可以被所有使用它的进程共享。虚拟内存系统将用于将这个单一副本映射到需要它的每个进程的地址空间中。这将需要更少的物理内存来运行多个程序，从而产生更好的性能。
+
+*** 历史演进
+
+我相信 shared libraries 的首次实现是在基于 COFF 的 SVR3 上。这个实现很简单，基本上为每个 shared library 分配了虚拟地址空间的固定部分。这不需要对链接器进行任何重大修改。然而，要求每个 shared library 预留适当的虚拟地址空间部分是不便的。
+
+*SunOS 4* 引入了更灵活的 shared libraries 版本，后来被 SVR4 采用。这个实现将链接器的部分操作推迟到运行时执行。当程序启动时，它会自动运行链接器的受限版本，将程序本体与 shared libraries 进行链接。程序启动时运行的链接器版本被称为 *dynamic linker*。
+
+在 Linux 上，动态链接器通常是:
+
+- =/lib64/ld-linux-x86-64.so.2= (x86-64)
+- =/lib/ld-linux.so.2= (x86-32)
+- =/lib/ld-musl-x86_64.so.1= (musl libc)
+
+你可以通过 =ldd= 命令查看程序依赖的共享库:
+
+#+begin_src bash
+$ ldd /bin/ls
+    linux-vdso.so.1 (0x00007ffd8e3f5000)
+    libselinux.so.1 => /lib64/libselinux.so.1 (0x00007f8b9c8e0000)
+    libc.so.6 => /lib64/libc.so.6 (0x00007f8b9c6e0000)
+    /lib64/ld-linux-x86-64.so.2 (0x00007f8b9c920000)
+#+end_src
+
+当需要区分它们时，我将把创建程序的链接器版本称为 *program linker* (或 *static linker*)。这种类型的 shared libraries 对传统的 program linker 来说是一个重大变化: 它现在必须构建可以在运行时被 dynamic linker 高效使用的链接信息。
+
+介绍到此结束。你现在应该理解了链接器功能的基础知识。我现在将转向它是如何实现这些功能的。
+
+* 基本链接器数据类型
+
+链接器操作少数几种基本数据类型: *symbols*, *relocations* 和 *contents*​。这些都在输入的 object files 中定义。以下是对每种类型的概述。
+
+** Symbols: 名称与值的映射
+
+Symbol 本质上是一个 *名称* 和一个 *值*​。许多 symbols 代表原始源代码中的静态对象——即在程序执行期间存在于单一位置的对象。
+
+例如，在从 C 代码生成的 object file 中，每个函数以及每个全局变量和静态变量都会有一个 symbol:
+
+#+begin_src c
+int global_var = 42;              // 生成 symbol "global_var"
+static int file_local = 10;       // 生成 symbol "file_local.1234" (可能被 mangle)
+
+void my_function() {              // 生成 symbol "my_function"
+    static int counter = 0;       // 生成 symbol "counter.5678"
+    counter++;
+}
+#+end_src
+
+这类 symbol 的值只是 contents 中的一个 *偏移量*​。这种类型的 symbol 被称为 *defined symbol*​。
+
+*重要*: 不要混淆代表变量 =my_global_var= 的 symbol 的值与 =my_global_var= 本身的值:
+
+- Symbol 的值 ≈ =&my_global_var= (变量的地址)
+- 变量的值 = =my_global_var= (存储在该地址的数据)
+
+*** Undefined Symbols
+
+Symbols 还用于指示对不同 object file 中定义的名称的引用。这种引用被称为 *undefined symbol*。
+
+例如:
+
+#+begin_src c
+// file1.c
+extern int shared_data;   // undefined symbol
+
+void use_data() {
+    shared_data = 10;     // 引用 "shared_data"
+}
+
+// file2.c
+int shared_data = 0;      // defined symbol
+#+end_src
+
+链接器的工作就是 *解析* (resolve) 这些 undefined symbols，即找到对应的 defined symbol。
+
+*** 其他 Symbol 类型
+
+还有其他不太常用的 symbol 类型:
+
+- *Common symbols*: 未初始化的全局变量 (C 语言的历史遗留)
+- *Weak symbols*​: 可以被同名 strong symbol 覆盖的符号
+- *Absolute symbols*: 值不随重定位改变 (如常量)
+
+在链接过程中，链接器将为每个 defined symbol 分配一个 *最终地址*，并通过找到具有相同名称的 defined symbol 来 *解析* 每个 undefined symbol。
+
+** Relocations: 地址修正计算
+
+Relocation 是要对 contents 执行的计算。大多数 relocations 引用一个 symbol 和 contents 中的一个偏移量。许多 relocations 还会提供一个额外的操作数，称为 *addend*。
+
+一个简单且常用的 relocation 是: "将 contents 中的这个位置设置为该 symbol 的值加上这个 addend"。
+
+*** 为什么需要 Relocations?
+
+编译器在生成 object file 时，不知道最终的内存布局。例如:
+
+#+begin_src c
+extern int global;
+
+int get_global() {
+    return global;  // 编译器不知道 global 的最终地址！
+}
+#+end_src
+
+生成的汇编代码 (x86-64) 可能是:
+
+#+begin_src asm
+get_global:
+    mov eax, DWORD PTR global[rip]  # 相对于 RIP 的偏移
+    ret
+#+end_src
+
+但此时 =global= 的地址是 *未知* 的，所以汇编器会:
+
+1. 在指令中留一个占位符 (通常填 0)
+2. 记录一个 relocation: "在偏移 X 处，填入 =global= 的地址 (相对于 RIP)"
+
+*** Relocation 类型
+
+Relocations 执行的计算类型本质上依赖于链接器为其生成代码的处理器架构。
+
+*x86-64 常见 relocation 类型*:
+
+| 类型              | 计算公式         | 用途            |
+|-------------------+-----------------+-----------------|
+| =R_X86_64_64=       | =S + A=           | 64 位绝对地址     |
+| =R_X86_64_PC32=     | =S + A - P=       | 32 位 PC 相对地址 |
+| =R_X86_64_PLT32=    | =L + A - P=       | PLT 跳转        |
+| =R_X86_64_GOTPCREL= | =G + GOT + A - P= | GOT 条目访问     |
+
+其中:
+
+- =S= = symbol 的值
+- =A= = addend
+- =P= = relocation 位置 (place)
+- =L= = PLT 条目地址
+- =G= = GOT 偏移量
+- =GOT= = Global Offset Table 基址
+
+*RISC 架构的特殊性*:
+
+需要两条或更多指令来形成内存地址的 RISC 处理器 (如 RISC-V, MIPS, ARM) 将有单独的 relocations 用于这些指令中的每一条。
+
+例如 RISC-V 加载全局变量:
+
+#+begin_src asm
+lui  a0, %hi(global)      # 加载高 20 位
+addi a0, a0, %lo(global)  # 加上低 12 位
+lw   a1, 0(a0)            # 从地址加载
+#+end_src
+
+这需要两个 relocations:
+
+- =R_RISCV_HI20= 用于 =lui= 指令
+- =R_RISCV_LO12_I= 用于 =addi= 指令
+
+在链接过程中，链接器将按指示执行所有 relocation 计算。Object file 中的 relocation 可能引用 undefined symbol。如果链接器无法解析该 symbol，它通常会发出错误 (但并非总是如此: 对于某些 symbol 类型或某些 relocation 类型，错误可能并不适当)。
+
+** Contents: 内存镜像
+
+Contents 是程序执行期间内存应该呈现的样子。Contents 具有 *大小*, *字节数组* 和 *类型*。
+
+*** Contents 类型
+
+| 类型   | 名称        | 内容                | 初始化 | 典型权限 |
+|--------+-------------+---------------------+-------+---------|
+| text   | 代码段       | 机器指令             | 是    | =r-x=     |
+| data   | 数据段       | 已初始化全局/静态变量   | 是    | =rw-=     |
+| rodata | 只读数据段    | 字符串常量, switch 表 | 是    | =r--=     |
+| bss    | 未初始化数据段 | 未初始化全局/静态变量   | 否    | =rw-=     |
+
+*** 示例
+
+#+begin_src c
+const char* msg = "Hello";    // rodata ("Hello") + data (指针)
+int initialized = 42;         // data
+int uninitialized;            // bss
+
+void func() {                 // text
+    int local = 10;           // stack (不在 contents 中)
+}
+#+end_src
+
+*** Linker 的处理
+
+编译器和汇编器努力生成完全正确的 contents，但链接器实际上并不关心它们，只将它们视为原始数据。链接器从每个文件读取 contents，将它们 *按类型排序* 后全部 *连接* 在一起，应用 relocations，然后将结果写入可执行文件。
+
+例如，链接三个文件:
+
+#+begin_example
+file1.o:  text (100 bytes) + data (20 bytes)
+file2.o:  text (50 bytes)  + data (30 bytes)
+file3.o:  text (80 bytes)  + data (10 bytes)
+
+最终可执行文件:
+  text: file1.text + file2.text + file3.text  (230 bytes)
+  data: file1.data + file2.data + file3.data  (60 bytes)
+#+end_example
+
+* 基本链接器操作
+
+此时我们已经掌握了足够的知识来理解每个链接器使用的基本步骤。
+
+** 链接五部曲
+
+1. *读取输入的 object files*
+
+   - 解析文件头，识别节 (sections)
+   - 确定 contents 的长度和类型
+   - 读取 symbols 和 relocations
+   - 构建内部数据结构
+
+2. *构建全局 symbol table*
+
+   - 合并所有 object files 的 symbols
+   - 将 undefined symbols 链接到它们的定义
+   - 检测 *重复定义* (multiple definition) 错误
+   - 处理 weak symbols 和 common symbols
+
+3. *决定内存布局 (Layout)*
+
+   - 分配每个 section 在输出文件中的位置
+   - 计算每个 section 在运行时的虚拟地址 (VMA)
+   - 确定每个 defined symbol 的最终地址
+   - 这一步后，所有地址都确定了！
+
+4. *应用 Relocations*
+
+   - 读取每个 section 的 contents data
+   - 读取对应的 relocations
+   - 根据 relocation 类型和 symbol 的最终地址，修正 contents
+   - 将修正后的 contents 写入输出文件
+
+5. *输出 Symbol Table (可选)*
+
+   - 写出包含 symbols 最终值的完整 symbol table
+   - 用于调试 (=.symtab=) 或动态链接 (=.dynsym=)
+   - 可以用 =strip= 命令移除调试符号
+
+** 实际示例: 链接两个文件
+
+假设我们有:
+
+#+begin_src c
+// a.c
+extern int shared;
+void set_shared(int x) { shared = x; }
+
+// b.c
+int shared = 0;
+int main() { set_shared(42); return shared; }
+#+end_src
+
+编译:
+
+#+begin_src bash
+$ gcc -c a.c b.c
+$ nm a.o
+                 U shared        # undefined
+0000000000000000 T set_shared   # defined at offset 0
+
+$ nm b.o
+0000000000000000 D shared        # defined at offset 0 (data)
+0000000000000000 T main          # defined at offset 0 (text)
+                 U set_shared    # undefined
+#+end_src
+
+链接:
+
+#+begin_src bash
+$ gcc -o prog a.o b.o
+$ nm prog | grep -E 'shared|set_shared|main'
+0000000000404028 D shared        # 最终地址: 0x404028
+0000000000401126 T set_shared   # 最终地址: 0x401126
+0000000000401136 T main          # 最终地址: 0x401136
+#+end_src
+
+链接器做了什么?
+
+1. *读取*: 发现 =a.o= 有 =set_shared= (defined), =shared= (undefined); =b.o= 有 =main=, =shared= (defined), =set_shared= (undefined)
+2. *Symbol table*: 解析所有 undefined symbols
+3. *Layout*: 决定 =.text= 从 =0x401126= 开始, =.data= 从 =0x404028= 开始
+4. *Relocations*: 修正 =set_shared= 中对 =shared= 的引用，=main= 中对 =set_shared= 的调用
+5. *输出*: 生成可执行文件 =prog=
+
+* 地址空间: 三种视角
+
+地址空间只是内存的一种视图，其中每个字节都有一个地址。链接器处理 *三种* 不同类型的地址空间。
+
+** 1. 输入地址空间 (Object File Address Space)
+
+每个输入的 object file 都是一个 *小的地址空间*:
+
+- Contents 有地址 (通常从 0 开始)
+- Symbols 引用这些地址
+- Relocations 通过地址指向 contents 中的位置
+
+例如 =a.o= 中:
+
+#+begin_example
+.text section:
+  Address 0x0000: <set_shared>
+    ...
+    Address 0x000C: mov [shared], edi  # relocation at 0x000C
+#+end_example
+
+** 2. 虚拟内存地址 (VMA - Virtual Memory Address)
+
+输出程序在运行时会被放置在内存中的某个位置。这就是 *输出地址空间*，我通常称之为使用 VMA。
+
+在 Linux x86-64 上，典型的内存布局:
+
+#+begin_example
+0x0000000000400000  .text  (代码段, 起始地址)
+0x0000000000404000  .rodata
+0x0000000000405000  .data
+0x0000000000406000  .bss
+...
+0x00007fffffffffff  栈顶
+#+end_example
+
+可以用 =readelf= 查看:
+
+#+begin_src bash
+$ readelf -l prog
+
+Program Headers:
+  Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
+  LOAD           0x001000 0x0000000000401000 0x0000000000401000 0x001234 0x001234 R E 0x1000
+  LOAD           0x002000 0x0000000000404000 0x0000000000404000 0x000100 0x000200 RW  0x1000
+#+end_example
+
+** 3. 加载内存地址 (LMA - Load Memory Address)
+
+输出程序会被加载到内存中的某个位置。这是 LMA。
+
+*** 典型 Unix 系统
+
+在典型的 Unix 系统中，*VMA 和 LMA 是相同的*。程序直接加载到它应该运行的虚拟地址。
+
+*** 嵌入式系统
+
+在嵌入式系统中，它们通常 *不同*。例如:
+
+#+begin_example
+场景: ARM Cortex-M 微控制器
+
+ROM (Flash):  0x08000000 ~ 0x0801FFFF  (128 KB)
+RAM (SRAM):   0x20000000 ~ 0x20007FFF  (32 KB)
+
+.text:   LMA = 0x08000000,  VMA = 0x08000000  (代码在 ROM 中运行)
+.rodata: LMA = 0x08010000,  VMA = 0x08010000  (常量在 ROM 中)
+.data:   LMA = 0x08011000,  VMA = 0x20000000  (数据在 ROM 中存储，运行时复制到 RAM)
+#+end_example
+
+启动代码 (startup code) 必须在 =main()= 之前执行:
+
+#+begin_src c
+// 复制 .data 段从 ROM 到 RAM
+extern uint32_t _sdata, _edata, _sidata;
+memcpy(&_sdata, &_sidata, &_edata - &_sdata);
+
+// 清零 .bss 段
+extern uint32_t _sbss, _ebss;
+memset(&_sbss, 0, &_ebss - &_sbss);
+#+end_src
+
+linker script 示例:
+
+#+begin_src ld
+MEMORY {
+    FLASH (rx) : ORIGIN = 0x08000000, LENGTH = 128K
+    RAM (rwx)  : ORIGIN = 0x20000000, LENGTH = 32K
+}
+
+SECTIONS {
+    .text : { *(.text*) } > FLASH
+    .rodata : { *(.rodata*) } > FLASH
+    .data : {
+        _sdata = .;
+        *(.data*)
+        _edata = .;
+    } > RAM AT > FLASH
+    _sidata = LOADADDR(.data);
+}
+#+end_src
+
+** 共享库的地址空间
+
+共享库通常可以在不同进程中运行于 *不同的虚拟内存地址*。
+
+*** 基地址 (Base Address)
+
+共享库在创建时有一个 *基地址* (base address); 这个地址通常是 *零*。
+
+#+begin_src bash
+$ readelf -h /lib64/libc.so.6 | grep Entry
+  Entry point address:               0x27690
+#+end_src
+
+入口点相对于基地址 0，所以这是 *偏移量* 0x27690。
+
+*** 动态链接时的重定位
+
+当动态链接器将共享库复制到进程的虚拟内存空间时，必须应用 *重定位* 来调整共享库以适应其虚拟内存地址。
+
+例如，共享库可能被加载到:
+
+- 进程 A: =0x7f1234000000=
+- 进程 B: =0x7f5678000000=
+
+动态链接器需要修正所有指针和地址引用。
+
+*** Position Independent Code (PIC)
+
+共享库系统会尽量减少必须应用的重定位数量，因为这些操作会在程序启动时消耗时间。
+
+解决方案: *Position Independent Code* (PIC)
+
+- 代码中使用 *相对寻址* 而非绝对地址
+- 通过 *Global Offset Table* (GOT) 间接访问全局数据
+- 通过 *Procedure Linkage Table* (PLT) 间接调用函数
+
+编译 PIC:
+
+#+begin_src bash
+$ gcc -fPIC -c mylib.c
+$ gcc -shared -o mylib.so mylib.o
+#+end_src
+
+对比:
+
+#+begin_src bash
+# 非 PIC (静态链接)
+$ gcc -c a.c
+$ objdump -d a.o | grep 'mov.*global'
+   c:   48 8b 05 00 00 00 00    mov    0x0(%rip),%rax   # R_X86_64_PC32: global
+
+# PIC (动态链接)
+$ gcc -fPIC -c a.c
+$ objdump -d a.o | grep 'mov.*global'
+   c:   48 8b 05 00 00 00 00    mov    0x0(%rip),%rax   # R_X86_64_GOTPCREL: global
+#+end_src
+
+PIC 通过 GOT 访问 =global=，GOT 本身是相对寻址的，所以代码可以加载到任意地址。
+
+* 目标文件格式: 数据的容器
+
+如上所述，汇编器将人类可读的汇编语言转换为 object file。Object file 是以一种设计为链接器输入的格式编写的二进制数据文件。链接器生成 *可执行文件*。该可执行文件是以一种设计为操作系统或加载器输入的格式编写的二进制数据文件。
+
+目标文件格式与可执行文件格式之间 *没有逻辑上的必然联系*。然而，实际上它们通常非常相似 (甚至是同一格式的不同变体)。
+
+** Sections: 数据的基本单位
+
+大多数目标文件格式定义了 *节* (sections)。节通常包含内存内容，或者用于存放其他类型的数据。节通常具有:
+
+- *名称*: =.text=, =.data=, =.rodata=, =.bss=
+- *类型*: =PROGBITS= (有内容), =NOBITS= (无内容，如 bss), =SYMTAB= (符号表)
+- *大小*: 字节数
+- *地址*: VMA (如果是可加载的)
+- *数据数组*: 实际内容
+
+查看 sections:
+
+#+begin_src bash
+$ readelf -S a.o
+Section Headers:
+  [Nr] Name              Type            Address          Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            0000000000000000 000000 000000 00      0   0  0
+  [ 1] .text             PROGBITS        0000000000000000 000040 000015 00  AX  0   0  1
+  [ 2] .rela.text        RELA            0000000000000000 000200 000018 18   I  9   1  8
+  [ 3] .data             PROGBITS        0000000000000000 000055 000000 00  WA  0   0  1
+  [ 4] .bss              NOBITS          0000000000000000 000055 000000 00  WA  0   0  1
+  [ 5] .rodata           PROGBITS        0000000000000000 000055 000005 00   A  0   0  1
+  ...
+#+end_src
+
+** 两大类: 面向记录 vs. 面向节
+
+目标文件格式大致可分为两类: *面向记录* 和 *面向节*。
+
+*** 面向记录的格式 (Record-Oriented)
+
+定义了一系列 *大小不等* 的记录。每条记录以某种特殊代码开头，后面可能跟随数据。
+
+#+begin_example
+Record 1: TYPE_HEADER, length=32, data=[...]
+Record 2: TYPE_SYMBOL, length=16, data=[...]
+Record 3: TYPE_SECTION, length=128, data=[...]
+...
+#+end_example
+
+读取目标文件需要 *从头开始，逐条处理每条记录*。记录用于描述 symbols 和 sections。Relocation 信息可能与 section 相关联，也可能由其他记录指定。
+
+*代表格式*:
+
+- *IEEE-695*: 曾在嵌入式系统中使用
+- *Mach-O* (早期版本): macOS/iOS 的目标文件格式
+
+*** 面向节的格式 (Section-Oriented)
+
+文件头描述了一个包含指定数量节的 *节表* (section table)。
+
+#+begin_example
+File Header:
+  Magic: 0x7f 'E' 'L' 'F'
+  Section Header Offset: 0x1000
+  Section Header Count: 10
+
+Section Table (at 0x1000):
+  [0] Offset=0x0000, Size=0, Type=NULL
+  [1] Offset=0x0040, Size=128, Type=PROGBITS, Name=".text"
+  [2] Offset=0x00c0, Size=64,  Type=PROGBITS, Name=".data"
+  ...
+#+end_example
+
+Symbols 可能出现在:
+
+- 由文件头描述的单独部分
+- 一个特殊的 section (如 ELF 的 =.symtab=)
+
+Relocation 信息可能:
+
+- 附加在 section 上
+- 出现在单独的 section 中 (如 ELF 的 =.rela.text=)
+
+目标文件可以通过 *读取节表，然后直接读取特定节* 来读取。这允许 *随机访问*，不需要顺序扫描。
+
+*代表格式*:
+
+- *ELF* (Executable and Linkable Format): Linux, BSD, Solaris
+- *COFF* (Common Object File Format): Unix System V, Windows (旧版)
+- *PE* (Portable Executable): Windows (.exe, .dll)
+- *a.out* (Assembler Output): 早期 Unix, BSD (已废弃)
+- *Mach-O* (现代版本): macOS, iOS
+
+** 格式对比
+
+| 格式    | 系统              | 节表      | 符号表位置     | Relocation 位置 | 调试信息格式    |
+|-------+-----------------+---------+-------------+--------------+--------------|
+| ELF   | Linux, BSD      | 是       | =.symtab=     | =.rela.text=   | DWARF        |
+| PE    | Windows         | 是       | Symbol Table | Section      | CodeView/PDB |
+| Mach-O | macOS, iOS     | 是/记录混合 | LC_SYMTAB   | LC_DYSYMTAB  | DWARF        |
+| COFF  | Unix SysV (旧)  | 是       | Symbol Table | Section      | COFF Debug   |
+| a.out | 早期 Unix       | 简化     | 固定位置      | 固定位置      | stabs        |
+
+* 调试信息: 超越代码本身
+
+每种目标文件格式都需要能够表示 *调试信息*。调试信息由编译器生成，由调试器读取。一般来说，链接器可以将其视为任何其他类型的数据。
+
+然而，实际上程序的调试信息 *可能比程序本身还要大*。
+
+#+begin_src bash
+$ gcc -g -o prog main.c
+$ ls -lh prog
+-rwxr-xr-x 1 user user 128K Dec 24 10:00 prog
+
+$ strip -o prog.stripped prog
+$ ls -lh prog.stripped
+-rwxr-xr-x 1 user user 16K Dec 24 10:01 prog.stripped
+
+# 调试信息占了 112 KB！
+#+end_src
+
+链接器可以使用各种技术来 *减少调试信息的数量*，从而减小可执行文件的大小。这可以加快链接速度，但要求链接器能够 *理解* 调试信息。
+
+** Stabs: 符号表中的调试信息
+
+*a.out* 目标文件格式使用符号表中的特殊字符串来存储调试信息，这些特殊字符串称为 *stabs* (Symbol Table Strings)。这些特殊字符串只是具有特殊类型的符号名称。
+
+例如:
+
+#+begin_example
+Symbol Table:
+  Name: "main:F(0,1)"       Type: N_FUN     Value: 0x401126
+  Name: "int:t(0,1)=r(0,1);-2147483648;2147483647"  Type: N_LSYM
+  Name: "main.c"            Type: N_SO      Value: 0
+#+end_example
+
+这种技术也被某些 *ECOFF* 变体和较早版本的 *Mach-O* 使用。
+
+*优点*:
+
+- 简单，不需要新的 section 类型
+- 调试器可以通过符号表读取
+
+*缺点*:
+
+- 符号表膨胀严重
+- 类型信息编码在字符串中，难以解析
+- 不支持现代语言特性 (如 C++ 模板, 内联函数)
+
+** COFF Debug: 扩展符号表
+
+*COFF* 目标文件格式使用符号表中的 *特殊字段* 来存储调试信息。
+
+#+begin_example
+Symbol Table Entry:
+  Name: "main"
+  Value: 0x1000
+  SectionNumber: 1
+  Type: 0x20           # Function type
+  StorageClass: 0x2    # External
+  NumberOfAuxSymbols: 1
+  AuxSymbol: {
+    TagIndex: 10       # 指向类型信息
+    TotalSize: 128
+    LineNumber: 42
+  }
+#+end_example
+
+这种类型信息 *有限*，完全不足以支持 C++。
+
+*** 解决方法: COFF + Stabs
+
+一种常见的解决方法是在 COFF section 中嵌入 *stabs* 字符串:
+
+#+begin_example
+Sections:
+  .text    (code)
+  .data    (data)
+  .stab    (stabs debug info)
+  .stabstr (stabs string table)
+#+end_example
+
+这在早期 Windows 和 Unix 系统中很常见，但现在已被 DWARF 取代。
+
+** DWARF: 现代调试标准
+
+*DWARF* (Debugging With Attributed Record Formats) 是目前 *事实标准* 的调试信息格式，用于 ELF 和 Mach-O。
+
+*** DWARF Sections
+
+DWARF 信息存储在多个专用 sections 中:
+
+| Section         | 内容                  |
+|----------------+----------------------|
+| =.debug_info=    | 调试信息主体 (DIE 树)   |
+| =.debug_abbrev=  | 缩写表 (压缩 DIE)      |
+| =.debug_line=    | 源代码行号映射          |
+| =.debug_str=     | 字符串表               |
+| =.debug_aranges= | 地址范围表             |
+| =.debug_frame=   | 栈帧信息 (unwinding)   |
+| =.debug_types=   | 类型信息 (DWARF 4+)    |
+
+*** DIE (Debugging Information Entry)
+
+DWARF 的核心是 *DIE 树* (树形结构):
+
+#+begin_example
+<Compile Unit>
+  DW_TAG_compile_unit
+    DW_AT_name: "main.c"
+    DW_AT_producer: "GCC 13.2.0"
+    <Subprogram>
+      DW_TAG_subprogram
+        DW_AT_name: "main"
+        DW_AT_low_pc: 0x401126
+        DW_AT_high_pc: 0x401156
+        DW_AT_type: <int>
+        <Variable>
+          DW_TAG_variable
+            DW_AT_name: "x"
+            DW_AT_type: <int>
+            DW_AT_location: DW_OP_fbreg -4
+#+end_example
+
+*** 链接器优化
+
+链接器可以对 DWARF 进行优化:
+
+1. *重复消除* (Deduplication): 合并重复的类型定义
+2. *压缩* (Compression): =.debug_*= sections 可以用 zlib 压缩
+3. *分离* (Split DWARF): 调试信息放在单独的 =.dwo= 文件中
+
+#+begin_src bash
+$ gcc -g -gz -o prog main.c  # 压缩 DWARF sections
+$ readelf -S prog | grep debug
+  [27] .debug_info       PROGBITS         0 000b88 001234 00   C  0   0  1
+  [28] .zdebug_abbrev    PROGBITS         0 001dbc 000abc 00   C  0   0  1
+                                                  ^^ z = compressed
+#+end_src
+
+** PDB: Windows 的专有格式
+
+Windows 使用 *PDB* (Program Database) 格式存储调试信息:
+
+- 单独的 =.pdb= 文件 (不在 .exe 中)
+- 专有格式，由 Microsoft 控制
+- 包含类型信息, 符号, 源文件路径, 行号等
+
+#+begin_src bash
+$ cl /Zi main.c  # 生成 main.pdb
+$ dir
+main.exe
+main.pdb  # 调试信息在这里
+#+end_src
+
+*优点*:
+
+- 调试信息与可执行文件分离，不影响发布版大小
+- 增量链接更快
+
+*缺点*:
+
+- 专有格式，工具链锁定
+- Linux 工具 (如 GDB) 支持有限
+
+* 链接脚本: 精确控制内存布局
+
+虽然链接器有默认的内存布局策略，但对于嵌入式系统或特殊需求，需要 *链接脚本* (linker script) 来精确控制。
+
+** GNU ld 链接脚本示例
+
+#+begin_src ld
+/* STM32F4 linker script */
+
+MEMORY {
+    FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 1024K
+    RAM (rwx)   : ORIGIN = 0x20000000, LENGTH = 192K
+    CCMRAM (rw) : ORIGIN = 0x10000000, LENGTH = 64K
+}
+
+SECTIONS {
+    /* 中断向量表必须在 Flash 起始位置 */
+    .isr_vector : {
+        KEEP(*(.isr_vector))
+        . = ALIGN(4);
+    } > FLASH
+
+    /* 代码段 */
+    .text : {
+        *(.text*)
+        *(.rodata*)
+        . = ALIGN(4);
+        _etext = .;
+    } > FLASH
+
+    /* 已初始化数据: 存储在 Flash, 运行在 RAM */
+    .data : {
+        _sdata = .;
+        *(.data*)
+        . = ALIGN(4);
+        _edata = .;
+    } > RAM AT > FLASH
+    _sidata = LOADADDR(.data);
+
+    /* 未初始化数据: 只在 RAM 中 */
+    .bss : {
+        _sbss = .;
+        *(.bss*)
+        *(COMMON)
+        . = ALIGN(4);
+        _ebss = .;
+    } > RAM
+
+    /* 堆栈 */
+    ._user_heap_stack : {
+        . = ALIGN(8);
+        PROVIDE(end = .);
+        . = . + _Min_Heap_Size;
+        . = . + _Min_Stack_Size;
+        . = ALIGN(8);
+    } > RAM
+
+    /* 丢弃不需要的节 */
+    /DISCARD/ : {
+        *(.ARM.exidx*)
+        *(.gnu.version*)
+    }
+}
+#+end_src
+
+** 关键概念
+
+*** =MEMORY= 命令
+
+定义 *内存区域*:
+
+#+begin_src ld
+MEMORY {
+    name (attr) : ORIGIN = address, LENGTH = size
+}
+#+end_src
+
+- =attr=: =r= (read), =w= (write), =x= (execute)
+
+*** =SECTIONS= 命令
+
+定义 *输出 sections* 和它们的内容:
+
+#+begin_src ld
+SECTIONS {
+    .text : {
+        *(.text)      # 所有输入文件的 .text section
+        *(.text.*)    # 所有以 .text. 开头的 sections
+    } > FLASH
+}
+#+end_src
+
+*** 特殊符号
+
+- =.= (点): 当前位置计数器
+- =ALIGN(n)=: 对齐到 n 字节边界
+- =KEEP(section)=: 防止被优化掉 (如中断向量表)
+- =LOADADDR(section)=: 获取 section 的 LMA
+- =PROVIDE(symbol)=: 定义符号 (如果未定义)
+
+*** =AT >= 语法
+
+指定 *LMA* (加载地址) 与 *VMA* (运行地址) 不同:
+
+#+begin_src ld
+.data : {
+    *(.data)
+} > RAM AT > FLASH
+#+end_src
+
+- VMA: RAM (运行时地址)
+- LMA: FLASH (存储位置)
+
+** 查看链接脚本效果
+
+#+begin_src bash
+$ arm-none-eabi-ld -T linker_script.ld -Map=output.map -o firmware.elf ...
+$ cat output.map
+
+Memory Configuration
+Name             Origin             Length             Attributes
+FLASH            0x0000000008000000 0x0000000000100000 xr
+RAM              0x0000000020000000 0x0000000000030000 xrw
+*default*        0x0000000000000000 0xffffffffffffffff
+
+Linker script and memory map
+                0x0000000020000000                _sdata = 0x20000000
+...
+.text           0x0000000008000000      0x1234
+ *(.text*)
+ .text          0x0000000008000000       0x100 main.o
+                0x0000000008000000                main
+ .text          0x0000000008000100       0x200 util.o
+                0x0000000008000100                util_func
+#+end_src
+
+* 现代链接器的高级特性
+
+** Link-Time Optimization (LTO)
+
+传统编译流程:
+
+#+begin_example
+source.c → [compiler] → object.o → [linker] → executable
+#+end_example
+
+编译器只能在 *单个编译单元* 内优化，无法跨文件优化。
+
+*LTO* 改变了这一点:
+
+#+begin_example
+source.c → [compiler] → IR.o (LLVM IR / GCC GIMPLE) → [linker + optimizer] → executable
+#+end_example
+
+链接器在链接时 *重新优化整个程序*:
+
+- 内联跨文件的函数
+- 消除未使用的代码 (全局)
+- 优化虚函数调用 (devirtualization)
+
+#+begin_src bash
+$ gcc -flto -c a.c b.c
+$ gcc -flto -o prog a.o b.o  # LTO 优化发生在这里
+#+end_src
+
+*效果*:
+
+- 性能提升: 5-15%
+- 体积减小: 10-30%
+- 链接时间增加: 2-10x
+
+** Incremental Linking (增量链接)
+
+问题: 大型项目链接很慢 (几分钟甚至小时)。
+
+*增量链接* 只重新链接修改的部分:
+
+1. 第一次链接: 生成完整可执行文件 + 元数据
+2. 后续链接: 只更新修改的 object files
+
+#+begin_src bash
+$ ld -i -o prog a.o b.o c.o  # GNU ld 的增量链接 (已废弃)
+$ lld -incremental prog      # LLVM lld 的增量链接 (实验性)
+#+end_src
+
+*缺点*:
+
+- 可执行文件更大 (预留空间)
+- 性能略差 (非最优布局)
+- 实现复杂，支持有限
+
+** Gold 和 LLD: 现代链接器
+
+*** GNU Gold
+
+替代传统 GNU =ld=，专注于 *速度*:
+
+- 多线程
+- 更好的内存管理
+- 插件系统 (支持 LTO)
+
+#+begin_src bash
+$ gcc -fuse-ld=gold -o prog main.c
+#+end_src
+
+*** LLVM LLD
+
+LLVM 项目的链接器，支持 *多种格式*:
+
+- =ld.lld=: ELF (Linux, BSD)
+- =lld-link=: PE/COFF (Windows)
+- =ld64.lld=: Mach-O (macOS)
+
+#+begin_src bash
+$ clang -fuse-ld=lld -o prog main.c
+#+end_src
+
+*优势*:
+
+- 极快 (比 GNU ld 快 2-5x)
+- 内存占用少
+- 错误信息清晰
+- 积极开发
+
+*对比* (链接 Chromium):
+
+| 链接器    | 时间  | 内存   |
+|---------+-----+------|
+| GNU ld  | 180s | 8 GB |
+| Gold    | 45s  | 4 GB |
+| LLD     | 12s  | 2 GB |
+
+** Thin Archives (瘦归档)
+
+传统静态库 (=.a=) 是 *完整拷贝*:
+
+#+begin_src bash
+$ ar rcs libfoo.a a.o b.o c.o
+$ ls -lh libfoo.a
+-rw-r--r-- 1 user user 1.5M Dec 24 10:00 libfoo.a
+#+end_src
+
+=libfoo.a= 包含 =a.o=, =b.o=, =c.o= 的 *完整副本*。
+
+*Thin archive* 只存储 *路径*:
+
+#+begin_src bash
+$ ar rcsT libfoo.a a.o b.o c.o  # T = thin
+$ ls -lh libfoo.a
+-rw-r--r-- 1 user user 512 Dec 24 10:00 libfoo.a
+#+end_src
+
+=libfoo.a= 只包含文件路径，链接时才读取 =a.o= 等。
+
+*优点*:
+
+- 节省磁盘空间
+- 创建更快
+
+*缺点*:
+
+- 移动 =.o= 文件会破坏归档
+- 不适合分发
+
+* 总结: 链接器的艺术
+
+链接器是编译工具链中 *最不被理解* 但又 *至关重要* 的部分。它的核心任务看似简单——将 object files 组合成可执行文件——但实现细节极其复杂。
+
+** 核心要点回顾
+
+1. *三种数据类型*: Symbols (名称与值), Relocations (地址修正), Contents (内存镜像)
+2. *三种地址空间*: 输入地址空间, VMA (虚拟内存地址), LMA (加载地址)
+3. *链接五步骤*: 读取 → 符号表 → 布局 → 重定位 → 输出
+4. *两类格式*: 面向记录 (Mach-O) vs. 面向节 (ELF, PE, COFF)
+5. *现代特性*: LTO, 增量链接, Thin archives, 多线程链接器
+
+** 实践建议
+
+1. *理解符号解析*: 避免重复定义, 合理使用 =static=, =extern=, =weak=
+2. *控制内存布局*: 嵌入式开发必须掌握 linker scripts
+3. *优化链接时间*: 使用 LLD, 启用 LTO (发布版), 考虑增量链接 (开发)
+4. *减小二进制大小*: =strip= 移除符号, =-ffunction-sections -fdata-sections -Wl,--gc-sections= 消除未使用代码
+5. *调试链接问题*: 使用 =nm=, =readelf=, =objdump=, =ldd=, =ld --verbose=
+
+** 延伸阅读
+
+- [[https://www.airs.com/blog/archives/38][Linkers (系列文章)]] - Ian Lance Taylor
+- [[https://refspecs.linuxfoundation.org/elf/elf.pdf][ELF Specification]]
+- [[https://sourceware.org/binutils/docs/ld/Scripts.html][GNU ld Linker Scripts]]
+- [[https://lld.llvm.org/][LLVM LLD Documentation]]
+- [[https://dwarfstd.org/][DWARF Debugging Format]]
+
+链接器是系统编程的基石。理解它，你就理解了程序从源代码到可执行文件的完整旅程。

@@ -1,0 +1,680 @@
+#+title: WiFi Security Protocols: From WEP's Catastrophic Failure to WPA3's Modern Defense
+#+author: SOV710
+#+date: 2025-12-24
+#+startup: showall
+#+options: toc:2 num:nil
+
+* WEP 的彻底失败: 一个加密学反面教材
+
+在 WPA 出现之前，WiFi 使用 *WEP (Wired Equivalent Privacy)* 作为唯一的安全标准。这个名字充满讽刺: "有线等效隐私" 意味着它想提供与有线网络相同的安全性，但实际上它连基本的安全性都做不到。
+
+** WEP 的设计 (1997-1999)
+
+WEP 是 IEEE 802.11 标准的一部分，于 1999 年正式发布。
+
+*** 核心参数
+
+- *加密算法*: RC4 流密码
+- *密钥长度*: 40 位或 104 位 (加上 24 位 IV，总共 64/128 位)
+- *认证方式*: 开放系统认证 (Open System) 或共享密钥认证 (Shared Key)
+- *完整性校验*: CRC-32 (循环冗余校验)
+
+*** 加密流程
+
+WEP 使用 RC4 流密码加密数据包:
+
+1. 选择一个 24 位的 *初始化向量 (IV, Initialization Vector)*
+2. 将 IV 与预共享密钥 (PSK) 拼接: =Key = IV || PSK=
+3. 用 =Key= 初始化 RC4，生成密钥流 (Keystream)
+4. 明文数据 XOR 密钥流，得到密文
+5. 计算 CRC-32 校验和，附加到密文后
+6. 将 IV (明文) 和密文一起发送
+
+#+begin_example
+发送的帧:
+[IV (24 bit)] [密文 = 明文 ⊕ RC4(IV || PSK)] [ICV (CRC-32)]
+#+end_example
+
+** WEP 的致命缺陷
+
+WEP 的设计有 *多个严重的密码学错误*，导致它可以在几分钟内被破解。
+
+*** 缺陷 1: IV 太短 (24 位)
+
+24 位 IV 意味着只有 $2^{24} = 16,777,216$ 种可能。
+
+根据 *生日悖论*，在繁忙的网络中，IV 会在约 $\sqrt{2^{24}} \approx 4096$ 个数据包后开始 *重复*。
+
+一旦 IV 重复:
+
+#+begin_example
+数据包 1: C₁ = P₁ ⊕ RC4(IV || PSK)
+数据包 2: C₂ = P₂ ⊕ RC4(IV || PSK)  (相同 IV！)
+
+攻击者可以计算:
+C₁ ⊕ C₂ = (P₁ ⊕ RC4) ⊕ (P₂ ⊕ RC4)
+        = P₁ ⊕ P₂
+
+如果知道 P₁ (比如是 IP 头部)，可以直接恢复 P₂
+#+end_example
+
+*实测*: 在流量为 1 Mbps 的网络中，约 *5 小时* 后 IV 会开始重复。
+
+*** 缺陷 2: 密钥流可以恢复
+
+由于 IV 是 *明文传输* 的，攻击者可以收集大量 =(IV, 密文)= 对。
+
+如果攻击者知道某个数据包的明文 (比如 ARP 请求的固定格式)，可以直接计算:
+
+#+begin_example
+Keystream = 明文 ⊕ 密文
+#+end_example
+
+然后用这个密钥流解密 *所有使用相同 IV 的数据包*。
+
+*** 缺陷 3: FMS 攻击 (2001 年)
+
+Fluhrer, Mantin, Shamir 在 2001 年发现，RC4 的初始化过程存在 *统计弱点*。
+
+通过分析足够多的 *弱 IV* (特定模式的 IV)，可以 *逐字节恢复密钥*。
+
+*攻击流程*:
+
+1. 收集约 100 万个数据包 (在繁忙网络中约 1 小时)
+2. 筛选出弱 IV 的数据包 (约 1%)
+3. 统计分析，逐字节恢复 PSK
+
+*工具*: [[https://www.aircrack-ng.org/][Aircrack-ng]] 实现了 FMS 攻击，可以在 *几分钟* 内破解 WEP。
+
+#+begin_src bash
+# 监听 WiFi 流量
+airodump-ng -c 6 --bssid AA:BB:CC:DD:EE:FF -w capture wlan0
+
+# 加速数据包收集 (发送伪造 ARP 请求)
+aireplay-ng -3 -b AA:BB:CC:DD:EE:FF wlan0
+
+# 破解密钥 (通常 < 5 分钟)
+aircrack-ng -b AA:BB:CC:DD:EE:FF capture-01.cap
+#+end_src
+
+*** 缺陷 4: CRC-32 不是消息认证码
+
+CRC-32 是 *线性校验*，不提供密码学意义上的完整性保护。
+
+攻击者可以 *翻转密文的任意位*，并重新计算 CRC-32，而接收方无法检测。
+
+*位翻转攻击示例*:
+
+#+begin_example
+假设明文是: "Transfer $100 to Alice"
+攻击者翻转密文中的某些位，使其变为:
+           "Transfer $999 to Alice"
+
+由于 CRC-32 是线性的，攻击者可以计算:
+新的 CRC = 旧的 CRC ⊕ Δ
+其中 Δ 取决于翻转的位置
+#+end_example
+
+*** 缺陷 5: 认证机制形同虚设
+
+WEP 的 "共享密钥认证" 使用 *挑战-响应* 机制:
+
+1. AP 发送随机挑战明文 =C=
+2. 客户端用 WEP 加密 =C=，返回密文
+3. AP 解密验证
+
+但这 *反而泄露了密钥流*！攻击者可以监听:
+
+#+begin_example
+C (明文) 和 E(C) (密文) 都是明文传输的
+Keystream = C ⊕ E(C)
+#+end_example
+
+然后用这个密钥流伪造认证响应。
+
+** WEP 的灭亡时间线
+
+- *1999 年*: WEP 正式发布
+- *2001 年*: FMS 攻击发表，WEP 被证明不安全
+- *2003 年*: WPA 发布，作为临时替代
+- *2004 年*: WPA2 (802.11i) 正式发布
+- *2004 年*: IEEE 宣布 WEP "已弃用" (deprecated)
+- *2020 年*: WiFi Alliance 正式 *退役 WEP*，新设备不再支持
+
+*教训*: WEP 的失败证明了 "自己发明加密算法" 的危险性。密码学需要经过学术界多年的审查和攻击测试，而不是闭门造车。
+
+* WPA: 临时的救火方案
+
+由于 WEP 被破解，业界需要 *立刻* 提供一个替代方案，但完整的 802.11i 标准还在制定中。于是 WiFi Alliance 在 2003 年推出了 *WPA (WiFi Protected Access)*，作为过渡方案。
+
+** WPA 的设计目标
+
+1. *向后兼容*: 可以在旧硬件上通过 *固件升级* 实现 (不需要换芯片)
+2. *快速部署*: 必须在几个月内推广
+3. *足够安全*: 至少比 WEP 强得多
+
+** TKIP: 临时密钥完整性协议
+
+WPA 的核心是 *TKIP (Temporal Key Integrity Protocol)*​，它是对 WEP 的 "打补丁" 式改进。
+
+*** TKIP 的改进点
+
+*1. 每个数据包都有唯一密钥*
+
+TKIP 引入了 *密钥混合函数* (Key Mixing Function)，为每个数据包生成不同的密钥:
+
+#+begin_example
+数据包密钥 = Mix(主密钥, 发送者 MAC, 数据包序号)
+#+end_example
+
+这避免了 WEP 的 IV 重复问题。
+
+*2. 48 位数据包序号*
+
+TKIP 用 48 位 (而非 24 位) 的 *TKIP Sequence Counter (TSC)* 作为数据包序号，几乎不可能重复。
+
+*3. Michael 消息完整性码 (MIC)*
+
+TKIP 用 *Michael 算法* 替代 CRC-32，提供真正的消息认证。
+
+Michael 是一个 *轻量级 MAC*，设计目标是:
+
+- 在旧硬件 (如 802.11b 芯片) 上高效运行
+- 提供足够的安全性，防止消息伪造
+
+Michael 计算公式:
+
+#+begin_example
+MIC = Michael(密钥, 明文数据)
+#+end_example
+
+如果 MIC 校验失败，接收方会 *丢弃数据包* 并 *暂时关闭连接 1 分钟* (对抗暴力攻击)。
+
+*4. 密钥重新协商*
+
+TKIP 强制每 10,000 个数据包 (或每小时) *重新协商密钥*，限制攻击者收集数据的时间窗口。
+
+*** TKIP 的加密流程
+
+#+begin_example
+1. 客户端和 AP 通过 4-way handshake 协商 PTK (Pairwise Transient Key)
+2. 对于每个数据包:
+   a. 生成 TSC (48 位序号)
+   b. 计算 数据包密钥 = Phase1_Mix(PTK, MAC) ⊕ Phase2_Mix(TSC)
+   c. 用 RC4(数据包密钥) 生成密钥流
+   d. 密文 = 明文 ⊕ 密钥流
+   e. 计算 MIC = Michael(PTK, 明文)
+   f. 发送 [TSC] [密文] [MIC]
+#+end_example
+
+** WPA 的认证方式
+
+WPA 支持两种认证模式:
+
+*** WPA-PSK (Pre-Shared Key, 个人模式)
+
+用户输入一个 *预共享密钥* (PSK)，通常是 8~63 字符的密码。
+
+密钥推导:
+
+#+begin_example
+PMK = PBKDF2-SHA1(密码, SSID, 4096 次迭代, 256 位)
+#+end_example
+
+*PBKDF2* 是密钥拉伸算法，防止暴力破解:
+
+- 4096 次 SHA-1 迭代，计算约 0.1 秒 (在 2003 年的硬件上)
+- SSID 作为盐 (salt)，防止彩虹表攻击
+
+*安全性*: 如果密码太弱 (如 "12345678")，仍然可以被字典攻击破解。
+
+*** WPA-Enterprise (802.1X, 企业模式)
+
+使用 *RADIUS 服务器* 进行认证，每个用户有独立的凭证。
+
+流程:
+
+#+begin_example
+1. 客户端连接到 AP
+2. AP 要求客户端通过 EAP (Extensible Authentication Protocol) 认证
+3. 客户端与 RADIUS 服务器交互 (通过 AP 转发)
+4. 认证成功后，RADIUS 服务器生成 PMK 并发送给 AP
+5. 客户端和 AP 用 PMK 执行 4-way handshake
+#+end_example
+
+*优势*:
+
+- 每个用户有独立密钥
+- 可以集中管理账户 (LDAP, Active Directory)
+- 支持证书认证、智能卡等
+
+** 4-Way Handshake: 密钥协商
+
+WPA/WPA2 的核心是 *4-way handshake*，用于在客户端和 AP 之间安全地协商会话密钥。
+
+*** 流程
+
+#+begin_example
+客户端 (STA)                              AP
+   |                                       |
+   |  <---- Message 1: ANonce ----------  |  (AP 的随机数)
+   |                                       |
+   |  ----- Message 2: SNonce, MIC ---->  |  (STA 的随机数 + MIC)
+   |                                       |
+   |  <---- Message 3: GTK, MIC --------  |  (组密钥 + MIC)
+   |                                       |
+   |  ----- Message 4: ACK, MIC -------->  |  (确认)
+   |                                       |
+#+end_example
+
+*密钥推导*:
+
+#+begin_example
+PMK (从 PSK 或 802.1X 获得)
+  ↓
+PTK = PRF-512(PMK, "Pairwise key expansion",
+              Min(AP_MAC, STA_MAC) || Max(AP_MAC, STA_MAC) ||
+              Min(ANonce, SNonce) || Max(ANonce, SNonce))
+
+PTK 包含:
+  - KCK (16 bytes): 用于计算 MIC
+  - KEK (16 bytes): 用于加密 GTK
+  - TK (16 bytes):  临时密钥 (用于 TKIP 或 CCMP 加密数据)
+#+end_example
+
+*** KRACK 攻击 (2017 年)
+
+Mathy Vanhoef 发现，4-way handshake 存在 *密钥重装攻击* (Key Reinstallation Attack):
+
+- 攻击者可以 *重放 Message 3*，强制客户端重新安装 PTK
+- 这会 *重置 TKIP 的 TSC (数据包序号)*
+- 攻击者可以解密和注入数据包
+
+*影响*: 几乎所有 WPA2 设备都受影响。
+
+*修复*: 客户端必须忽略重复的 Message 3，操作系统和固件需要更新。
+
+** WPA 的局限性
+
+虽然 WPA 比 WEP 安全得多，但仍有缺陷:
+
+1. *TKIP 仍然基于 RC4*: RC4 已被证明存在统计偏差
+2. *Michael MIC 较弱*: 只有 64 位，可以被碰撞攻击 (但有速率限制)
+3. *向后兼容的包袱*: 为了支持旧硬件，做了很多妥协
+
+因此，WPA 只是 *临时方案*，真正的解决方案是 WPA2。
+
+* WPA2: 现代标准的奠基 (2004-2018)
+
+WPA2 基于 *IEEE 802.11i* 标准，于 2004 年正式发布。它抛弃了 WEP 的所有遗产，采用了 *真正的密码学标准*。
+
+** CCMP: 基于 AES 的强加密
+
+WPA2 的核心是 *CCMP (Counter Mode with CBC-MAC Protocol)*，基于 AES (Advanced Encryption Standard)。
+
+*** AES 简介
+
+- *分组密码*: 每次加密 128 位数据块
+- *密钥长度*: 128/192/256 位 (WPA2 用 128 位)
+- *安全性*: 目前没有有效的攻击方法 (暴力破解需要 $2^{128}$ 次尝试)
+
+*** CCMP 的工作模式
+
+CCMP 结合了两种 AES 模式:
+
+1. *CTR (Counter) 模式*: 用于加密
+2. *CBC-MAC*: 用于消息认证
+
+*加密流程*:
+
+#+begin_example
+1. 构造 Nonce (Number used once):
+   Nonce = [Priority] [Source MAC] [Packet Number (48 bit)]
+
+2. 构造 Counter Blocks:
+   CTR₀ = [Flags] [Nonce] [0x0000]
+   CTR₁ = [Flags] [Nonce] [0x0001]
+   CTR₂ = [Flags] [Nonce] [0x0002]
+   ...
+
+3. 生成密钥流:
+   S₀ = AES(TK, CTR₀)
+   S₁ = AES(TK, CTR₁)
+   S₂ = AES(TK, CTR₂)
+
+4. 加密:
+   密文 = 明文 ⊕ (S₁ || S₂ || S₃ || ...)
+
+5. 计算 MIC:
+   MIC = CBC-MAC(TK, 附加数据 || 明文)
+   加密的 MIC = MIC ⊕ S₀
+#+end_example
+
+*发送的帧*:
+
+#+begin_example
+[Packet Number (48 bit)] [密文] [加密的 MIC (64 bit)]
+#+end_example
+
+*** CCMP 的优势
+
+- *AES 硬件加速*: 现代 CPU 有 AES-NI 指令，加密速度极快
+- *真正的 AEAD*: 同时提供加密和认证 (Authenticated Encryption with Associated Data)
+- *无已知攻击*: CCMP 设计符合密码学最佳实践
+
+** WPA2 的认证增强
+
+*** PMF (Protected Management Frames, 802.11w)
+
+在 WPA2 之前，*管理帧* (如 Deauthentication, Disassociation) 是 *明文* 的，攻击者可以伪造:
+
+*攻击示例*:
+
+#+begin_src bash
+# 发送伪造的 Deauth 帧，强制客户端断开连接
+aireplay-ng --deauth 0 -a AP_MAC -c CLIENT_MAC wlan0
+#+end_src
+
+*PMF 的保护*:
+
+- 关键管理帧 (Deauth, Disassoc) 用 BIP (Broadcast/Multicast Integrity Protocol) 保护
+- 使用 IGTK (Integrity Group Temporal Key) 计算 MIC
+- 客户端和 AP 都会验证 MIC，拒绝伪造帧
+
+*标准化时间线*:
+
+- 2009 年: 802.11w 发布
+- 2018 年: WPA3 *强制* 要求 PMF
+
+** WPA2 的弱点
+
+尽管 WPA2 非常安全，但仍有一些攻击面:
+
+*** 1. 弱密码攻击
+
+WPA2-PSK 的安全性 *完全依赖* 于密码强度。
+
+*攻击流程*:
+
+1. 捕获 4-way handshake (只需监听客户端连接时的 4 个包)
+2. 离线暴力破解:
+
+#+begin_src python
+# 伪代码
+for password in dictionary:
+    pmk = pbkdf2_sha1(password, ssid, 4096, 256)
+    ptk = prf_512(pmk, anonce, snonce, ...)
+    kck = ptk[0:16]
+    mic_calc = hmac_sha1(kck, message2_data)
+    if mic_calc == mic_captured:
+        print(f"Found password: {password}")
+        break
+#+end_src
+
+*工具*:
+
+- [[https://hashcat.net/][Hashcat]]: GPU 加速，每秒可测试 *100 万个密码* (RTX 4090)
+- [[https://www.aircrack-ng.org/][Aircrack-ng]]: CPU 破解
+
+*防御*:
+
+- 使用 *强密码*: 20+ 字符，随机生成
+- 迁移到 WPA3-SAE (见下节)
+
+*** 2. KRACK 攻击 (2017)
+
+如前所述，4-way handshake 的密钥重装漏洞影响 WPA2。
+
+*修复*: 操作系统和固件更新 (2017-2018)。
+
+*** 3. DragonBlood 攻击 (2019)
+
+针对 WPA3 的 SAE (见下节)，但部分变种也影响 WPA2。
+
+** WPA2 的部署现状
+
+截至 2025 年:
+
+- *个人网络*: WPA2-PSK 仍是主流 (约 70% 的家用路由器)
+- *企业网络*: WPA2-Enterprise (802.1X) 占主导
+- *公共 WiFi*: 很多仍使用 "Open" (无加密) + Captive Portal
+
+*问题*: 很多老旧设备 (IoT 设备、打印机、监控摄像头) 不支持 WPA3，导致 WPA2 还会存在很多年。
+
+* WPA3: 下一代安全标准 (2018-)
+
+WPA3 于 2018 年发布，旨在解决 WPA2 的遗留问题。
+
+** SAE: 同时认证等价算法
+
+WPA3-Personal 用 *SAE (Simultaneous Authentication of Equals)* 替代 PSK。
+
+SAE 基于 *Dragonfly 密钥交换* (一种 PAKE: Password-Authenticated Key Exchange)。
+
+*** SAE 的优势
+
+*1. 抗离线字典攻击*
+
+在 WPA2-PSK 中，攻击者可以 *离线* 暴力破解密码 (只需捕获 4-way handshake)。
+
+在 SAE 中，*密码从不直接传输*，且 *每次握手都需要与 AP 交互*:
+
+#+begin_example
+客户端                                 AP
+  |                                     |
+  | ---- Commit (隐藏的密码信息) ----->  |
+  |                                     |
+  | <--- Commit (隐藏的密码信息) ------  |
+  |                                     |
+  | ---- Confirm (MIC) --------------->  |
+  |                                     |
+  | <--- Confirm (MIC) ----------------  |
+  |                                     |
+#+end_example
+
+*关键*: 攻击者 *无法离线测试* 密码，必须 *在线* 与 AP 交互 (每次尝试约 100ms)。
+
+*对比*:
+
+- WPA2-PSK: 离线破解，每秒 100 万次 (GPU)
+- WPA3-SAE: 在线破解，每秒最多 10 次 (受 AP 速率限制)
+
+*2. 前向保密 (Forward Secrecy)*
+
+即使密码泄露，*之前的会话* 仍然无法解密 (因为每次会话的 PMK 都不同)。
+
+WPA2-PSK 没有前向保密: 如果密码泄露，*所有历史流量* 都可以解密 (只要攻击者保存了握手包)。
+
+*** SAE 的缺陷: DragonBlood 攻击 (2019)
+
+研究人员发现 SAE 的实现存在多个问题:
+
+*1. 侧信道攻击*
+
+某些实现的 SAE 计算时间与密码有关，可以通过 *时间分析* 泄露密码信息。
+
+*2. 降级攻击*
+
+攻击者可以伪造 AP，强制客户端使用 *WPA2 模式* (绕过 SAE)。
+
+*修复*:
+
+- WPA3 规范更新，要求实现 *常量时间算法*
+- 强制使用 *Transition Disable* (禁止降级到 WPA2)
+
+** WPA3 的其他增强
+
+*** 1. 192 位安全模式 (WPA3-Enterprise)
+
+对于高安全需求场景 (政府、军事、金融)，WPA3-Enterprise 提供 192 位安全:
+
+- *AES-256*: 加密密钥 256 位
+- *SHA-384*: 哈希算法
+- *ECDSA-384*: 证书签名
+- *ECDHE-384*: 密钥交换
+
+*** 2. Easy Connect (DPP, Device Provisioning Protocol)
+
+*问题*: IoT 设备 (如智能灯泡、门锁) 没有屏幕/键盘，如何输入密码？
+
+*传统方案*:
+
+- WPS (WiFi Protected Setup): 按按钮或输入 PIN
+  - *问题*: PIN 只有 8 位数字，容易暴力破解
+  - 2011 年被破解，2018 年 WPA3 正式弃用
+
+*WPA3 Easy Connect*:
+
+1. 用手机扫描设备的 *二维码* (包含公钥)
+2. 手机通过安全信道 (加密) 将 WiFi 凭证发送给设备
+3. 设备自动连接网络
+
+*优势*:
+
+- 无需输入密码
+- 基于公钥加密，安全性高
+
+*** 3. 强制 PMF (Protected Management Frames)
+
+WPA3 *强制要求* 所有设备支持 PMF (802.11w)，防止 Deauth 攻击。
+
+** WPA3 的部署挑战
+
+*** 1. 硬件兼容性
+
+WPA3-SAE 需要更强的 CPU (计算椭圆曲线密码学)，很多老旧芯片无法支持。
+
+*解决方案*:
+
+- *WPA3-Transition 模式*: 同时支持 WPA2 和 WPA3，允许老设备使用 WPA2
+
+*** 2. 客户端支持
+
+截至 2025 年:
+
+- *Windows 11/10 (1903+)*: 支持
+- *macOS 10.15+*: 支持
+- *iOS 13+*: 支持
+- *Android 10+*: 支持
+- *Linux*: 需要 =wpa_supplicant 2.9+= 和内核 5.2+
+
+*问题*: 仍有大量老设备 (Windows 7, Android 8) 不支持 WPA3。
+
+*** 3. IoT 设备碎片化
+
+智能家居设备、监控摄像头、打印机等 *固件更新缓慢*，很多设备永远停留在 WPA2。
+
+* 未来展望: WiFi 7 与后量子密码学
+
+** WiFi 7 (802.11be, 2024-)
+
+WiFi 7 已于 2024 年开始部署，主要改进:
+
+- *320 MHz 信道*: 带宽翻倍
+- *4K-QAM*: 调制阶数提升
+- *Multi-Link Operation (MLO)*: 同时使用多个频段
+
+*安全性*:
+
+- 继续使用 WPA3
+- 增强 MLO 的密钥管理 (每个链路独立密钥)
+
+** 后量子密码学 (PQC)
+
+*威胁*: 量子计算机可以用 *Shor 算法* 在多项式时间内破解:
+
+- RSA
+- ECC (椭圆曲线密码学，SAE 使用的基础)
+
+*时间线*:
+
+- 2022 年: NIST 宣布 PQC 标准 (CRYSTALS-Kyber, CRYSTALS-Dilithium)
+- 2025 年: IETF 开始标准化 PQC for TLS
+- *2028-2030 年*: 预计 WiFi 开始整合 PQC
+
+*挑战*:
+
+- PQC 密钥更大 (Kyber-768 公钥约 1,184 字节)
+- 计算开销更高 (但仍在可接受范围)
+
+** 6 GHz 频段与安全
+
+WiFi 6E/7 引入 *6 GHz 频段* (5.925-7.125 GHz)，提供更多信道。
+
+*新问题*:
+
+- 6 GHz 穿墙能力弱，攻击者更难远程窃听 (物理隔离)
+- 但室内攻击仍然可行
+
+*增强方案*:
+
+- *AFC (Automated Frequency Coordination)*: 动态分配信道，减少干扰
+- *Enhanced Open*: 公共 WiFi 使用 OWE (Opportunistic Wireless Encryption)，即使无密码也加密
+
+** 零信任架构 (Zero Trust)
+
+*趋势*: WiFi 不再是 "可信边界"。
+
+*传统模型*:
+
+#+begin_example
+连上公司 WiFi → 信任 → 访问内网资源
+#+end_example
+
+*零信任模型*:
+
+#+begin_example
+连上 WiFi → 仍需认证 → 每个请求都验证 → 最小权限访问
+#+end_example
+
+*实现*:
+
+- *802.1X + NAC*: 网络准入控制
+- *VPN*: 所有流量强制加密隧道
+- *mTLS*: 应用层双向认证
+
+* 总结: WiFi 安全的演进
+
+| 协议       | 年份       | 加密算法       | 密钥长度    | 认证方式      | 状态            |
+|------------+------------+---------------+------------+--------------+-----------------|
+| *WEP*        | 1999-2004  | RC4           | 40/104 位  | 共享密钥      | *已退役* (2020)    |
+| *WPA (TKIP)* | 2003-2004  | RC4 + Michael | 128 位     | PSK / 802.1X | *已弃用* (2012)    |
+| *WPA2*       | 2004-现在  | AES-CCMP      | 128 位     | PSK / 802.1X | *主流* (70% 市场)  |
+| *WPA3*       | 2018-现在  | AES-CCMP      | 128/192 位 | SAE / 802.1X | *新标准* (30% 设备) |
+| *未来 PQC*   | 2028-2030? | AES + Kyber   | 256+ 位    | PQ-SAE       | *研究中*           |
+
+** 关键教训
+
+1. *不要自己发明加密算法*: WEP 的失败证明了这一点。使用 *经过审查的标准* (AES, SHA-2)。
+
+2. *密码学需要持续审查*: TKIP (2003) 看似安全，但 RC4 的弱点在 2013-2015 年被进一步发现。
+
+3. *向后兼容是双刃剑*: WPA 为了支持旧硬件，保留了 RC4，埋下隐患。
+
+4. *前向保密很重要*: WPA2-PSK 的密码泄露会危及所有历史流量，而 WPA3-SAE 不会。
+
+5. *实现比协议更容易出错*: DragonBlood 攻击大多是 *实现问题* (侧信道、时序攻击)，而非 SAE 协议本身的缺陷。
+
+** 实用建议
+
+*家用网络*:
+
+- 使用 *WPA3* (如果路由器和设备支持)
+- 如果必须用 WPA2，设置 *强密码* (20+ 字符，随机生成)
+- 禁用 WPS
+- 定期更新路由器固件
+
+*企业网络*:
+
+- 部署 *WPA3-Enterprise* + 802.1X
+- 使用 RADIUS 服务器 + 证书认证
+- 启用 PMF (Protected Management Frames)
+- 考虑零信任架构 (不依赖 WiFi 边界)
+
+*开发 IoT 设备*:
+
+- 支持 WPA3 Easy Connect (DPP)
+- 提供固件更新机制
+- 不要硬编码密码
+
+*如果你还在用 WEP，立刻停止。这就像把家门钥匙放在门垫下面。*

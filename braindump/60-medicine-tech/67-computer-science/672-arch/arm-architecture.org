@@ -1,0 +1,990 @@
+#+title: ARM Architecture Deep Dive: From RISC Philosophy to Instruction Set Evolution
+#+author: SOV710
+#+date: 2025-12-23
+#+startup: showall
+#+options: toc:2 num:nil
+
+* RISC 设计哲学: 为什么 ARM 选择了简单
+
+** RISC 的核心思想
+
+ARM 内核采用 RISC (Reduced Instruction Set Computer) 设计思想。RISC 的本质是 *简化指令集*，只提供必需的、简单的操作，使得一个时钟周期就可以执行一条指令。
+
+RISC 的几个关键特征:
+
+- *固定指令长度*: 所有指令都是 32 位 (ARM 模式) 或 16/32 位 (Thumb/Thumb-2 模式)，允许流水线在当前指令译码阶段同时取下一条指令
+- *流水线并行*: 指令处理过程被拆分为多个更小的、能够被流水线并行处理的单元 (取指 → 译码 → 执行 → 访存 → 写回)
+- *Load-Store 架构*: 处理器只处理寄存器中的数据，独立的 =LDR=/=STR= 指令用来完成数据在寄存器和外部存储器之间的传送
+
+*** 为什么要避免直接访存？
+
+CPU 直接访问外部存储器 (DRAM) 的延迟通常是 *100+ 个时钟周期*，而寄存器访问只需要 *1 个周期*。RISC 通过强制 Load-Store 架构，将数据搬运和运算分离，使得编译器可以更好地优化寄存器分配和指令调度。
+
+#+begin_src asm
+# RISC 风格 (ARM)
+LDR r0, [r1]      ; 从内存加载到寄存器
+ADD r0, r0, #1    ; 在寄存器中运算
+STR r0, [r1]      ; 写回内存
+
+# CISC 风格 (x86)
+ADD [ebx], 1      ; 直接对内存操作 (read-modify-write)
+#+end_src
+
+** ARM 对 RISC 的 "违背": 多寄存器传输
+
+ARM 的设计中，=LDM=/=STM= (Load/Store Multiple) 指令 *并不是单周期的*，这违背了 RISC 的 "一条指令一周期" 原则。
+
+#+begin_src asm
+PUSH {r4-r11, lr}   ; 一次性压栈 9 个寄存器
+                     ; 这需要 9 个内存访问周期
+#+end_src
+
+*为什么这样做？*
+
+因为如果访问的是 *连续的存储器地址*，CPU 可以利用 burst 传输和缓存行填充来提高性能。对于函数调用和上下文切换 (需要保存/恢复多个寄存器)，=LDM=/=STM= 比多条单独的 =LDR=/=STR= 快得多。
+
+这是 ARM 在 RISC 纯粹性和实际性能之间的权衡。
+
+* 嵌入式系统的核心需求
+
+** 代码密度 (Code Density)
+
+嵌入式系统通常使用容量有限的 Flash 存储器 (几十 KB 到几 MB)。如果指令集不够紧凑，程序会占用过多 Flash 空间，导致成本上升或功能受限。
+
+ARM 的解决方案是 *Thumb 指令集*:
+
+- 将常用的 32 位 ARM 指令压缩为 16 位编码
+- 代码密度提升约 *30-40%*
+- 性能损失约 *10-15%* (因为寄存器受限、立即数受限)
+
+Thumb-2 进一步改进，混合 16 位和 32 位指令，既保持高代码密度，又不牺牲性能。
+
+** 芯片面积 (Die Size)
+
+嵌入式处理器的成本直接与芯片面积相关。ARM 内核通过以下方式减小面积:
+
+- *简化指令集*: RISC 的译码逻辑比 CISC 简单得多
+- *可选功能*: FPU、DSP、NEON 都是可选的，不需要的话可以不实现
+- *统一寄存器文件*: 不像 x86 有分离的通用寄存器、段寄存器、浮点寄存器栈等
+
+一个典型的 Cortex-M3 内核面积只有 *0.25 mm²* @ 90nm 工艺，而同代的 x86 处理器核心面积通常是数十 mm²。
+
+** 硬件调试支持
+
+ARM 处理器集成了 *JTAG/SWD 调试接口* 和 *CoreSight 调试架构*，支持:
+
+- 单步执行、断点、观察点
+- 实时跟踪 (Instruction Trace, Data Trace)
+- 性能监控单元 (PMU)
+
+这些功能在芯片流片之前就已确定，无需外部仿真器。
+
+* 系统初始化: 从复位到程序运行
+
+初始化代码使得处理器从 *复位状态* 进入到 *程序能运行的状态*。典型的嵌入式系统初始化分为三个阶段:
+
+** 第一阶段: 硬件配置初始化
+
+*目标*: 设置目标平台的基本硬件环境
+
+- *配置时钟*: PLL 倍频、外设时钟使能
+- *配置存储器控制器*: SDRAM 时序、Flash 等待周期
+- *配置中断控制器*: NVIC/GIC 优先级、向量表地址
+- *初始化 MMU/MPU*: 设置内存区域属性 (可缓存、可执行等)
+- *初始化栈指针*: 设置主栈 (MSP) 和进程栈 (PSP) 的初始值
+
+#+begin_src asm
+; Cortex-M 的复位向量
+Reset_Handler:
+    LDR sp, =__initial_sp    ; 初始化栈指针
+    BL  SystemInit           ; 配置时钟、Flash
+    BL  __main               ; 跳转到 C 运行时库
+#+end_src
+
+** 第二阶段: 诊断 (Diagnostics)
+
+*目标*: 检测硬件是否正常工作
+
+- *内存测试*: 写入/读回测试模式，检测坏块
+- *外设自检*: UART 回环测试、SPI Flash ID 读取
+- *电源监控*: 检查电压是否在正常范围内
+
+如果诊断失败，通常会:
+
+- 闪烁 LED 指示错误代码
+- 通过 UART 输出诊断信息
+- 进入无限循环等待 JTAG 连接
+
+** 第三阶段: 引导 (Bootstrap)
+
+*目标*: 装载应用程序映像并转移控制权
+
+- *加载映像*: 从 Flash/SD 卡/网络加载程序到 RAM
+- *验证签名*: 检查程序的加密签名 (Secure Boot)
+- *跳转执行*: 更改 PC 指向映像入口点
+
+#+begin_src c
+// 典型的 bootloader 流程
+void bootloader_main(void) {
+    hardware_init();
+
+    if (diagnostics_run() != OK) {
+        error_handler();
+    }
+
+    image_t *app = load_image_from_flash(APP_BASE_ADDR);
+
+    if (verify_signature(app) != OK) {
+        panic("Invalid signature");
+    }
+
+    // 跳转到应用程序
+    typedef void (*app_entry_t)(void);
+    app_entry_t app_entry = (app_entry_t)app->entry_point;
+    app_entry();
+}
+#+end_src
+
+* 寄存器模型: 程序员可见的状态
+
+** 通用寄存器: r0 ~ r12
+
+ARM 有 *13 个通用寄存器* =r0= ~ =r12=，都是 32 位宽度。
+
+*寄存器分配约定 (ARM AAPCS)*:
+
+| 寄存器      | 别名   | 用途                             | 调用时保存者 |
+|-----------+------+--------------------------------+----------|
+| r0 - r3   | a1-a4 | 函数参数传递、返回值                  | *调用者*     |
+| r4 - r11  | v1-v8 | 局部变量 (callee-saved)            | *被调用者*   |
+| r12       | ip    | Intra-Procedure-call scratch (临时) | 调用者       |
+
+#+begin_src c
+int add(int a, int b) {  // a in r0, b in r1
+    return a + b;        // result in r0
+}
+#+end_src
+
+编译为:
+
+#+begin_src asm
+add:
+    ADD r0, r0, r1
+    BX  lr
+#+end_src
+
+** 特殊用途寄存器
+
+*** r13 (SP): 栈指针
+
+保存当前堆栈的 *栈顶地址*。ARM 栈是 *向下增长* (Full Descending Stack)。
+
+Cortex-M 有两个栈指针:
+
+- *MSP* (Main Stack Pointer): 用于异常处理和操作系统内核
+- *PSP* (Process Stack Pointer): 用于用户线程
+
+#+begin_src asm
+PUSH {r4, lr}    ; 等价于: SUB sp, sp, #8
+                  ;         STR r4, [sp, #0]
+                  ;         STR lr, [sp, #4]
+#+end_src
+
+*** r14 (LR): 链接寄存器
+
+保存 *子程序返回地址*。当调用函数时，=BL= 指令自动将返回地址存入 =LR=。
+
+#+begin_src asm
+main:
+    BL  func      ; LR = PC + 4
+    ; ...
+
+func:
+    ; do something
+    BX  lr        ; 返回到 main
+#+end_src
+
+*** r15 (PC): 程序计数器
+
+指向 *当前正在执行的指令*。
+
+*ARM 的流水线效应*: 由于指令流水线的存在，读取 =PC= 时的值并不是当前指令的地址，而是 "当前指令 + 8" (ARM 模式) 或 "当前指令 + 4" (Thumb 模式)。
+
+#+begin_src asm
+0x8000: MOV r0, pc    ; r0 = 0x8008 (不是 0x8000!)
+#+end_src
+
+** CPSR: 当前程序状态寄存器
+
+CPSR (Current Program Status Register) 保存当前执行状态，是一个 32 位寄存器，分为 4 个 8 位域:
+
+*** 标志域 (Flags, bits 31-28)
+
+| 位   | 名称 | 含义                          |
+|----+----+-----------------------------|
+| 31 | N  | 负数标志 (Negative)             |
+| 30 | Z  | 零标志 (Zero)                  |
+| 29 | C  | 进位标志 (Carry)               |
+| 28 | V  | 溢出标志 (oVerflow)            |
+
+*条件执行*: ARM 的几乎所有指令都可以条件执行，基于 NZCV 标志。
+
+#+begin_src asm
+CMP  r0, #10      ; 比较 r0 和 10，更新 NZCV
+ADDGT r1, r1, #1  ; if (r0 > 10) r1++
+MOVLE r2, #0      ; if (r0 <= 10) r2 = 0
+#+end_src
+
+*** 状态域 (Status, bits 27-24)
+
+| 位   | 名称 | 含义                            |
+|----+----+-------------------------------|
+| 27 | Q  | 饱和标志 (DSP 指令用)              |
+| 26-25 | IT[1:0] | If-Then 状态位 (Thumb-2)   |
+| 24 | J  | Jazelle 状态 (已废弃)            |
+
+*** 扩展域 (Extension, bits 23-16)
+
+| 位    | 名称       | 含义                     |
+|-----+----------+------------------------|
+| 19-16 | GE[3:0] | 大于等于标志 (并行算术用)      |
+| 15-10 | IT[7:2] | If-Then 状态位 (高 6 位) |
+
+*** 控制域 (Control, bits 9-0)
+
+| 位   | 名称      | 含义                         |
+|----+---------+----------------------------|
+| 9  | E       | 字节序 (0=小端, 1=大端)        |
+| 8  | A       | 异步中止禁止位                  |
+| 7  | I       | IRQ 中断禁止位                 |
+| 6  | F       | FIQ 中断禁止位                 |
+| 5  | T       | Thumb 状态位 (1=Thumb)       |
+| 4-0 | M[4:0] | 处理器模式                     |
+
+*** 处理器模式 (M[4:0])
+
+| 模式值   | 模式名称             | 特权级别 | 说明                     |
+|-------+--------------------+--------+------------------------|
+| 10000 | User               | PL0    | 用户模式 (非特权模式)         |
+| 10001 | FIQ                | PL1    | 快速中断模式               |
+| 10010 | IRQ                | PL1    | 中断模式                  |
+| 10011 | Supervisor (SVC)   | PL1    | 管理模式 (系统调用)          |
+| 10110 | Monitor (MON)      | PL1    | 安全监控模式 (TrustZone)   |
+| 10111 | Abort              | PL1    | 中止模式 (内存访问异常)       |
+| 11010 | Hypervisor (HYP)   | PL2    | 虚拟化管理模式             |
+| 11011 | Undefined          | PL1    | 未定义指令模式             |
+| 11111 | System             | PL1    | 系统模式 (特权用户模式)       |
+
+*模式切换示例*:
+
+#+begin_src c
+// 用户程序调用系统调用
+int main(void) {
+    syscall(SYS_WRITE, "Hello\n", 6);  // 触发 SVC 异常
+}
+
+// 异常发生时的硬件动作:
+// 1. CPSR → SPSR_svc  (保存当前状态)
+// 2. PC → LR_svc      (保存返回地址)
+// 3. CPSR.M ← 10011   (切换到 SVC 模式)
+// 4. PC ← 向量表[SVC] (跳转到异常处理程序)
+#+end_src
+
+** SPSR: 保存的程序状态寄存器
+
+SPSR (Saved Program Status Register) 用于保存异常发生前的 CPSR 值。*每个特权模式都有自己的 SPSR*。
+
+| 模式           | SPSR 名称   | 用途                          |
+|--------------+-----------+-----------------------------|
+| User/System  | -         | 无 SPSR (不处理异常)             |
+| FIQ          | SPSR_fiq  | 保存 FIQ 发生前的 CPSR           |
+| IRQ          | SPSR_irq  | 保存 IRQ 发生前的 CPSR           |
+| Supervisor   | SPSR_svc  | 保存 SVC 异常前的 CPSR           |
+| Abort        | SPSR_abt  | 保存 Abort 异常前的 CPSR         |
+| Undefined    | SPSR_und  | 保存未定义指令异常前的 CPSR         |
+
+*异常返回示例*:
+
+#+begin_src asm
+IRQ_Handler:
+    ; 保存上下文
+    PUSH {r0-r3, r12, lr}
+
+    ; 处理中断
+    BL   handle_interrupt
+
+    ; 恢复上下文
+    POP  {r0-r3, r12, lr}
+
+    ; 从异常返回 (恢复 CPSR 和 PC)
+    SUBS pc, lr, #4      ; SPSR_irq → CPSR, (LR-4) → PC
+#+end_src
+
+* 内存架构: 冯诺依曼 vs. 哈佛
+
+** 冯诺依曼架构 (Von Neumann)
+
+*特点*:
+
+- 程序与数据存储在 *同一存储空间*
+- 同一条总线取指令与访问数据 (共享存储器和总线)
+- CPU 必须 *顺序* 使用同一总线: 先取指，再取/存数据，无法并行
+
+*优点*:
+
+- 结构简单、可重用内存
+- 程序可以自修改 (代码即数据)
+
+*缺点*:
+
+- 存在 *"冯诺依曼瓶颈"* (Von Neumann Bottleneck) — 取指和访存互相阻塞，限制性能
+
+#+begin_example
+      +-------+
+      |  CPU  |
+      +-------+
+          |
+          | (单一总线)
+          |
+      +-------+
+      | 内存  |
+      | (代码  |
+      |  +    |
+      | 数据) |
+      +-------+
+#+end_example
+
+** 哈佛架构 (Harvard)
+
+*特点*:
+
+- 指令存储器和数据存储器 *物理分离*
+- 指令总线与数据总线独立，可并行访问指令和数据
+- 能同时 "取指 + 数据访问"，吞吐量更高
+
+#+begin_example
+      +-------+
+      |  CPU  |
+      +-------+
+       /     \
+      /       \
+  (I-bus)   (D-bus)
+    /           \
++-------+     +-------+
+| 指令  |     | 数据  |
+| 存储器 |     | 存储器 |
++-------+     +-------+
+#+end_example
+
+*优点*:
+
+- 指令和数据可以 *同时访问*，没有总线冲突
+- 更高的带宽利用率
+
+*缺点*:
+
+- 硬件复杂度更高 (需要两套总线)
+- 传统上，固定的分离意味着 "不可执行数据、不可写指令存储器" (但现代系统已突破)
+
+** Cortex-M 的 "修正哈佛架构"
+
+现代 ARM 处理器采用 *修正哈佛架构* (Modified Harvard Architecture):
+
+- *内部*: 使用哈佛架构，分离 I-Cache (指令缓存) 和 D-Cache (数据缓存)
+- *外部*: 表现为统一的地址空间 (冯诺依曼)，程序和数据在同一 Flash/RAM 中
+
+#+begin_example
++----------------+
+|   Cortex-M4    |
+|  +----+ +----+ |
+|  |I$  | |D$  | |  (内部哈佛)
+|  +----+ +----+ |
++----------------+
+        |
+   (AHB 总线, 外部冯诺依曼)
+        |
++----------------+
+|   Flash/RAM    |
+| (统一地址空间)   |
++----------------+
+#+end_example
+
+这样做的好处:
+
+- 保持了哈佛架构的性能优势 (内部并行访问)
+- 保持了冯诺依曼架构的灵活性 (可执行 RAM 中的代码、自修改代码)
+
+* ISA 演进: 从 ARMv6-M 到 ARMv9-A
+
+** Cortex-M 系列: 嵌入式微控制器
+
+*** ARMv6-M (Cortex-M0/M0+/M1)
+
+*目标*: 替代 8 位微控制器，极致简化
+
+- *指令集*: Thumb 基础子集 (Thumb-1)，约 56 条指令
+- *无* Thumb-2 扩展
+- *无* DSP 指令
+- *无* 硬件除法
+- *无* 位域操作 (BFI/BFC/SBFX/UBFX)
+- *无* 多寄存器 Load/Store 的复杂变体
+
+*典型应用*: IoT 传感器节点、无线遥控器、简单 LED 驱动
+
+#+begin_src asm
+; ARMv6-M 的限制示例
+ADD r0, r1, r2   ; 有效
+ADD r8, r9, r10  ; *无效* (高寄存器受限)
+
+UDIV r0, r1, r2  ; *无效* (无硬件除法，需要软件库)
+#+end_src
+
+*** ARMv7-M (Cortex-M3)
+
+*目标*: 通用嵌入式处理器
+
+- *指令集*: 完整 *Thumb-2 ISA*，约 150+ 条指令
+- 支持 32 位 Thumb 指令 (IF-THEN, 更丰富的分支/访存/位域等)
+- 支持 *硬件整数除法* (=SDIV=/=UDIV=)
+- 支持 *饱和运算* (=SSAT=/=USAT=)
+- 支持 *位域操作* (=BFI=/=BFC=/=SBFX=/=UBFX=)
+
+*典型应用*: 工业控制、汽车电子、消费电子
+
+#+begin_src asm
+; ARMv7-M 的增强示例
+UDIV r0, r1, r2   ; 硬件除法 (约 2-12 周期)
+
+BFI r0, r1, #4, #8  ; 将 r1 的 bit[7:0] 插入 r0 的 bit[11:4]
+
+IT EQ
+ADDEQ r0, r1, r2    ; 条件执行块 (Thumb-2 特性)
+#+end_src
+
+*** ARMv7E-M (Cortex-M4/M7)
+
+*目标*: DSP 和浮点密集型应用
+
+- 在 ARMv7-M 基础上添加 *DSP 扩展* (E = Enhanced DSP)
+- 支持 *SIMD-like 并行算术* (8/16 位打包指令)
+- 支持 *饱和乘加* (=SMLAD=/=SMUAD= 等)
+- Cortex-M4 可选 *单精度 FPU* (FPv4-SP)
+- Cortex-M7 可选 *单/双精度 FPU* (FPv5)
+
+*典型应用*: 音频处理、电机控制、信号滤波
+
+#+begin_src asm
+; ARMv7E-M 的 DSP 指令示例
+SADD16 r0, r1, r2   ; 并行加法: r0[15:0] = r1[15:0] + r2[15:0]
+                     ;           r0[31:16] = r1[31:16] + r2[31:16]
+
+SMLAD r0, r1, r2, r3  ; 双 16 位乘加:
+                       ; r0 = r3 + (r1[15:0] * r2[15:0]) + (r1[31:16] * r2[31:16])
+#+end_src
+
+*** ARMv8-M (Cortex-M23/M33/M35P)
+
+*目标*: 安全和低功耗
+
+- 分为 *Baseline* (M23) 和 *Mainline* (M33/M35P) 两档
+- 引入 *TrustZone-M* 安全扩展 (Secure/Non-secure 世界隔离)
+- 添加 =LDREX=/=STREX= 原子操作支持 (C11 原子变量)
+- M33/M35P 支持 DSP 和可选 FPU
+
+*典型应用*: 安全 IoT、支付终端、智能锁
+
+#+begin_src c
+// TrustZone-M 示例
+__attribute__((cmse_nonsecure_entry))
+int secure_function(int param) {
+    // 这个函数运行在 Secure 世界
+    return crypto_process(param);
+}
+
+// 从 Non-secure 世界调用
+int result = secure_function(42);  // 硬件自动切换安全状态
+#+end_src
+
+*** ARMv8.1-M (Cortex-M52/M55/M85)
+
+*目标*: AI/ML 边缘计算
+
+- 在 ARMv8-M 基础上添加 *Helium (MVE)* 向量扩展
+- *MVE-I*: 128 位整数 SIMD (8/16/32 位元素)
+- *MVE-F*: 128 位浮点 SIMD (半精度/单精度)
+- 性能提升: ML 任务可达 *15 倍*，DSP 任务可达 *5 倍*
+
+*典型应用*: 语音识别、图像分类、传感器融合
+
+#+begin_src c
+// Helium 向量内联函数示例
+#include <arm_mve.h>
+
+void vector_add(int16_t *a, int16_t *b, int16_t *c, int n) {
+    for (int i = 0; i < n; i += 8) {  // 一次处理 8 个 16 位元素
+        int16x8_t va = vld1q_s16(&a[i]);
+        int16x8_t vb = vld1q_s16(&b[i]);
+        int16x8_t vc = vaddq_s16(va, vb);
+        vst1q_s16(&c[i], vc);
+    }
+}
+#+end_src
+
+** Cortex-A 系列: 应用处理器
+
+*** ARMv7-A (Cortex-A5/A7/A8/A9/A12/A15/A17)
+
+*目标*: 智能手机和平板电脑
+
+- 32 位架构，支持 ARM、Thumb-2、Jazelle (已废弃) 和 DSP 指令集
+- 标配 *NEON SIMD* (128 位向量) 和 *VFPv3/v4 浮点* (单/双精度)
+- 支持 *TrustZone* 安全扩展 (Secure/Normal 世界)
+- 支持 *虚拟化扩展* (Hypervisor 模式, Cortex-A15)
+
+*典型应用*: 早期 iPhone/Android 手机、Raspberry Pi 2/3
+
+#+begin_src asm
+; NEON 示例
+VLD1.32 {d0-d1}, [r0]   ; 加载 4 个 32 位浮点数
+VADD.F32 q0, q0, q1     ; 4 路并行浮点加法
+VST1.32 {d0-d1}, [r2]   ; 存储结果
+#+end_src
+
+*** ARMv8-A (Cortex-A32/A35/A53/A57/A72/A73)
+
+*目标*: 64 位移动和服务器
+
+- 首个 *64 位* ARM 架构
+- 支持两种执行状态:
+  - *AArch64*: 64 位 A64 指令集 (31 个 64 位通用寄存器 =X0=~=X30=)
+  - *AArch32*: 兼容 ARMv7-A 的 A32/T32 指令集
+- 标配增强的 *NEON* (现在是强制的，不再可选)
+- 支持 *加密扩展* (AES/SHA 硬件加速)
+- A32 (Cortex-A32) 仅支持 32 位
+
+*典型应用*: 现代智能手机、服务器 (AWS Graviton 1)
+
+#+begin_src asm
+; AArch64 示例
+LDR X0, [X1, #16]    ; 加载 64 位值
+ADD X0, X0, X2       ; 64 位加法
+STR X0, [X1, #16]    ; 存储 64 位值
+#+end_src
+
+*** ARMv8.2-A (Cortex-A55/A65/A75/A76/A77/A78)
+
+*目标*: AI 和机器学习
+
+- 在 ARMv8-A 基础上增加:
+  - *半精度浮点* (FP16) 支持
+  - *Dot Product 指令* (加速卷积神经网络)
+  - *RAS 扩展* (Reliability, Availability, Serviceability)
+  - *SVE* (Scalable Vector Extension, 可选, 128-2048 位可变)
+
+*典型应用*: 旗舰手机 (骁龙 855/865)、ARM 服务器
+
+#+begin_src asm
+; Dot Product 示例 (ARMv8.2-A)
+UDOT V0.4S, V1.16B, V2.16B  ; 4 路点积 (每路 4 个 8 位相乘累加)
+#+end_src
+
+*** ARMv9-A (Cortex-A510/A710/A720/A520/X2/X3/X4)
+
+*目标*: AI、安全和高性能
+
+- 引入 *SVE2* (第二代可扩展向量扩展)
+  - 比 NEON 更强大，支持可变向量长度 (128-2048 位)
+  - 无需为不同硬件重新编译
+- 引入 *SME* (Scalable Matrix Extension, ARMv9.2+)
+  - 专用矩阵乘法单元，加速 AI 推理
+- 引入 *MTE* (Memory Tagging Extension)
+  - 硬件辅助的内存安全检测
+- 引入 *RME* (Realm Management Extension)
+  - 机密计算 (Confidential Computing) 支持
+
+*典型应用*: 最新旗舰手机 (骁龙 8 Gen 3)、数据中心 (AWS Graviton 4)
+
+#+begin_src c
+// SVE2 内联函数示例
+#include <arm_sve.h>
+
+void saxpy_sve(const float *x, float *y, float a, int n) {
+    for (int i = 0; i < n; i += svcntw()) {  // svcntw() = 向量长度/4
+        svbool_t pg = svwhilelt_b32(i, n);  // 谓词: i < n
+        svfloat32_t vx = svld1_f32(pg, &x[i]);
+        svfloat32_t vy = svld1_f32(pg, &y[i]);
+        vy = svmla_f32_m(pg, vy, vx, a);  // y = y + x * a
+        svst1_f32(pg, &y[i], vy);
+    }
+}
+#+end_src
+
+* 指令集分类: ARM/Thumb-2 指令全景
+
+** 1. 数据处理指令 (ALU)
+
+*** 算术运算
+
+| 指令     | 描述               | 示例                     |
+|--------+------------------+------------------------|
+| =ADD=    | 加法               | =ADD r0, r1, r2=         |
+| =ADC=    | 带进位加法            | =ADC r0, r1, r2=         |
+| =SUB=    | 减法               | =SUB r0, r1, #10=        |
+| =SBC=    | 带借位减法            | =SBC r0, r1, r2=         |
+| =RSB=    | 反向减法             | =RSB r0, r1, #0= (取反)  |
+| =MUL=    | 乘法               | =MUL r0, r1, r2=         |
+| =MLA=    | 乘加               | =MLA r0, r1, r2, r3=     |
+| =SDIV=   | 有符号除法 (v7-M+)   | =SDIV r0, r1, r2=        |
+| =UDIV=   | 无符号除法 (v7-M+)   | =UDIV r0, r1, r2=        |
+
+*** 逻辑运算
+
+| 指令     | 描述       | 示例                |
+|--------+----------+-------------------|
+| =AND=    | 按位与      | =AND r0, r1, #0xFF= |
+| =ORR=    | 按位或      | =ORR r0, r1, r2=    |
+| =EOR=    | 按位异或     | =EOR r0, r1, r2=    |
+| =BIC=    | 位清除      | =BIC r0, r1, #1=    |
+| =MVN=    | 按位取反     | =MVN r0, r1=        |
+
+*** 比较和测试
+
+| 指令     | 描述            | 示例            |
+|--------+---------------+---------------|
+| =CMP=    | 比较 (减法，不写回) | =CMP r0, #10=   |
+| =CMN=    | 比较负数 (加法)   | =CMN r0, r1=    |
+| =TST=    | 测试位 (与操作)   | =TST r0, #0x80= |
+| =TEQ=    | 测试相等 (异或)   | =TEQ r0, r1=    |
+
+*** 移位和旋转
+
+| 指令     | 描述          | 示例                 |
+|--------+-------------+--------------------|
+| =LSL=    | 逻辑左移       | =LSL r0, r1, #4=     |
+| =LSR=    | 逻辑右移       | =LSR r0, r1, #4=     |
+| =ASR=    | 算术右移 (保留符号) | =ASR r0, r1, #4=     |
+| =ROR=    | 循环右移       | =ROR r0, r1, #8=     |
+| =RRX=    | 带扩展的循环右移   | =RRX r0, r1=         |
+
+** 2. 访存指令 (Load/Store)
+
+*** 单寄存器访存
+
+| 指令       | 描述              | 示例                   |
+|----------+-----------------+----------------------|
+| =LDR=      | 加载字 (32 位)      | =LDR r0, [r1, #4]=     |
+| =LDRB=     | 加载字节 (8 位)     | =LDRB r0, [r1]=        |
+| =LDRH=     | 加载半字 (16 位)    | =LDRH r0, [r1, #2]=    |
+| =LDRSB=    | 加载有符号字节       | =LDRSB r0, [r1]=       |
+| =LDRSH=    | 加载有符号半字       | =LDRSH r0, [r1]=       |
+| =STR=      | 存储字            | =STR r0, [r1, #4]=     |
+| =STRB=     | 存储字节           | =STRB r0, [r1]=        |
+| =STRH=     | 存储半字           | =STRH r0, [r1]=        |
+
+*** 多寄存器访存
+
+| 指令       | 描述              | 示例                       |
+|----------+-----------------+--------------------------|
+| =LDM=      | 加载多个寄存器        | =LDMIA r0!, {r1-r4}=       |
+| =STM=      | 存储多个寄存器        | =STMDB sp!, {r4-r11, lr}=  |
+| =PUSH=     | 压栈             | =PUSH {r4, lr}=            |
+| =POP=      | 出栈             | =POP {r4, pc}=             |
+
+*** 排他访存 (原子操作)
+
+| 指令         | 描述                    | 示例                     |
+|------------+-----------------------+------------------------|
+| =LDREX=      | 排他加载 (标记地址)         | =LDREX r0, [r1]=         |
+| =STREX=      | 排他存储 (检查标记)         | =STREX r2, r0, [r1]=     |
+| =LDREXB=     | 排他加载字节               | =LDREXB r0, [r1]=        |
+| =STREXB=     | 排他存储字节               | =STREXB r2, r0, [r1]=    |
+
+#+begin_src c
+// 使用 LDREX/STREX 实现原子加 1
+int atomic_increment(int *ptr) {
+    int old, new, status;
+    do {
+        old = __ldrex(ptr);       // 排他加载
+        new = old + 1;
+        status = __strex(new, ptr);  // 排他存储
+    } while (status != 0);        // 如果失败 (被其他核修改)，重试
+    return old;
+}
+#+end_src
+
+** 3. 控制流指令
+
+*** 分支和跳转
+
+| 指令      | 描述                 | 示例                    |
+|---------+--------------------+-----------------------|
+| =B=       | 无条件跳转             | =B label=               |
+| =B<cond>= | 条件跳转              | =BEQ label= (相等时跳转)   |
+| =BL=      | 跳转并链接 (函数调用)      | =BL function=           |
+| =BX=      | 跳转到寄存器 (可切换 ARM/Thumb) | =BX lr= (返回)          |
+| =BLX=     | 跳转并链接到寄存器         | =BLX r0=                |
+
+*** Thumb-2 条件执行块 (IT)
+
+=IT= (If-Then) 指令允许后续 1~4 条指令条件执行。
+
+| 指令        | 描述              | 示例                      |
+|-----------+-----------------+-------------------------|
+| =IT=        | 1 条指令条件执行      | =IT EQ=                   |
+| =ITT=       | 2 条指令，都是 Then  | =ITT GT=                  |
+| =ITE=       | 2 条指令，Then-Else | =ITE NE=                  |
+| =ITTT=      | 3 条指令，TTT      | =ITTT CS=                 |
+| =ITTE=      | 3 条指令，TTE      | =ITTE MI=                 |
+
+#+begin_src asm
+; 使用 IT 块实现 if-else
+CMP r0, #10
+ITE GT              ; if (r0 > 10)
+MOVGT r1, #1        ;     r1 = 1   (Then)
+MOVLE r1, #0        ; else r1 = 0   (Else)
+#+end_src
+
+*** 异常和系统控制
+
+| 指令       | 描述                 | 示例                      |
+|----------+--------------------+-------------------------|
+| =SVC=      | 触发系统调用异常 (旧名 SWI) | =SVC #0=                  |
+| =BKPT=     | 触发断点异常            | =BKPT #0=                 |
+| =WFI=      | 等待中断 (进入睡眠)       | =WFI=                     |
+| =WFE=      | 等待事件              | =WFE=                     |
+| =SEV=      | 发送事件              | =SEV=                     |
+| =CPSID I=  | 禁用 IRQ 中断         | =CPSID I=                 |
+| =CPSIE I=  | 使能 IRQ 中断         | =CPSIE I=                 |
+
+*** 内存屏障
+
+| 指令    | 描述                  | 示例    |
+|-------+---------------------+-------|
+| =DMB=   | 数据内存屏障 (Data Memory Barrier) | =DMB=   |
+| =DSB=   | 数据同步屏障 (Data Synchronization Barrier) | =DSB=   |
+| =ISB=   | 指令同步屏障 (Instruction Synchronization Barrier) | =ISB=   |
+
+#+begin_src c
+// 使用内存屏障保证顺序
+void producer(void) {
+    data = 42;        // 写入数据
+    __asm__ volatile("DMB");  // 确保数据写入完成
+    flag = 1;         // 发布标志
+}
+
+void consumer(void) {
+    while (flag == 0);  // 等待标志
+    __asm__ volatile("DMB");  // 确保后续读取在标志读取之后
+    int value = data;
+}
+#+end_src
+
+** 4. 位操作和位域指令
+
+*** 字节序反转
+
+| 指令       | 描述                   | 示例          |
+|----------+----------------------+-------------|
+| =REV=      | 反转字节序 (32 位)        | =REV r0, r1=  |
+| =REV16=    | 反转每个半字内的字节序 (16 位) | =REV16 r0, r1= |
+| =REVSH=    | 反转并符号扩展 (16 位)     | =REVSH r0, r1= |
+
+#+begin_src c
+// REV 示例
+uint32_t x = 0x12345678;
+uint32_t y = __rev(x);  // y = 0x78563412
+#+end_src
+
+*** 位计数和位反转
+
+| 指令     | 描述             | 示例         |
+|--------+----------------+------------|
+| =CLZ=    | 计算前导零个数       | =CLZ r0, r1= |
+| =RBIT=   | 按位反转 (32 位)   | =RBIT r0, r1= |
+
+#+begin_src c
+// CLZ 示例
+int x = 0x00001000;
+int n = __clz(x);  // n = 19 (前 19 位都是 0)
+#+end_src
+
+*** 位域操作 (ARMv7-M+)
+
+| 指令     | 描述               | 示例                       |
+|--------+------------------+--------------------------|
+| =BFC=    | 位域清零            | =BFC r0, #4, #8= (清零 bit[11:4]) |
+| =BFI=    | 位域插入            | =BFI r0, r1, #4, #8=       |
+| =SBFX=   | 有符号位域提取         | =SBFX r0, r1, #4, #8=      |
+| =UBFX=   | 无符号位域提取         | =UBFX r0, r1, #4, #8=      |
+
+#+begin_src asm
+; 位域操作示例
+MOV r0, #0xFFFFFFFF
+BFC r0, #4, #8       ; r0 = 0xFFFFF00F (清零 bit[11:4])
+
+MOV r0, #0
+MOV r1, #0xAB
+BFI r0, r1, #8, #8   ; r0 = 0x0000AB00 (插入到 bit[15:8])
+#+end_src
+
+** 5. DSP 和并行算术指令 (ARMv7E-M)
+
+*** 饱和算术
+
+| 指令       | 描述           | 示例                |
+|----------+--------------+-------------------|
+| =SSAT=     | 有符号饱和       | =SSAT r0, #8, r1=   |
+| =USAT=     | 无符号饱和       | =USAT r0, #8, r1=   |
+| =QADD=     | 饱和加法        | =QADD r0, r1, r2=   |
+| =QSUB=     | 饱和减法        | =QSUB r0, r1, r2=   |
+
+#+begin_src c
+// 饱和加法示例
+int16_t saturated_add(int16_t a, int16_t b) {
+    int32_t sum = (int32_t)a + (int32_t)b;
+    if (sum > 32767) return 32767;
+    if (sum < -32768) return -32768;
+    return (int16_t)sum;
+}
+
+// 使用 QADD16 硬件指令 (ARMv7E-M)
+int32_t result = __qadd16(a, b);  // 两个 16 位饱和加法
+#+end_src
+
+*** 并行加减 (SIMD-like)
+
+| 指令        | 描述              | 示例                |
+|-----------+-----------------+-------------------|
+| =SADD8=     | 8 位有符号并行加法    | =SADD8 r0, r1, r2=  |
+| =SADD16=    | 16 位有符号并行加法   | =SADD16 r0, r1, r2= |
+| =UADD8=     | 8 位无符号并行加法    | =UADD8 r0, r1, r2=  |
+| =SSUB16=    | 16 位有符号并行减法   | =SSUB16 r0, r1, r2= |
+| =SASX=      | 16 位加-减交叉      | =SASX r0, r1, r2=   |
+
+#+begin_src asm
+; SADD16 示例 (并行 16 位加法)
+; r1 = 0x00010002, r2 = 0x00030004
+SADD16 r0, r1, r2
+; r0 = 0x00040006
+;      (1+3=4 in top half, 2+4=6 in bottom half)
+#+end_src
+
+*** 打包和选择
+
+| 指令      | 描述                    | 示例                  |
+|---------+-----------------------+---------------------|
+| =PKHBT=   | 打包半字 (底部)            | =PKHBT r0, r1, r2, LSL #16= |
+| =PKHTB=   | 打包半字 (顶部)            | =PKHTB r0, r1, r2, ASR #16= |
+| =SEL=     | 根据 GE 标志选择字节/半字    | =SEL r0, r1, r2=      |
+
+#+begin_src asm
+; PKHBT 示例 (打包两个半字)
+MOV r1, #0x1234
+MOV r2, #0x5678
+PKHBT r0, r1, r2, LSL #16
+; r0 = 0x56781234 (r2 的低半字 << 16, r1 的低半字)
+#+end_src
+
+*** 半字乘加
+
+| 指令        | 描述                        | 示例                  |
+|-----------+---------------------------+---------------------|
+| =SMLAD=     | 双 16 位乘加 (符号)            | =SMLAD r0, r1, r2, r3= |
+| =SMLADX=    | 双 16 位乘加 (符号, 交叉)        | =SMLADX r0, r1, r2, r3= |
+| =SMLSD=     | 双 16 位乘减 (符号)            | =SMLSD r0, r1, r2, r3= |
+| =SMUAD=     | 双 16 位乘 (符号)             | =SMUAD r0, r1, r2=    |
+
+#+begin_src c
+// SMLAD 等价的 C 代码
+int32_t smlad(int32_t a, int32_t b, int32_t c) {
+    int16_t a_lo = (int16_t)(a & 0xFFFF);
+    int16_t a_hi = (int16_t)(a >> 16);
+    int16_t b_lo = (int16_t)(b & 0xFFFF);
+    int16_t b_hi = (int16_t)(b >> 16);
+    return c + (a_lo * b_lo) + (a_hi * b_hi);
+}
+#+end_src
+
+** 6. 系统寄存器访问指令
+
+*** 特殊寄存器访问
+
+| 指令    | 描述                     | 示例                      |
+|-------+------------------------+-------------------------|
+| =MRS=   | 从特殊寄存器读到通用寄存器         | =MRS r0, APSR=            |
+| =MSR=   | 把通用寄存器写入特殊寄存器         | =MSR PRIMASK, r0=         |
+
+#+begin_src c
+// 禁用中断的典型模式
+uint32_t disable_interrupts(void) {
+    uint32_t primask;
+    __asm__ volatile("MRS %0, PRIMASK" : "=r" (primask));
+    __asm__ volatile("CPSID I");  // 禁用 IRQ
+    return primask;
+}
+
+void restore_interrupts(uint32_t primask) {
+    __asm__ volatile("MSR PRIMASK, %0" : : "r" (primask));
+}
+#+end_src
+
+* 总结: 从设计哲学到实际应用
+
+** RISC 的胜利
+
+ARM 的成功证明了 RISC 设计哲学的正确性:
+
+- *简单的指令集* → 更小的芯片面积 → 更低的功耗
+- *Load-Store 架构* → 更好的编译器优化 → 更高的性能
+- *流水线友好* → 更高的时钟频率 → 更好的性能功耗比
+
+** 架构的演进
+
+从 ARMv6-M 到 ARMv9-A，ARM 架构一直在演进:
+
+- *代码密度*: Thumb → Thumb-2 → 混合编码
+- *性能*: 单发射 → 乱序执行 → 超标量 + 向量
+- *安全*: TrustZone → Pointer Authentication → Memory Tagging
+- *AI/ML*: NEON → SVE/SVE2 → Helium/SME
+
+** 指令集的权衡
+
+不同的 ISA 层级针对不同的应用场景:
+
+- *ARMv6-M*: 极致简化，面积优先 (物联网传感器)
+- *ARMv7E-M*: 增强 DSP，性能优先 (音频处理、电机控制)
+- *ARMv8.1-M*: AI 加速，边缘计算 (语音识别、图像分类)
+- *ARMv9-A*: 高性能 + 安全，云和边缘融合 (服务器、旗舰手机)
+
+** 给嵌入式开发者的建议
+
+1. *选择合适的内核*: 不要盲目追求高性能，匹配实际需求
+2. *理解指令集*: 知道哪些指令可用，哪些需要特定架构
+3. *利用硬件特性*: DSP 指令、NEON、Helium 可以大幅提升性能
+4. *关注功耗*: 嵌入式系统的功耗往往比性能更重要
+5. *使用正确的工具*: 编译器优化 (=-O2=, =-march=) 和内联汇编
+
+#+begin_src c
+// 使用编译器内联函数利用硬件特性
+#include <arm_neon.h>
+
+void optimized_filter(int16_t *input, int16_t *output, int len) {
+    int16x8_t coeff = vdupq_n_s16(256);  // 系数向量
+    for (int i = 0; i < len; i += 8) {
+        int16x8_t in = vld1q_s16(&input[i]);
+        int16x8_t out = vmulq_s16(in, coeff);
+        vst1q_s16(&output[i], out);
+    }
+}
+#+end_src
+
+** 未来的展望
+
+ARM 架构的未来方向:
+
+- *更强的 AI 加速*: SME2, 更大的向量寄存器
+- *更好的安全性*: Realm Management, 机密计算
+- *更高的能效*: 大小核异构 (big.LITTLE v2)
+- *开放生态*: RISC-V 的竞争推动 ARM 更加开放
+
+ARM 从 1985 年的 ARM1 到 2025 年的 ARMv9，已经走过了 40 年。从最初的 BBC Micro 到如今的智能手机、服务器、超级计算机，ARM 架构已经成为计算世界的基石。理解 ARM 的设计哲学和指令集演进，是每个嵌入式和系统程序员的必修课。

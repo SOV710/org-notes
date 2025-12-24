@@ -1,0 +1,1293 @@
+#+title: ARM SoC Peripherals and Interconnect Architecture: From Memory-Mapped I/O to AMBA Protocols
+#+author: SOV710
+#+date: 2025-12-19
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 外设的本质: 存储器映射 I/O
+
+在 ARM 架构中，*所有外设都是存储器映射的* (Memory-Mapped I/O, MMIO)。这意味着外设的寄存器不是通过专用的 I/O 指令访问 (如 x86 的 =IN/OUT= 指令)，而是映射到处理器的 *物理地址空间* 中，像普通内存一样通过 =LDR/STR= 指令读写。
+
+** 存储器映射 I/O 的原理
+
+*** 地址空间划分
+
+ARM 的 32 位地址空间 (0x0000_0000 ~ 0xFFFF_FFFF) 被划分为多个区域:
+
+#+begin_example
+0x0000_0000 ┌──────────────────────────┐
+            │ Flash / ROM              │
+0x0800_0000 ├──────────────────────────┤
+            │ SRAM                     │
+0x2000_0000 ├──────────────────────────┤
+            │ Peripherals (APB)        │
+0x4000_0000 ├──────────────────────────┤
+            │ Peripherals (AHB)        │
+0x5000_0000 ├──────────────────────────┤
+            │ External RAM / Devices   │
+0xA000_0000 ├──────────────────────────┤
+            │ Private Peripherals      │
+0xE000_0000 │ (NVIC, SysTick, MPU...)  │
+0xFFFF_FFFF └──────────────────────────┘
+#+end_example
+
+例如，STM32F407 的外设地址分配:
+
+| 地址范围                   | 外设                          | 总线    |
+|---------------------------+-------------------------------+---------|
+| =0x4000_0000 - 0x4000_7FFF= | APB1 外设 (UART, SPI, I2C...) | APB1    |
+| =0x4001_0000 - 0x4001_5FFF= | APB2 外设 (USART1, ADC, TIM1) | APB2    |
+| =0x4002_0000 - 0x5003_FFFF= | AHB1 外设 (GPIO, DMA, RCC)    | AHB1    |
+| =0x5000_0000 - 0x5006_0FFF= | AHB2 外设 (USB OTG, DCMI)     | AHB2    |
+| =0xE000_E000 - 0xE000_EFFF= | NVIC (嵌套向量中断控制器)        | 私有总线 |
+
+*** 访问外设寄存器的方式
+
+*C 语言直接指针操作*:
+
+#+begin_src c
+// 定义 GPIO 端口 A 的寄存器结构体
+typedef struct {
+    volatile uint32_t MODER;    // 模式寄存器
+    volatile uint32_t OTYPER;   // 输出类型寄存器
+    volatile uint32_t OSPEEDR;  // 输出速度寄存器
+    volatile uint32_t PUPDR;    // 上拉/下拉寄存器
+    volatile uint32_t IDR;      // 输入数据寄存器
+    volatile uint32_t ODR;      // 输出数据寄存器
+    volatile uint32_t BSRR;     // 位设置/复位寄存器
+    volatile uint32_t LCKR;     // 配置锁定寄存器
+    volatile uint32_t AFR[2];   // 复用功能寄存器
+} GPIO_TypeDef;
+
+#define GPIOA_BASE  0x40020000UL
+#define GPIOA       ((GPIO_TypeDef *)GPIOA_BASE)
+
+// 设置 PA5 为输出模式 (LED)
+GPIOA->MODER |= (1 << 10);  // 01: 通用输出模式
+
+// 点亮 LED (PA5 输出高电平)
+GPIOA->ODR |= (1 << 5);
+
+// 熄灭 LED
+GPIOA->ODR &= ~(1 << 5);
+
+// 使用 BSRR 原子操作 (推荐方式)
+GPIOA->BSRR = (1 << 5);      // 设置 PA5
+GPIOA->BSRR = (1 << (5+16)); // 复位 PA5
+#+end_src
+
+*汇编直接访问*:
+
+#+begin_src asm
+; 设置 GPIOA ODR 寄存器的第 5 位
+LDR     R0, =0x40020014      ; GPIOA->ODR 地址
+LDR     R1, [R0]             ; 读取当前值
+ORR     R1, R1, #(1<<5)      ; 设置第 5 位
+STR     R1, [R0]             ; 写回寄存器
+
+; 使用 BSRR 原子操作 (更高效)
+LDR     R0, =0x40020018      ; GPIOA->BSRR 地址
+MOV     R1, #(1<<5)          ; 准备数据
+STR     R1, [R0]             ; 一次写入完成置位
+#+end_src
+
+*** =volatile= 关键字的重要性
+
+外设寄存器 *必须* 声明为 =volatile=，原因:
+
+1. *防止编译器优化*: 编译器可能认为多次读取同一地址 "没必要"，从而缓存到寄存器中。但外设状态可能随时变化 (如 DMA 传输完成)。
+
+#+begin_src c
+// 错误: 没有 volatile
+uint32_t *status_reg = (uint32_t *)0x40020000;
+
+while (*status_reg & 0x01) {
+    // 编译器可能只读一次，陷入死循环
+}
+
+// 正确: 使用 volatile
+volatile uint32_t *status_reg = (volatile uint32_t *)0x40020000;
+
+while (*status_reg & 0x01) {
+    // 每次循环都重新读取
+}
+#+end_src
+
+2. *保证写入顺序*: 外设寄存器的写入顺序很关键 (如先写配置寄存器再写使能寄存器)，=volatile= 防止重排序。
+
+** 控制器作为特殊外设
+
+在 ARM 系统中，*控制器* 本身也是一类特殊的外设，包括:
+
+- *存储器控制器* (Memory Controller): 连接 SDRAM, Flash, SRAM
+- *中断控制器* (Interrupt Controller): NVIC (Cortex-M) 或 GIC (Cortex-A)
+- *DMA 控制器* (DMA Controller): 自动搬运数据
+- *时钟控制器* (Clock Controller): 管理系统时钟树
+
+这些控制器的配置寄存器同样是存储器映射的，例如 STM32 的 RCC (Reset and Clock Control) 寄存器位于 =0x4002_3800=。
+
+* 存储器控制器: 连接 CPU 与存储器的桥梁
+
+*存储器控制器* (Memory Controller) 负责将处理器的内存访问请求转换为具体存储器芯片 (DRAM, SRAM, Flash, SDRAM) 的时序信号。
+
+** 为什么需要存储器控制器？
+
+不同类型的存储器有不同的访问协议:
+
+- *SRAM*: 简单的异步读写，地址/数据/控制信号直接连接
+- *SDRAM*: 同步动态 RAM，需要刷新、预充电、行列地址复用
+- *Flash*: 页编程、块擦除，需要特定的命令序列
+- *DDR SDRAM*: 双倍数据率，需要复杂的训练 (training) 和校准
+
+存储器控制器隐藏了这些复杂性，让 CPU 统一用 =LDR/STR= 指令访问所有存储器。
+
+** 存储器控制器的职责
+
+*** 1. 地址译码 (Address Decoding)
+
+将 CPU 发出的地址映射到具体的存储器芯片和片选信号:
+
+#+begin_example
+CPU 地址: 0x0800_0000
+   ↓
+存储器控制器判断:
+   0x0800_0000 在 Flash 区间 (0x0800_0000 ~ 0x080F_FFFF)
+   ↓
+激活片选信号: CS_FLASH = 0 (低电平有效)
+输出物理地址: A[19:0] = 0x00000 (Flash 内偏移)
+#+end_example
+
+*** 2. 时序生成 (Timing Generation)
+
+不同存储器需要不同的访问时序，控制器需要插入等待周期 (wait states):
+
+*SRAM 读时序 (简化)*:
+
+#+begin_example
+时钟周期:  1    2    3    4    5
+          ┌────┬────┬────┬────┬────┐
+地址: ────┤ A  ├────────────────────┤
+          └────┴────────────────────┘
+      ────┬────┐
+nOE:      └────┴────────────────────  (输出使能)
+
+          ┌────┬────┬────┬────┬────┐
+数据: ────┤ ?  ├ D  ├────────────────┤
+          └────┴────────────────────┘
+                ↑ 数据有效
+#+end_example
+
+*SDRAM 读时序 (需要激活行)*:
+
+#+begin_example
+命令序列:
+1. ACTIVE (激活行地址)
+2. 等待 tRCD (RAS to CAS Delay)
+3. READ (发出列地址)
+4. 等待 CAS Latency
+5. 数据输出
+#+end_example
+
+这些时序由存储器控制器的配置寄存器控制:
+
+#+begin_src c
+// STM32 FSMC (Flexible Static Memory Controller) 配置
+FSMC_Bank1->BTCR[0] = 0x00001091;  // 控制寄存器
+FSMC_Bank1->BTCR[1] = 0x00000201;  // 时序寄存器
+// Bit[8:4]: DATAST = 2 (数据保持时间)
+// Bit[3:0]: ADDSET = 1 (地址建立时间)
+#+end_src
+
+*** 3. 总线宽度适配 (Bus Width Adaptation)
+
+CPU 可能是 32 位，但存储器可能是 8 位或 16 位。控制器需要自动拆分/合并访问:
+
+#+begin_src c
+// CPU 发出 32 位写入到 16 位宽的 Flash
+uint32_t data = 0x12345678;
+*(volatile uint32_t *)0x08000000 = data;
+
+// 存储器控制器自动拆分为两次 16 位写入:
+// 写 1: 地址 0x08000000, 数据 0x5678
+// 写 2: 地址 0x08000002, 数据 0x1234
+#+end_src
+
+*** 4. SDRAM 刷新管理
+
+DRAM 需要周期性刷新以保持数据，控制器自动发出刷新命令:
+
+#+begin_src c
+// STM32H7 的 FMC SDRAM 控制器
+FMC_Bank5_6->SDCR[0] |= FMC_SDCRx_CAS_3;  // CAS Latency = 3
+FMC_Bank5_6->SDRTR = 0x0603 << 1;         // 刷新率 = 64ms / 8192 rows
+#+end_src
+
+** 上电初始化的鸡生蛋问题
+
+*关键设计*: 上电时，存储器控制器 *必须处于工作状态*，否则 CPU 无法读取启动代码！
+
+*** 解决方案
+
+1. *Boot ROM*: 芯片内置 ROM，上电后直接可用 (不需要控制器初始化)，包含第一阶段引导程序 (Bootloader)。
+
+2. *默认配置*: 存储器控制器上电后有 *安全的默认配置*，例如:
+   - Flash 工作在 *低速模式* (更多等待周期，但保证可用)
+   - SDRAM 可能不可用 (需要软件初始化)
+
+3. *片上 SRAM*: 上电直接可用，Bootloader 可以将自己拷贝到 SRAM 执行，提高速度。
+
+*** STM32 启动流程示例
+
+#+begin_example
+1. 上电复位
+   ↓
+2. 硬件自动配置:
+   - 内部 Flash 接口使能 (默认 0 等待周期)
+   - SRAM 直接可用
+   - 向量表基址 = 0x0000_0000 (映射到 Flash 或 Boot ROM，由 BOOT 引脚决定)
+   ↓
+3. 执行 Reset_Handler (Flash 起始处)
+   ├─ 配置系统时钟 (从内部 16 MHz RC 振荡器切换到外部晶振 + PLL)
+   ├─ 配置 Flash 等待周期 (匹配新的 CPU 频率)
+   ├─ 初始化外部 SDRAM (如果有)
+   └─ 跳转到 main()
+#+end_example
+
+* 中断控制器: 异常处理的核心
+
+*中断控制器* (Interrupt Controller) 管理所有来自外设和软件的中断请求，并根据优先级、使能状态等决定何时向 CPU 发出中断信号。
+
+** ARM 中断控制器的演进
+
+*** 1. 标准中断控制器 (Legacy, 早期 ARM7/ARM9)
+
+最早期的 ARM 处理器 (如 ARM7TDMI) 只有 *两个中断输入*:
+
+- *nIRQ*: 普通中断请求 (Interrupt Request)
+- *nFIQ*: 快速中断请求 (Fast Interrupt Request)
+
+外设通过 *外部中断控制器* (如 8259A 兼容芯片) 将多个中断源合并为 nIRQ/nFIQ 信号。
+
+*工作流程*:
+
+#+begin_example
+外设 1 ──┐
+外设 2 ──┼──> 外部中断控制器 ──> nIRQ ──> ARM Core
+外设 3 ──┤                       (单根信号线)
+外设 N ──┘
+
+ARM Core 进入 IRQ 异常:
+1. 跳转到向量表 0x18 (IRQ Vector)
+2. 软件读取外部中断控制器的状态寄存器
+3. 根据状态位判断是哪个外设触发
+4. 跳转到对应的 ISR
+#+end_example
+
+*缺点*:
+
+- 软件判断开销大 (需要读取状态寄存器，逐位检查)
+- 无硬件优先级支持
+- 不支持嵌套 (除非软件手动实现)
+
+*** 2. VIC: 向量中断控制器 (ARM7, ARM9, ARM11)
+
+*VIC* (Vectored Interrupt Controller) 是 ARM 公司设计的第一代 *片上中断控制器*，显著降低了中断延迟。
+
+*核心特性*:
+
+- 支持 *32 个中断源*
+- *16 个向量化中断*: 每个中断可以配置一个 ISR 地址，硬件自动跳转
+- *优先级管理*: 硬件自动选择最高优先级的中断
+- 每个中断可以路由到 IRQ 或 FIQ
+
+*向量化机制*:
+
+#+begin_src c
+// VIC 寄存器 (PL190 示例)
+#define VIC_BASE  0x10140000
+
+typedef struct {
+    volatile uint32_t IRQStatus;       // 0x000: IRQ 状态寄存器
+    volatile uint32_t FIQStatus;       // 0x004: FIQ 状态寄存器
+    volatile uint32_t RawIntr;         // 0x008: 原始中断状态
+    volatile uint32_t IntSelect;       // 0x00C: IRQ/FIQ 选择
+    volatile uint32_t IntEnable;       // 0x010: 中断使能
+    volatile uint32_t IntEnClear;      // 0x014: 中断禁用
+    volatile uint32_t SoftInt;         // 0x018: 软件中断
+    volatile uint32_t SoftIntClear;    // 0x01C: 软件中断清除
+    volatile uint32_t Protection;      // 0x020: 保护控制
+    volatile uint32_t VectAddr;        // 0x030: 当前向量地址 (关键！)
+    volatile uint32_t DefVectAddr;     // 0x034: 默认向量地址
+    volatile uint32_t VectAddr0[16];   // 0x100~0x13C: 向量地址 0~15
+    volatile uint32_t VectCntl0[16];   // 0x200~0x23C: 向量控制 0~15
+} VIC_TypeDef;
+
+#define VIC  ((VIC_TypeDef *)VIC_BASE)
+
+// 配置向量化中断
+void VIC_SetVectoredIRQ(uint32_t irq_num, uint32_t priority, void (*handler)(void)) {
+    VIC->VectAddr0[priority] = (uint32_t)handler;  // 设置 ISR 地址
+    VIC->VectCntl0[priority] = (1 << 5) | irq_num; // 使能 + IRQ 号
+    VIC->IntEnable |= (1 << irq_num);              // 使能中断源
+}
+
+// IRQ 异常处理程序 (汇编)
+__asm void IRQ_Handler(void) {
+    SUB     LR, LR, #4           ; 调整返回地址
+    STMFD   SP!, {R0-R3, R12, LR} ; 保存寄存器
+
+    LDR     R0, =VIC_BASE
+    LDR     R0, [R0, #0x30]      ; 读取 VICVectAddr (获取 ISR 地址)
+    MOV     LR, PC               ; 设置返回地址
+    BX      R0                   ; 跳转到 ISR
+
+    LDR     R0, =VIC_BASE
+    STR     R0, [R0, #0x30]      ; 写任意值到 VICVectAddr，通知完成
+
+    LDMFD   SP!, {R0-R3, R12, PC}^ ; 恢复并返回
+}
+#+end_src
+
+*优势*:
+
+- *硬件自动向量跳转*: 软件只需读取 =VICVectAddr=，立即获得 ISR 地址
+- 减少中断延迟: 约节省 10~20 个周期 (相比软件判断)
+
+*局限性*:
+
+- 只支持 *电平触发* 中断 (必须保持高电平直到 ISR 响应)
+- 不支持边沿触发 (某些外设需要)
+- 最多 32 个中断源 (对现代 SoC 不够用)
+- 不支持多核
+
+*** 3. NVIC: 嵌套向量中断控制器 (Cortex-M)
+
+*NVIC* (Nested Vectored Interrupt Controller) 是 Cortex-M 系列的 *内置中断控制器*，与 CPU 核心紧密集成。
+
+*核心特性*:
+
+- 支持 *1~240 个外部中断* (具体数量由芯片厂商决定)
+- *硬件自动压栈*: 进入中断时自动保存 R0-R3, R12, LR, PC, xPSR
+- *尾链 (Tail-chaining)*: 连续中断时无需完整的出栈/入栈
+- *延迟到达 (Late-arriving)*: 更高优先级的中断可以抢占正在入栈的低优先级中断
+- *可配置优先级*: 每个中断 4~8 位优先级 (芯片相关)
+
+*NVIC 寄存器*:
+
+#+begin_src c
+// NVIC 寄存器组 (STM32 示例)
+typedef struct {
+    volatile uint32_t ISER[8];    // 0xE000E100: 中断使能寄存器
+    uint32_t RESERVED0[24];
+    volatile uint32_t ICER[8];    // 0xE000E180: 中断禁用寄存器
+    uint32_t RESERVED1[24];
+    volatile uint32_t ISPR[8];    // 0xE000E200: 中断挂起寄存器
+    uint32_t RESERVED2[24];
+    volatile uint32_t ICPR[8];    // 0xE000E280: 中断解挂寄存器
+    uint32_t RESERVED3[24];
+    volatile uint32_t IABR[8];    // 0xE000E300: 中断激活状态寄存器
+    uint32_t RESERVED4[56];
+    volatile uint8_t  IP[240];    // 0xE000E400: 中断优先级寄存器 (每个 IRQ 一字节)
+} NVIC_TypeDef;
+
+#define NVIC  ((NVIC_TypeDef *)0xE000E100)
+
+// 使能中断
+void NVIC_EnableIRQ(IRQn_Type IRQn) {
+    NVIC->ISER[IRQn >> 5] = (1 << (IRQn & 0x1F));
+}
+
+// 设置优先级 (STM32 实现 4 位优先级)
+void NVIC_SetPriority(IRQn_Type IRQn, uint32_t priority) {
+    NVIC->IP[IRQn] = (priority << 4) & 0xF0;
+}
+#+end_src
+
+*硬件自动压栈*:
+
+#+begin_example
+中断触发时，硬件自动执行:
+1. 将 8 个寄存器压栈 (R0-R3, R12, LR, PC, xPSR)
+2. 将 EXC_RETURN 写入 LR (特殊值，如 0xFFFFFFF9)
+3. 从向量表读取 ISR 地址，跳转
+
+ISR 返回时 (BX LR):
+1. 硬件检测 LR 的特殊值
+2. 自动出栈恢复寄存器
+3. 恢复 PC 和 xPSR
+#+end_example
+
+详见上一篇笔记的向量表章节。
+
+*** 4. GIC: 通用中断控制器 (Cortex-A)
+
+*GIC* (Generic Interrupt Controller) 是为 Cortex-A 系列 (应用处理器) 设计的 *可扩展多核中断控制器*。
+
+*核心架构*:
+
+GIC 分为两大组件:
+
+1. *Distributor* (分发器): 管理所有中断源，决定路由
+2. *CPU Interface* (CPU 接口): 每个 CPU 核心一个，接收中断
+
+#+begin_example
+外设中断 ─┐
+         ├──> Distributor ─┬──> CPU Interface 0 ──> Core 0
+软件中断 ─┤   (唯一实例)  ├──> CPU Interface 1 ──> Core 1
+         │               └──> CPU Interface N ──> Core N
+#+end_example
+
+*中断类型*:
+
+| 类型 | ID 范围     | 名称                            | 说明                                                  |
+|------+-------------+-------------------------------+-------------------------------------------------------|
+| SGI  | 0 ~ 15      | Software Generated Interrupt  | 软件生成中断，用于核间通信 (IPI, Inter-Processor Interrupt) |
+| PPI  | 16 ~ 31     | Private Peripheral Interrupt  | 私有外设中断，每个核心独立 (如每个核心的定时器)              |
+| SPI  | 32 ~ 1019   | Shared Peripheral Interrupt   | 共享外设中断，可路由到任意核心 (如 UART, SPI, GPIO)          |
+| LPI  | 8192 ~ 最大 | Locality-specific Peripheral Interrupt (GICv3+) | 位置特定外设中断，支持更大的中断 ID 空间 (用于 PCIe MSI)     |
+
+*GIC 版本演进*:
+
+*GICv1/v2* (ARMv7-A 时代):
+
+#+begin_src c
+// GICv2 寄存器 (简化)
+#define GICD_BASE  0x10490000  // Distributor 基址
+#define GICC_BASE  0x10480000  // CPU Interface 基址
+
+typedef struct {
+    volatile uint32_t CTLR;         // 0x000: 控制寄存器
+    volatile uint32_t TYPER;        // 0x004: 类型寄存器
+    volatile uint32_t IIDR;         // 0x008: 实现标识
+    uint32_t RESERVED0[29];
+    volatile uint32_t IGROUPR[32];  // 0x080: 中断组寄存器 (Group 0/1)
+    volatile uint32_t ISENABLER[32]; // 0x100: 中断使能设置
+    volatile uint32_t ICENABLER[32]; // 0x180: 中断使能清除
+    volatile uint32_t ISPENDR[32];  // 0x200: 中断挂起设置
+    volatile uint32_t ICPENDR[32];  // 0x280: 中断挂起清除
+    volatile uint32_t ISACTIVER[32]; // 0x300: 中断激活状态
+    volatile uint32_t ICACTIVER[32]; // 0x380: 中断激活清除
+    volatile uint8_t  IPRIORITYR[1020]; // 0x400: 中断优先级 (每个 IRQ 一字节)
+    volatile uint8_t  ITARGETSR[1020];  // 0x800: 中断目标 CPU (每个 IRQ 一字节)
+    volatile uint32_t ICFGR[64];    // 0xC00: 中断配置 (电平/边沿触发)
+    volatile uint32_t SGIR;         // 0xF00: 软件生成中断寄存器
+} GICD_TypeDef;
+
+typedef struct {
+    volatile uint32_t CTLR;         // 0x000: CPU Interface 控制
+    volatile uint32_t PMR;          // 0x004: 优先级屏蔽寄存器
+    volatile uint32_t BPR;          // 0x008: 二进制点寄存器 (分组)
+    volatile uint32_t IAR;          // 0x00C: 中断应答寄存器 (读取中断 ID)
+    volatile uint32_t EOIR;         // 0x010: 中断结束寄存器 (写入完成)
+    volatile uint32_t RPR;          // 0x014: 运行优先级寄存器
+    volatile uint32_t HPPIR;        // 0x018: 最高优先级挂起中断
+} GICC_TypeDef;
+
+#define GICD  ((GICD_TypeDef *)GICD_BASE)
+#define GICC  ((GICC_TypeDef *)GICC_BASE)
+
+// 初始化 GIC
+void GIC_Init(void) {
+    // 1. 禁用 Distributor
+    GICD->CTLR = 0;
+
+    // 2. 配置所有中断为 Group 0 (非安全)
+    for (int i = 0; i < 32; i++) {
+        GICD->IGROUPR[i] = 0xFFFFFFFF;
+    }
+
+    // 3. 禁用所有中断
+    for (int i = 0; i < 32; i++) {
+        GICD->ICENABLER[i] = 0xFFFFFFFF;
+    }
+
+    // 4. 清除所有挂起中断
+    for (int i = 0; i < 32; i++) {
+        GICD->ICPENDR[i] = 0xFFFFFFFF;
+    }
+
+    // 5. 设置默认优先级 (最低)
+    for (int i = 0; i < 1020; i++) {
+        GICD->IPRIORITYR[i] = 0xA0;
+    }
+
+    // 6. 设置 SPI 路由到 CPU0
+    for (int i = 32; i < 1020; i++) {
+        GICD->ITARGETSR[i] = 0x01;  // 目标 CPU0
+    }
+
+    // 7. 使能 Distributor
+    GICD->CTLR = 1;
+
+    // 8. 配置 CPU Interface
+    GICC->PMR = 0xFF;   // 允许所有优先级
+    GICC->CTLR = 1;     // 使能 CPU Interface
+}
+
+// 中断处理流程
+void IRQ_Handler(void) {
+    // 1. 读取中断 ID (同时应答中断)
+    uint32_t irq_id = GICC->IAR & 0x3FF;
+
+    // 2. 检查是否是伪中断
+    if (irq_id == 1023) {
+        return;  // 1023 = 伪中断
+    }
+
+    // 3. 调用对应的 ISR
+    if (irq_id < 1020) {
+        isr_table[irq_id]();
+    }
+
+    // 4. 通知中断完成
+    GICC->EOIR = irq_id;
+}
+#+end_src
+
+*GICv3/v4* (ARMv8-A 时代):
+
+主要改进:
+
+- *支持更多核心*: GICv2 最多 8 核，GICv3+ 无限制
+- *Redistributor*: 每个核心有独立的 Redistributor，管理 SGI/PPI
+- *LPI 支持*: 大中断 ID 空间，用于 PCIe MSI
+- *ITS* (Interrupt Translation Service): 将设备的 MSI 消息转换为 LPI
+- *CPU Interface 用系统寄存器*: 不再通过 MMIO，而是用 =ICC_*_ELn= 系统寄存器
+
+#+begin_src c
+// GICv3 CPU Interface (系统寄存器)
+static inline uint32_t gicv3_read_iar(void) {
+    uint32_t irq_id;
+    asm volatile("mrs %0, ICC_IAR1_EL1" : "=r"(irq_id));
+    return irq_id;
+}
+
+static inline void gicv3_write_eoir(uint32_t irq_id) {
+    asm volatile("msr ICC_EOIR1_EL1, %0" :: "r"(irq_id));
+}
+
+static inline void gicv3_enable_grp1(void) {
+    uint32_t val = 1;
+    asm volatile("msr ICC_IGRPEN1_EL1, %0" :: "r"(val));
+}
+#+end_src
+
+** 中断优先级与嵌套
+
+*NVIC* (Cortex-M):
+
+- 优先级值 *越小越高* (0 = 最高)
+- 支持 *抢占优先级* 和 *子优先级*:
+  - 抢占优先级: 高优先级可以打断低优先级
+  - 子优先级: 同时挂起时的执行顺序
+
+#+begin_src c
+// 设置优先级分组 (4 位抢占 + 0 位子优先级)
+NVIC_SetPriorityGrouping(3);
+
+// 设置 EXTI0 优先级为 5
+NVIC_SetPriority(EXTI0_IRQn, 5);
+
+// 设置 UART1 优先级为 3 (更高，可以抢占 EXTI0)
+NVIC_SetPriority(USART1_IRQn, 3);
+#+end_src
+
+*GIC* (Cortex-A):
+
+- 优先级范围: 0~255 (实现可选 4~8 位)
+- 支持 *优先级屏蔽*: =PMR= 寄存器设置阈值，低于阈值的中断被屏蔽
+- *二进制点寄存器* (BPR): 将优先级分为组和子优先级
+
+#+begin_src c
+// 设置优先级屏蔽为 0xA0 (只允许优先级 < 0xA0 的中断)
+GICC->PMR = 0xA0;
+
+// 设置 IRQ #42 的优先级为 0x40 (高)
+GICD->IPRIORITYR[42] = 0x40;
+#+end_src
+
+* AMBA 总线: ARM SoC 的互联规范
+
+*AMBA* (Advanced Microcontroller Bus Architecture) 是 ARM 公司定义的一套 *片上总线协议规范*，用于连接 CPU、内存、外设等模块。
+
+** 为什么需要标准总线？
+
+在 AMBA 之前，每个 SoC 设计者都自己定义总线协议，导致:
+
+- IP 核难以复用 (不同芯片的 UART 控制器接口不兼容)
+- 验证成本高 (每次都要重新验证总线逻辑)
+- 第三方 IP 供应商难以提供通用方案
+
+AMBA 提供了一套 *统一接口*，使得:
+
+- IP 核可以跨平台复用 (如 ARM 官方的 PL011 UART 控制器)
+- 芯片设计者可以快速集成第三方 IP
+- 验证工具可以标准化
+
+** AMBA 协议家族演进
+
+AMBA 不是单一总线，而是一个 *总线家族*，随着 ARM 架构演进不断扩展:
+
+#+begin_example
+AMBA 1 (1996)
+ ├─ ASB (Advanced System Bus)
+ └─ APB (Advanced Peripheral Bus)
+
+AMBA 2 (1999)
+ ├─ AHB (Advanced High-performance Bus)  ← 替代 ASB
+ └─ APB (增强版)
+
+AMBA 3 (2003)
+ ├─ AXI3 (Advanced eXtensible Interface)  ← 高性能主总线
+ ├─ AHB-Lite (简化版 AHB)
+ ├─ APB3 (增加错误报告和等待状态)
+ └─ ATB (Advanced Trace Bus)
+
+AMBA 4 (2010)
+ ├─ AXI4 (增加 burst 长度到 256)
+ ├─ AXI4-Lite (寄存器访问简化版)
+ ├─ AXI4-Stream (流式数据传输)
+ ├─ ACE (AXI Coherency Extensions，缓存一致性)
+ └─ ACE-Lite (单向一致性)
+
+AMBA 5 (2013)
+ ├─ AXI5 / ACE5 (增加 QoS、原子操作)
+ ├─ CHI (Coherent Hub Interface，重新设计的一致性协议)
+ ├─ AHB5 (增加奇偶校验保护)
+ └─ APB5 (增加唤醒信号)
+#+end_example
+
+** ASB: 最早的系统总线 (已淘汰)
+
+*ASB* (Advanced System Bus) 是 AMBA 1 中的主系统总线，但性能较差:
+
+- *单边沿采样*: 只在时钟上升沿传输数据
+- *地址/数据复用*: 同一组信号线，先传地址再传数据 (类似 8086)
+- *不支持 burst*: 每次传输都要发地址
+- *并行支持差*: 难以实现多主设备仲裁
+
+*结果*: ARM 很快在 AMBA 2 中用 AHB 替代了 ASB，现在几乎不用。
+
+** AHB: 高性能总线 (Cortex-M 主力)
+
+*AHB* (Advanced High-performance Bus) 是 AMBA 2/3 的核心总线，用于连接 *高速模块* (CPU, DMA, 内存控制器)。
+
+*** AHB 核心特性
+
+- *流水线架构*: 地址阶段和数据阶段分离，可重叠
+- *单边沿协议*: 所有信号在时钟上升沿采样
+- *支持 burst 传输*: 一次发地址，连续传多个数据
+- *多主设备*: 支持 CPU, DMA 等多个主设备 (通过仲裁器)
+- *非三态总线*: 使用多路复用器 (MUX)，而非三态门
+
+*** AHB 信号定义
+
+*主设备 → 总线*:
+
+| 信号        | 位宽   | 说明                                     |
+|-----------+--------+------------------------------------------|
+| =HADDR=     | 32     | 地址总线                                  |
+| =HWRITE=    | 1      | 写操作 (1) / 读操作 (0)                  |
+| =HSIZE=     | 3      | 传输大小 (000=byte, 001=halfword, 010=word) |
+| =HBURST=    | 3      | Burst 类型 (SINGLE, INCR, WRAP4...)       |
+| =HPROT=     | 4      | 保护控制 (特权/非特权，数据/指令)         |
+| =HTRANS=    | 2      | 传输类型 (IDLE, BUSY, NONSEQ, SEQ)        |
+| =HMASTLOCK= | 1      | 锁定传输 (原子操作)                       |
+| =HWDATA=    | 32/64  | 写数据总线                                |
+
+*从设备 → 主设备*:
+
+| 信号      | 位宽   | 说明                          |
+|---------+--------+-------------------------------|
+| =HRDATA=  | 32/64  | 读数据总线                     |
+| =HREADY=  | 1      | 传输完成 (0 = 等待状态)        |
+| =HRESP=   | 2      | 响应 (00=OKAY, 01=ERROR)       |
+
+*** AHB 传输时序
+
+*简单读传输*:
+
+#+begin_example
+时钟:   ┌───┐   ┌───┐   ┌───┐   ┌───┐
+       ─┘   └───┘   └───┘   └───┘   └───
+
+HADDR: ─────┤ A1 ├───────────────────────
+HTRANS:─────┤NSEQ├───────────────────────
+HWRITE:─────┤ 0  ├───────────────────────  (读)
+
+HREADY:─────────────────┤ 1  ├───────────  (数据有效)
+HRDATA:─────────────────┤ D1 ├───────────
+
+说明:
+T1: 主设备发出地址 A1，HTRANS=NONSEQ (新传输)
+T2: 地址阶段 (从设备解码地址)
+T3: 数据阶段 (从设备返回数据 D1，HREADY=1)
+#+end_example
+
+*Burst 写传输* (INCR4, 连续写 4 个字):
+
+#+begin_example
+时钟:   ┌───┐   ┌───┐   ┌───┐   ┌───┐   ┌───┐
+       ─┘   └───┘   └───┘   └───┘   └───┘   └───
+
+HADDR: ─┤ A1 ├─┤ A2 ├─┤ A3 ├─┤ A4 ├───────
+HTRANS:─┤NSEQ├─┤ SEQ├─┤ SEQ├─┤ SEQ├───────
+HBURST:─┤INCR4├───────────────────────────  (4-beat burst)
+HWRITE:─┤ 1  ├───────────────────────────  (写)
+
+HWDATA: ─────────┤ D1 ├─┤ D2 ├─┤ D3 ├─┤ D4 ├
+HREADY: ─────────┤ 1  ├─┤ 1  ├─┤ 1  ├─┤ 1  ├
+
+说明:
+T1: 发出地址 A1, HTRANS=NONSEQ, HBURST=INCR4
+T2: 发出地址 A2, HTRANS=SEQ (burst 序列), 同时写数据 D1
+T3: 发出地址 A3, HTRANS=SEQ, 同时写数据 D2
+T4: 发出地址 A4, HTRANS=SEQ, 同时写数据 D3
+T5: 写数据 D4
+#+end_example
+
+*** AHB-Lite: 简化版 (单主设备)
+
+*AHB-Lite* 是 AMBA 3 定义的 AHB 子集，去掉了多主设备相关信号:
+
+- 无 =HGRANT=, =HMASTER= (仲裁信号)
+- 无 =HSPLIT=, =HRETRY= (从设备重试)
+- 只支持单主设备 (或静态多主设备切换)
+
+*应用场景*: Cortex-M 微控制器 (只有 CPU 一个主设备)。
+
+*** STM32 的 AHB 使用
+
+STM32 系列使用 AHB-Lite 作为主总线:
+
+#+begin_example
+Cortex-M4 Core ──┬──> AHB-Lite ──┬──> Flash Interface
+                 │                ├──> SRAM
+                 │                ├──> DMA1/DMA2
+DMA ─────────────┘                ├──> AHB-APB Bridge ──> APB 外设
+                                  └──> FSMC (外部存储器)
+#+end_example
+
+** APB: 低功耗外设总线
+
+*APB* (Advanced Peripheral Bus) 是 AMBA 家族中用于 *低速外设* 的总线，特点:
+
+- *低带宽*: 不支持 burst，每次传输 1 个数据
+- *低功耗*: 简单的信号切换，降低动态功耗
+- *低频率*: 通常是 AHB 频率的 1/2 或 1/4
+
+*** APB 信号定义
+
+*主设备 (AHB-APB Bridge) → 从设备*:
+
+| 信号       | 位宽   | 说明                 |
+|----------+--------+----------------------|
+| =PADDR=    | 32     | 地址总线              |
+| =PWRITE=   | 1      | 写 (1) / 读 (0)      |
+| =PSEL=     | 1      | 外设选择 (片选)       |
+| =PENABLE=  | 1      | 使能信号              |
+| =PWDATA=   | 32     | 写数据总线            |
+
+*从设备 → 主设备*:
+
+| 信号      | 位宽   | 说明                      |
+|---------+--------+---------------------------|
+| =PRDATA=  | 32     | 读数据总线                 |
+| =PREADY=  | 1      | 传输完成 (APB3+, 支持等待) |
+| =PSLVERR= | 1      | 从设备错误 (APB3+)         |
+
+*** APB 传输时序
+
+*简单读传输*:
+
+#+begin_example
+时钟:    ┌───┐   ┌───┐   ┌───┐
+        ─┘   └───┘   └───┘   └───
+
+PSEL:   ────────┤ 1  ├───────────  (选中外设)
+PENABLE:────────────┤ 1  ├───────  (使能，第 2 周期)
+PADDR:  ────────┤ A1 ├───────────
+PWRITE: ────────┤ 0  ├───────────  (读)
+
+PRDATA: ────────────────┤ D1 ├───  (数据返回)
+PREADY: ────────────────┤ 1  ├───  (完成)
+
+说明:
+T1 (Setup): 主设备发出地址, PSEL=1, PENABLE=0
+T2 (Access): PENABLE=1, 从设备返回数据
+T3: 传输结束
+#+end_example
+
+*带等待状态的传输* (APB3+):
+
+#+begin_example
+时钟:    ┌───┐   ┌───┐   ┌───┐   ┌───┐
+        ─┘   └───┘   └───┘   └───┘   └───
+
+PSEL:   ────────┤ 1  ├───────────────────
+PENABLE:────────────┤ 1  ├───────────────
+PREADY: ────────────┤ 0  ├───┤ 1  ├──────  (等待 1 周期)
+PRDATA: ────────────────────────┤ D1 ├───
+
+说明:
+T2: 从设备拉低 PREADY (需要等待)
+T3: PREADY=1, 数据有效
+#+end_example
+
+*** 典型 APB 外设
+
+STM32 上的 APB1/APB2 外设:
+
+*APB1 总线* (低速，≤42 MHz):
+
+- UART2, UART3, UART4, UART5
+- SPI2, SPI3
+- I2C1, I2C2, I2C3
+- TIM2~TIM7 (通用定时器)
+- CAN1, CAN2
+- RTC, WWDG (窗口看门狗)
+
+*APB2 总线* (高速，≤84 MHz):
+
+- USART1, USART6
+- SPI1, SPI4
+- TIM1, TIM8 (高级定时器)
+- ADC1, ADC2, ADC3
+- SYSCFG, EXTI
+- SDIO
+
+** AXI: 下一代高性能总线
+
+*AXI* (Advanced eXtensible Interface) 是 AMBA 3 引入的 *新一代主总线*，取代 AHB 成为高性能 SoC 的标准。
+
+*** AXI 的革命性改进
+
+*1. 五通道独立架构*:
+
+AHB 是单总线 (地址/数据复用)，AXI 分为 *5 个独立通道*:
+
+#+begin_example
+写操作:
+  ┌─> Write Address Channel (AW)
+  ├─> Write Data Channel (W)
+  └─> Write Response Channel (B)
+
+读操作:
+  ┌─> Read Address Channel (AR)
+  └─> Read Data Channel (R)
+#+end_example
+
+*优势*:
+
+- 读写可以 *完全并行*: 同时发出读地址和写数据
+- 每个通道可以独立插入 *流水线寄存器*，提高频率
+- 支持 *乱序完成*: 先发的请求可以后完成
+
+*2. 支持多 outstanding 事务*:
+
+AHB 只能 *一次一个* 传输 (等上一个完成才能发下一个)，AXI 可以 *同时发出多个请求*:
+
+#+begin_example
+CPU 发出:
+T1: 读地址 0x1000 (ID=0)
+T2: 读地址 0x2000 (ID=1)
+T3: 读地址 0x3000 (ID=2)
+
+内存返回:
+T5: 数据 0x2000 (ID=1) ← 先返回 ID=1
+T6: 数据 0x1000 (ID=0) ← 再返回 ID=0
+T7: 数据 0x3000 (ID=2)
+#+end_example
+
+通过 *事务 ID* (Transaction ID) 标识，可以乱序返回。
+
+*3. Burst 增强*:
+
+- AXI3: 最多 16-beat burst
+- AXI4: 最多 *256-beat* burst (用于 DMA 大块传输)
+
+*4. 无需三态/仲裁*:
+
+AXI 是 *点对点* 协议，主从设备之间通过 *互联网络* (Interconnect) 连接，不需要总线仲裁。
+
+*** AXI 信号定义 (简化)
+
+*写地址通道 (AW)*:
+
+| 信号       | 说明             |
+|----------+------------------|
+| =AWID=     | 写事务 ID         |
+| =AWADDR=   | 写地址            |
+| =AWLEN=    | Burst 长度 - 1    |
+| =AWSIZE=   | 传输大小 (字节)   |
+| =AWBURST=  | Burst 类型        |
+| =AWVALID=  | 有效信号          |
+| =AWREADY=  | 准备信号          |
+
+*写数据通道 (W)*:
+
+| 信号      | 说明              |
+|---------+-------------------|
+| =WID=     | 写数据 ID (AXI3)  |
+| =WDATA=   | 写数据            |
+| =WSTRB=   | 字节选通          |
+| =WLAST=   | 最后一个数据      |
+| =WVALID=  | 有效信号          |
+| =WREADY=  | 准备信号          |
+
+*写响应通道 (B)*:
+
+| 信号      | 说明         |
+|---------+--------------|
+| =BID=     | 响应 ID      |
+| =BRESP=   | 响应状态     |
+| =BVALID=  | 有效信号     |
+| =BREADY=  | 准备信号     |
+
+读通道类似，但合并为 AR (地址) 和 R (数据 + 响应)。
+
+*** AXI 握手机制
+
+AXI 使用 *VALID/READY* 握手:
+
+- 主设备发送: 拉高 =*VALID=
+- 从设备准备好: 拉高 =*READY=
+- *同时为高* 时传输成功
+
+#+begin_example
+时钟:    ┌───┐   ┌───┐   ┌───┐   ┌───┐
+        ─┘   └───┘   └───┘   └───┘   └───
+
+AWVALID:────┤ 1  ├───────────────────────
+AWREADY:────────┤ 0  ├───┤ 1  ├───────────
+AWADDR: ────┤ A1 ├───────────────────────
+
+说明:
+T1: 主设备拉高 AWVALID, 发出地址 A1
+T2: 从设备还没准备好, AWREADY=0 (等待)
+T3: 从设备拉高 AWREADY, 传输完成
+#+end_example
+
+*** AXI4-Lite: 寄存器访问简化版
+
+*AXI4-Lite* 是 AXI4 的简化子集，用于 *寄存器映射接口*:
+
+- 去掉 burst 支持 (每次只传 1 个数据)
+- 去掉 ID (不支持 outstanding)
+- 去掉 =AWLEN=, =AWBURST= 等信号
+- 数据宽度固定 (32 或 64 位)
+
+*应用*: 外设寄存器配置，替代 APB (但速度更快)。
+
+*** AXI4-Stream: 流式数据
+
+*AXI4-Stream* 去掉地址通道，只保留 *数据流*:
+
+- 用于 *点对点* 数据传输 (如 FPGA 内部模块)
+- 信号极简: =TDATA=, =TVALID=, =TREADY=, =TLAST=
+- 常用于视频处理、DSP 流水线
+
+** ACE: 缓存一致性扩展
+
+*ACE* (AXI Coherency Extensions) 是 AMBA 4 引入的 *缓存一致性协议*，用于多核 CPU 系统。
+
+*** 为什么需要 ACE？
+
+在多核系统中，每个核心有独立的 L1 缓存:
+
+#+begin_example
+Core 0 (L1-D)   Core 1 (L1-D)
+    │               │
+    └───────┬───────┘
+            │
+         L2 Cache
+            │
+          DRAM
+#+end_example
+
+*问题*:
+
+1. Core 0 读取地址 0x1000 → 缓存到 L1
+2. Core 1 写入地址 0x1000 → 如何通知 Core 0 的缓存失效？
+
+*ACE 解决方案*:
+
+- 增加 *Snoop 通道* (AC, CR, CD): Interconnect 可以向 CPU 发起 "snoop 请求"，查询/使无效缓存
+- 支持 *MOESI 协议*: Modified, Owner, Exclusive, Shared, Invalid
+
+*** ACE-Lite: 单向一致性
+
+*ACE-Lite* 是 ACE 的子集，支持 *I/O 一致性*:
+
+#+begin_example
+网络控制器 (ACE-Lite Master)
+    │
+    └─> 可以读取 CPU 缓存中的数据
+#+end_example
+
+例如: DMA 控制器通过 ACE-Lite 直接读取 CPU L2 缓存，无需写回内存。
+
+** CHI: 新一代一致性接口
+
+*CHI* (Coherent Hub Interface) 是 AMBA 5 引入的 *全新一致性协议*，取代 ACE:
+
+- *分层设计*: 协议层和传输层分离
+- *可扩展*: 支持数百核心
+- *更高效*: 减少 snoop 流量
+
+用于高端服务器、数据中心 (如 ARM Neoverse 系列)。
+
+** 总结: AMBA 总线选择
+
+| 总线      | 速度   | 用途                        | 典型应用           |
+|---------+--------+----------------------------+-------------------|
+| APB     | 低     | 低速外设 (寄存器配置)         | UART, I2C, GPIO   |
+| AHB     | 中     | 中速模块                    | Cortex-M 主总线   |
+| AHB-Lite | 中     | 单主设备系统                 | STM32, LPC        |
+| AXI     | 高     | 高速、多核、长延迟           | Cortex-A 主总线   |
+| AXI-Lite | 中     | 寄存器访问 (替代 APB)        | Zynq PS-PL 接口   |
+| ACE     | 高     | 多核缓存一致性               | ARM big.LITTLE    |
+| CHI     | 极高   | 大规模多核、数据中心          | Neoverse, Fujitsu |
+
+* 存储器技术: 速度与成本的权衡
+
+** Cache 的双刃剑
+
+*Cache* (高速缓存) 可以显著提高平均访问速度:
+
+- L1 Cache: ~4 cycles
+- L2 Cache: ~10 cycles
+- DRAM: ~100 cycles
+
+*但在嵌入式实时系统中，Cache 是个麻烦*:
+
+*** 问题 1: 不确定性
+
+Cache 命中/未命中导致执行时间 *不可预测*:
+
+#+begin_src c
+// 同样的代码，两次执行时间可能差 10 倍
+for (int i = 0; i < 1000; i++) {
+    data[i] = compute(i);  // 第一次: 全 Cache miss
+}                          // 第二次: 全 Cache hit
+#+end_src
+
+实时系统需要 *WCET* (Worst-Case Execution Time，最坏情况执行时间) 保证，Cache 使分析变困难。
+
+*** 问题 2: 缓存抖动
+
+在多任务系统中，任务切换可能导致 *缓存污染*:
+
+#+begin_example
+Task A 运行 → 填满 Cache
+    ↓
+任务切换
+    ↓
+Task B 运行 → 冲刷 Cache (替换 Task A 的数据)
+    ↓
+切换回 Task A → Cache 全 miss！
+#+end_example
+
+*** 解决方案
+
+1. *禁用 Cache*: 小型嵌入式系统 (如 Cortex-M0) 干脆不用 Cache
+2. *Cache 锁定*: 将关键代码/数据锁定在 Cache 中 (Cortex-R 支持)
+3. *静态分析*: 用工具预测 Cache 行为 (如 AbsInt aiT)
+
+** 存储器数据宽度
+
+*数据宽度* 指每次访问返回的位数，影响取指效率:
+
+*** 16 位存储器 + 32 位 ARM 指令
+
+#+begin_example
+CPU 执行 32 位 ARM 指令:
+    LDR R0, [R1]
+
+存储器宽度: 16 位
+    ↓
+需要 2 次访问:
+    访问 1: 读取指令的低 16 位
+    访问 2: 读取指令的高 16 位
+    ↓
+取指时间翻倍！
+#+end_example
+
+*** 16 位存储器 + 16 位 Thumb 指令
+
+#+begin_example
+CPU 执行 16 位 Thumb 指令:
+    LDR R0, [R1]  ; 编译为 16 位指令
+
+存储器宽度: 16 位
+    ↓
+只需 1 次访问:
+    访问 1: 读取完整指令
+    ↓
+取指时间减半！
+#+end_example
+
+*结论*: 在 16 位存储器系统上，*Thumb 指令集有显著性能优势*。
+
+*** 存储器宽度与成本
+
+| 配置                | 成本 | 性能  | 适用场景           |
+|-------------------+------+-------+-------------------|
+| 8 位存储器          | 最低 | 最慢  | 极低成本嵌入式     |
+| 16 位存储器         | 低   | 中等  | Thumb 代码优化     |
+| 32 位存储器         | 中   | 高    | ARM/Thumb-2        |
+| 64 位存储器         | 高   | 最高  | 服务器、图形处理   |
+
+** 存储器类型对比
+
+| 类型    | 速度      | 容量   | 断电保持 | 刷新 | 成本       | 典型应用           |
+|-------+----------+--------+----------+------+------------+-------------------|
+| SRAM  | 最快 (~10ns) | 小 (KB) | 否      | 不需要 | 最贵 | L1/L2 Cache, 片上 RAM |
+| DRAM  | 中 (~60ns) | 中 (MB) | 否      | 需要  | 中等 | 主内存 (已少见)     |
+| SDRAM | 快 (~20ns) | 大 (GB) | 否      | 需要  | 中   | PC 主内存           |
+| Flash | 慢 (读 ~100ns, 写 ms) | 大 (GB) | 是 | 不需要 | 低 | 程序存储、SSD       |
+| ROM   | 中 (~50ns) | 小 (MB) | 是      | 不需要 | 低   | Boot ROM            |
+
+*** SRAM (Static RAM)
+
+*特点*:
+
+- 基于 *触发器* (flip-flop)，6 个晶体管/位
+- *不需要刷新*: 只要有电就保持数据
+- *速度快*: 接近 CPU 频率
+- *功耗低* (相对 DRAM): 只在读写时功耗高
+
+*应用*:
+
+- CPU Cache (L1, L2, L3)
+- MCU 片上 RAM (如 STM32 的 SRAM)
+- FPGA 片上 Block RAM
+
+*** DRAM (Dynamic RAM)
+
+*特点*:
+
+- 基于 *电容*，1 个晶体管/位 (密度高)
+- *需要刷新*: 电容漏电，每 64ms 刷新一次
+- *异步接口*: 控制复杂
+- *已过时*: 被 SDRAM 取代
+
+*** SDRAM (Synchronous DRAM)
+
+*特点*:
+
+- *同步接口*: 与系统时钟同步
+- *Burst 模式*: 一次激活行，连续读多个列
+- *Bank 交错*: 多个 Bank 并行访问
+- *种类*:
+  - SDR SDRAM: 单倍速率 (淘汰)
+  - DDR SDRAM: 双倍速率 (主流)
+  - DDR2/DDR3/DDR4/DDR5: 逐代提高频率和带宽
+
+*时序复杂*:
+
+#+begin_example
+SDRAM 读操作:
+1. ACTIVE 命令 (激活行地址)
+2. 等待 tRCD (RAS to CAS Delay)
+3. READ 命令 (发出列地址)
+4. 等待 CAS Latency (CL)
+5. 数据输出
+6. PRECHARGE (预充电，准备下次访问)
+#+end_example
+
+*** Flash ROM
+
+*特点*:
+
+- *非易失*: 断电保持数据
+- *读快写慢*: 读 ~100ns，页编程 ~ms，块擦除 ~s
+- *寿命有限*: 擦写次数 10k~100k (SLC) 或 1k~3k (MLC/TLC)
+- *不可原地写*: 必须先擦除整块 (64 KB)
+
+*种类*:
+
+- *NOR Flash*: 随机访问，XIP (eXecute In Place，直接执行)，用于代码存储
+- *NAND Flash*: 块访问，密度高，用于数据存储 (SD 卡、SSD)
+
+*STM32 Flash 编程示例*:
+
+#+begin_src c
+// 解锁 Flash
+FLASH->KEYR = 0x45670123;
+FLASH->KEYR = 0xCDEF89AB;
+
+// 擦除页 (2 KB)
+FLASH->CR |= FLASH_CR_PER;          // 页擦除模式
+FLASH->AR = 0x08008000;             // 页地址
+FLASH->CR |= FLASH_CR_STRT;         // 启动擦除
+while (FLASH->SR & FLASH_SR_BSY);   // 等待完成
+
+// 编程 (半字)
+FLASH->CR |= FLASH_CR_PG;           // 编程模式
+*(volatile uint16_t *)0x08008000 = 0x1234;
+while (FLASH->SR & FLASH_SR_BSY);   // 等待完成
+
+// 锁定 Flash
+FLASH->CR |= FLASH_CR_LOCK;
+#+end_src
+
+** 存储器性能优化
+
+*** 1. 对齐访问
+
+未对齐访问会导致 *多次内存访问*:
+
+#+begin_src c
+// 假设地址 0x1001 (未对齐)
+uint32_t *p = (uint32_t *)0x1001;
+uint32_t data = *p;  // 需要 2 次访问！
+
+// CPU 内部执行:
+// 1. 读取 0x1000~0x1003 (包含 1 字节)
+// 2. 读取 0x1004~0x1007 (包含 3 字节)
+// 3. 合并数据
+#+end_src
+
+*解决*: 用 =__attribute__((aligned(4)))= 或手动填充。
+
+*** 2. Cache 行对齐
+
+避免 *False Sharing* (伪共享):
+
+#+begin_src c
+// 错误: 两个变量在同一 Cache 行 (64 字节)
+struct {
+    int counter1;  // 被 Core 0 频繁写
+    int counter2;  // 被 Core 1 频繁写
+};  // 导致 Cache 行来回转移！
+
+// 正确: 强制分离到不同 Cache 行
+struct {
+    int counter1 __attribute__((aligned(64)));
+    int counter2 __attribute__((aligned(64)));
+};
+#+end_src
+
+*** 3. 预取 (Prefetch)
+
+手动预取数据到 Cache:
+
+#+begin_src c
+// ARM 预取指令
+__builtin_prefetch(&data[i + 8]);  // 提前 8 个元素预取
+
+// 或汇编
+asm volatile("PLD [%0]" :: "r"(&data[i + 8]));
+#+end_src
+
+* 总结
+
+ARM SoC 的外设架构围绕 *存储器映射* 和 *标准总线* 两个核心概念:
+
+- *存储器映射*: 统一地址空间，简化访问
+- *中断控制器*: 从简单 (标准) → 向量化 (VIC/NVIC) → 多核 (GIC)
+- *AMBA 总线*: APB (低速外设) → AHB (主总线) → AXI (高性能) → ACE/CHI (一致性)
+- *存储器*: 速度/成本/功耗的权衡，Cache 是实时系统的挑战
+
+理解这些底层机制，是编写高效、可靠嵌入式软件的基础。无论是 STM32 的裸机编程，还是 Linux 在 Cortex-A 上的驱动开发，这些知识都是必不可少的。

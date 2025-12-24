@@ -1,0 +1,583 @@
+#+title: Unicode and Character Encodings: A Deep Dive from Code Points to UTF-8
+#+author: SOV710
+#+date: 2025-12-19
+#+startup: showall
+#+options: toc:2 num:nil
+
+* Unicode: 给世界上所有字符编号
+
+Unicode 为世界上几乎所有的字符分配了一个唯一的数字，这个数字叫做 *码点* (code point)。码点通常写作 =U+xxxx= 的形式。
+
+** 码点示例
+
+- ='A'= → =U+0041=
+- ='中'= → =U+4E2D=
+- ='🙂'= → =U+1F642=
+- ='𝕏'= (数学粗体 X) → =U+1D54F=
+- ='🀄'= (麻将红中) → =U+1F004=
+
+码点的范围是 =U+0000= 到 =U+10FFFF=，总共约 *110 万* 个可用位置。但目前只分配了约 15 万个字符 (Unicode 15.1)。
+
+** Unicode 的 17 个平面
+
+Unicode 被分为 17 个 *平面* (plane)，每个平面有 65,536 (0x10000) 个码点:
+
+| 平面编号 | 范围               | 名称                | 用途                           |
+|---------+--------------------+---------------------+--------------------------------|
+|       0 | U+0000 ~ U+FFFF    | *BMP* (基本多文种平面)   | 几乎所有常用字符 (拉丁、中日韩、符号) |
+|       1 | U+10000 ~ U+1FFFF  | *SMP* (辅助多文种平面)   | 古文字、emoji、数学符号           |
+|       2 | U+20000 ~ U+2FFFF  | *SIP* (辅助表意平面)    | CJK 扩展 B~G 区 (生僻汉字)        |
+|       3 | U+30000 ~ U+3FFFF  | *TIP* (第三辅助表意平面) | CJK 扩展 H~I 区                 |
+|    4-13 | U+40000 ~ U+DFFFF  | 未分配               | 保留                           |
+|      14 | U+E0000 ~ U+EFFFF  | *SSP* (特殊用途补充平面) | 标签字符 (废弃)、变体选择器         |
+|   15-16 | U+F0000 ~ U+10FFFF | *PUA* (私用区)         | 自定义字符                       |
+
+*** BMP (Plane 0) 是核心
+
+BMP 包含了几乎所有日常使用的字符:
+
+- =U+0000~U+007F=: ASCII (英文、数字、符号)
+- =U+0080~U+00FF=: Latin-1 补充 (西欧语言)
+- =U+4E00~U+9FFF=: CJK 统一汉字 (20,992 个常用汉字)
+- =U+AC00~U+D7AF=: 韩文音节
+- =U+0600~U+06FF=: 阿拉伯文
+- =U+2000~U+206F=: 一般标点符号
+- =U+2600~U+26FF=: 杂项符号 (☀️ ☔ ☎)
+
+BMP 之外的字符 (U+10000+) 叫做 *辅助平面字符* 或 *补充字符*，包括:
+
+- Emoji: 🙂 (U+1F642), 🀄 (U+1F004)
+- 数学符号: 𝕏 (U+1D54F), 𝓐 (U+1D4D0)
+- 古文字: 𒀀 (楔形文字, U+12000)
+- 生僻汉字: 𰻞 (CJK 扩展 G, U+30EDE)
+
+** Unicode 只是映射，不规定存储
+
+*重点*: Unicode 只定义了 "字符 ↔ 数字" 的对应关系，但 *没有规定* 这些数字如何在计算机中存储！
+
+比如 ='中'= 对应 =U+4E2D=，这个数字是 20,013 (十进制)。那么存储时是:
+
+- 直接存 4 字节 =0x00004E2D=？
+- 存 2 字节 =0x4E2D=？
+- 还是用某种变长编码？
+
+这就是 *编码方式* (encoding) 要解决的问题。
+
+* UTF-8: 最优雅的编码方式
+
+UTF-8 (8-bit Unicode Transformation Format) 是目前 *事实标准* 的 Unicode 编码方式。
+
+** UTF-8 的编码规则
+
+UTF-8 是一种 *变长编码*，用 1~4 个字节表示一个字符:
+
+| 码点范围               | 字节数 | 第 1 字节     | 第 2 字节  | 第 3 字节  | 第 4 字节  |
+|----------------------+-----+-------------+----------+----------+----------|
+| U+0000 ~ U+007F      |   1 | =0xxxxxxx=    | -        | -        | -        |
+| U+0080 ~ U+07FF      |   2 | =110xxxxx=    | =10xxxxxx= | -        | -        |
+| U+0800 ~ U+FFFF      |   3 | =1110xxxx=    | =10xxxxxx= | =10xxxxxx= | -        |
+| U+10000 ~ U+10FFFF   |   4 | =11110xxx=    | =10xxxxxx= | =10xxxxxx= | =10xxxxxx= |
+
+*** 编码示例
+
+*='A'= (U+0041)*
+
+- 码点: =0x41= = =0b01000001=
+- 落在 1 字节范围: =0xxxxxxx=
+- 直接填入: =01000001=
+- UTF-8: =0x41=
+
+*='中'= (U+4E2D)*
+
+- 码点: =0x4E2D= = =0b0100_1110_0010_1101=
+- 落在 3 字节范围: =1110xxxx 10xxxxxx 10xxxxxx=
+- 拆分: =0100= =111000= =101101=
+- 填入: =11100100 10111000 10101101=
+- UTF-8: =0xE4 0xB8 0xAD=
+
+*='🙂'= (U+1F642)*
+
+- 码点: =0x1F642= = =0b0001_1111_0110_0100_0010=
+- 落在 4 字节范围: =11110xxx 10xxxxxx 10xxxxxx 10xxxxxx=
+- 拆分: =000= =011111= =011001= =000010=
+- 填入: =11110000 10011111 10011001 10000010=
+- UTF-8: =0xF0 0x9F 0x99 0x82=
+
+** UTF-8 的优势
+
+*** 1. 完全兼容 ASCII
+
+所有 ASCII 字符 (U+0000~U+007F) 在 UTF-8 中都是 *单字节*，且编码值完全相同。
+
+#+begin_src c
+char str[] = "Hello"; // ASCII
+// UTF-8 编码也是: 0x48 0x65 0x6C 0x6C 0x6F
+#+end_src
+
+这意味着:
+
+- 老旧的 C 字符串函数 (=strlen=, =strcpy=) 可以直接用
+- ASCII 文本文件自动是合法的 UTF-8
+
+*** 2. 自同步 (Self-synchronizing)
+
+UTF-8 的字节有明确的角色:
+
+- 首字节: =0xxxxxxx=, =110xxxxx=, =1110xxxx=, =11110xxx=
+- 后续字节: =10xxxxxx=
+
+这意味着如果你从中间某个字节开始读，*最多跳过 3 个字节* 就能找到下一个字符的起始位置！
+
+#+begin_src c
+// 假设从中间读到了 0x9F (10011111)
+// 这是个后续字节 (10xxxxxx)，跳过
+// 继续读到 0xF0 (11110000)
+// 这是 4 字节字符的首字节，找到了！
+#+end_src
+
+*** 3. 无字节序问题 (No BOM needed)
+
+UTF-8 是 *字节流*，不存在 "大端" (big-endian) 或 "小端" (little-endian) 的问题。
+
+而 UTF-16/UTF-32 需要 BOM (Byte Order Mark) 来标识字节序:
+
+- UTF-16 BE: =0xFE 0xFF= (大端)
+- UTF-16 LE: =0xFF 0xFE= (小端)
+
+*** 4. 节省空间 (对拉丁文本)
+
+对于英文为主的文本，UTF-8 是 *最紧凑* 的:
+
+| 文本            | UTF-8   | UTF-16  | UTF-32  |
+|---------------+--------+--------+--------|
+| ="Hello"=       | 5 字节  | 10 字节 | 20 字节 |
+| ="你好"=        | 6 字节  | 4 字节  | 8 字节  |
+| ="A中🙂"=       | 8 字节  | 8 字节  | 12 字节 |
+
+但对于中日韩文本，UTF-8 比 UTF-16 多 50%:
+
+- 中文字符: UTF-8 用 3 字节，UTF-16 用 2 字节
+
+*** 5. 无非法序列歧义
+
+UTF-8 的编码规则保证 *不存在两种方式编码同一字符* (除了非法的 "过长编码")。
+
+比如 ='A'= (U+0041) 只能编码为 =0x41=，不能用 2 字节 =0xC1 0x81= (这是非法的)。
+
+** UTF-8 的劣势
+
+*** 1. 随机访问困难
+
+要找第 N 个字符，必须从头 *线性扫描*:
+
+#+begin_src rust
+fn nth_char(s: &str, n: usize) -> Option<char> {
+    s.chars().nth(n)  // O(n) 时间复杂度
+}
+#+end_src
+
+而 UTF-32 可以直接索引: =chars[n]=。
+
+*** 2. 字符串长度歧义
+
+="你好"= 在不同语言中的 "长度":
+
+#+begin_src python
+s = "你好"
+len(s)           # Python 3: 2 (字符数)
+len(s.encode())  # 6 (UTF-8 字节数)
+#+end_src
+
+#+begin_src c
+char s[] = "你好";
+strlen(s);       // C: 6 (字节数，不是字符数！)
+#+end_src
+
+需要专门的库来计算 *字符数* (grapheme cluster count)。
+
+*** 3. 中日韩文本膨胀
+
+中文字符用 3 字节，比 UTF-16 多 50%。对于纯中文文档 (如古籍)，UTF-16 或 GBK 更紧凑。
+
+* UTF-16: Windows 的历史包袱
+
+UTF-16 用 *2 或 4 字节* 表示一个字符:
+
+- BMP 字符 (U+0000~U+FFFF): 直接用 2 字节
+- 辅助平面字符 (U+10000+): 用一对 *代理对* (surrogate pair)，共 4 字节
+
+** 代理对 (Surrogate Pair)
+
+Unicode 保留了 BMP 中的 =U+D800~U+DFFF= 区间 (2,048 个码点) 作为 *代理区*:
+
+- *高代理* (High Surrogate): =U+D800~U+DBFF= (1,024 个)
+- *低代理* (Low Surrogate): =U+DC00~U+DFFF= (1,024 个)
+
+对于 U+10000 以上的字符，编码公式:
+
+#+begin_example
+设码点为 C (C >= 0x10000)
+C' = C - 0x10000
+
+高代理 = 0xD800 + (C' >> 10)       // 取高 10 位
+低代理 = 0xDC00 + (C' & 0x3FF)     // 取低 10 位
+#+end_example
+
+*** 示例: 编码 ='🙂'= (U+1F642)
+
+#+begin_example
+C = 0x1F642
+C' = 0x1F642 - 0x10000 = 0xF642
+
+高代理 = 0xD800 + (0xF642 >> 10)
+       = 0xD800 + 0x3D
+       = 0xD83D
+
+低代理 = 0xDC00 + (0xF642 & 0x3FF)
+       = 0xDC00 + 0x242
+       = 0xDE42
+
+UTF-16: 0xD83D 0xDE42 (大端)
+#+end_example
+
+** UTF-16 的问题
+
+*** 1. 不兼容 ASCII
+
+=0x41= 在 UTF-16 中是 =0x00 0x41= (大端) 或 =0x41 0x00= (小端)，与 ASCII 不兼容。
+
+*** 2. 字节序问题
+
+必须用 BOM 标识:
+
+#+begin_example
+UTF-16 BE 文件: 0xFE 0xFF 0x00 0x41 ...
+UTF-16 LE 文件: 0xFF 0xFE 0x41 0x00 ...
+#+end_example
+
+如果 BOM 丢失或弄错，文本会乱码。
+
+*** 3. 代理对处理复杂
+
+字符串操作必须 *识别代理对*，否则会把一个字符切成两半:
+
+#+begin_src java
+String s = "🙂";
+s.length();        // Java: 2 (代码单元数，不是字符数！)
+s.charAt(0);       // '\uD83D' (高代理，单独无意义)
+s.charAt(1);       // '\uDE42' (低代理)
+s.codePointCount(0, s.length()); // 1 (真正的字符数)
+#+end_src
+
+*** 4. 不是固定长度
+
+虽然 BMP 字符是 2 字节，但辅助平面字符是 4 字节。随机访问仍然需要扫描。
+
+** 为什么 Windows 用 UTF-16？
+
+历史原因:
+
+1. 1990 年代 Unicode 刚出现时，只有 BMP (65,536 个字符)。
+2. 微软认为 "16 位就够了"，在 Windows NT 3.1 (1993) 中采用 USC-2 (2 字节固定长度编码)。
+3. 后来 Unicode 扩展到 110 万字符，USC-2 不够用，升级为 UTF-16 (变长编码)。
+4. 但 Windows API (=wchar_t=, =WCHAR=) 已经定型，无法改了。
+
+结果:
+
+- Windows API 用 =wchar_t= (2 字节)
+- Linux/macOS 用 UTF-8 (=char*=)
+- 跨平台代码要转来转去
+
+#+begin_src cpp
+// Windows API
+wchar_t path[] = L"C:\\文件.txt";
+CreateFileW(path, ...);
+
+// 转到 UTF-8
+std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+std::string utf8 = converter.to_bytes(path);
+#+end_src
+
+* UTF-32: 简单但浪费
+
+UTF-32 用 *固定 4 字节* 表示每个字符，直接存储码点值。
+
+** 优势
+
+*** 1. 随机访问 O(1)
+
+#+begin_src cpp
+char32_t str[] = U"你好🙂";
+char32_t c = str[2];  // 直接访问第 3 个字符
+#+end_src
+
+*** 2. 简单
+
+不需要处理变长编码、代理对等复杂逻辑。
+
+** 劣势
+
+*** 1. 浪费空间
+
+所有字符都用 4 字节，即使 ASCII:
+
+| 文本      | UTF-8  | UTF-16 | UTF-32  |
+|---------+-------+-------+--------|
+| "Hello" | 5 B   | 10 B  | *20 B*   |
+| "你好"  | 6 B   | 4 B   | *8 B*    |
+
+*** 2. 几乎无人使用
+
+没有主流系统或格式采用 UTF-32:
+
+- Linux/macOS: UTF-8
+- Windows: UTF-16
+- 网络传输: UTF-8
+- JSON/XML: UTF-8
+
+只在某些内部处理中使用 (如 Python 3.3+ 的字符串内部表示)。
+
+* GBK: 史上最臭最恶的屎
+
+*他妈为什么不能用 UTF-8 啊我操你妈。*
+
+GBK (Chinese Internal Code Extension) 是中国大陆的遗留编码，扩展自 GB2312。
+
+** GBK 的编码规则
+
+- *单字节*: =0x00~0x7F= (ASCII)
+- *双字节*: 首字节 =0x81~0xFE=，次字节 =0x40~0xFE= (除了 =0x7F=)
+- 包含 21,886 个汉字和符号
+
+*** 示例
+
+- ='中'=: =0xD6 0xD0=
+- ='国'=: =0xB9 0xFA=
+- ='A'=: =0x41= (ASCII)
+
+** GBK 的问题
+
+*** 1. 无法表示生僻字
+
+GBK 只有 2 万字，遇到生僻字 (如 =𰻞=, U+30EDE) 直接 *无法编码*。
+
+*** 2. 字节序列歧义
+
+GBK 的双字节范围与 ASCII 的扩展冲突:
+
+#+begin_src python
+s = b'\xd6\xd0'  # GBK 的 "中"
+s.decode('gbk')  # '中'
+s.decode('utf-8', errors='ignore')  # ''  (非法 UTF-8)
+#+end_src
+
+如果混用 GBK 和 UTF-8，会出现 *乱码*:
+
+#+begin_example
+原文 (GBK): 中国
+字节: 0xD6 0xD0 0xB9 0xFA
+误当 UTF-8: � � � �  (全是 U+FFFD 替换字符)
+#+end_example
+
+*** 3. 无法与其他语言混用
+
+GBK 只能表示中文，不能混用日文假名、韩文、阿拉伯文等。
+
+#+begin_example
+想写 "中文 と 日本語"？
+GBK: 无法表示 "と"
+UTF-8: 完美支持
+#+end_example
+
+*** 4. Web 标准已淘汰
+
+HTML5 规范 *强烈建议* 使用 UTF-8:
+
+#+begin_src html
+<!-- 不要这样 -->
+<meta charset="GBK">
+
+<!-- 应该这样 -->
+<meta charset="UTF-8">
+#+end_src
+
+浏览器对 GBK 的支持在减少，未来会彻底移除。
+
+*** 5. 编程语言支持差
+
+现代语言默认 UTF-8:
+
+- Rust: =str= 类型是 UTF-8
+- Go: 字符串是 UTF-8
+- Python 3: 默认 UTF-8
+
+用 GBK 需要手动转换，麻烦且容易出错:
+
+#+begin_src python
+# Python 2 噩梦
+s = "中国"  # GBK？UTF-8？不知道
+print s.decode('gbk').encode('utf-8')  # 转换地狱
+#+end_src
+
+** 为什么 GBK 还在用？
+
+历史包袱:
+
+- 1990 年代 Windows 简体中文版 (Windows 95/98) 默认 GBK
+- 大量老旧系统、数据库、文本文件用 GBK
+- 某些政府部门要求 GBK (愚蠢的规定)
+
+但趋势是 *必然淘汰*:
+
+- 新系统用 UTF-8
+- 数据库迁移到 UTF-8
+- 政府文档标准正在更新
+
+*如果你现在还在用 GBK，立刻迁移到 UTF-8！*
+
+* 实际应用中的陷阱
+
+** 陷阱 1: 字符串长度的多重含义
+
+=#begin_src rust
+let s = "你好🙂";
+s.len()           // 10  (UTF-8 字节数)
+s.chars().count() // 3   (Unicode 标量值数量)
+s.graphemes(true).count()  // 3 (字形簇数量，用户感知的 "字符数")
+#+end_src
+
+对于组合字符，差异更大:
+
+#+begin_src rust
+let s = "é";  // e + 组合重音符 (U+0065 U+0301)
+s.len()       // 3  (UTF-8: 0x65 0xCC 0x81)
+s.chars().count()  // 2  (两个码点)
+s.graphemes(true).count()  // 1  (一个字形簇)
+#+end_src
+
+*正确做法*: 使用 Unicode 感知的库 (如 Rust 的 =unicode-segmentation=)。
+
+** 陷阱 2: =substr= 不是按字符截取
+
+在 C/C++ 中，字符串是字节数组:
+
+#+begin_src cpp
+std::string s = "你好世界";
+s.substr(0, 3);  // 返回 "你" (3 字节)，不是 "你好世"
+#+end_src
+
+正确做法:
+
+#+begin_src cpp
+// 使用 ICU 库
+icu::UnicodeString us = icu::UnicodeString::fromUTF8(s);
+icu::UnicodeString sub;
+us.extract(0, 2, sub);  // 取前 2 个字符
+std::string result;
+sub.toUTF8String(result);
+#+end_src
+
+** 陷阱 3: 文件 BOM 导致解析错误
+
+Windows 记事本保存 UTF-8 文件时会加 BOM (=0xEF 0xBB 0xBF=):
+
+#+begin_example
+文件内容: {"name": "test"}
+实际字节: 0xEF 0xBB 0xBF 0x7B ...
+#+end_example
+
+某些解析器不识别 BOM，导致错误:
+
+#+begin_src json
+// 解析器看到的
+ï»¿{"name": "test"}
+// 前面多了乱码
+#+end_src
+
+*解决*: 保存时选择 "UTF-8 无 BOM" (UTF-8 without BOM)。
+
+** 陷阱 4: 数据库编码不一致
+
+MySQL 的 "utf8" *不是真正的 UTF-8*！它是阉割版，只支持 1~3 字节字符 (最大 U+FFFF)。
+
+#+begin_src sql
+CREATE TABLE t (name VARCHAR(100) CHARSET utf8);
+INSERT INTO t VALUES ('🙂');  -- 错误: Incorrect string value
+#+end_src
+
+*正确做法*: 使用 =utf8mb4= (4 字节 UTF-8):
+
+#+begin_src sql
+CREATE TABLE t (name VARCHAR(100) CHARSET utf8mb4);
+INSERT INTO t VALUES ('🙂');  -- 成功
+#+end_src
+
+** 陷阱 5: URL 编码的混乱
+
+URL 中的中文需要 *百分号编码* (Percent-encoding):
+
+#+begin_example
+https://example.com/搜索?q=你好
+
+编码后:
+https://example.com/%E6%90%9C%E7%B4%A2?q=%E4%BD%A0%E5%A5%BD
+#+end_example
+
+但编码前必须是 UTF-8！如果用 GBK 编码再百分号编码，服务器会解析错误。
+
+* 总结: 一律用 UTF-8
+
+** 现代系统的共识
+
+- *Linux/macOS*: 默认 UTF-8 (=$LANG=en_US.UTF-8=)
+- *Web*: HTML5 强制推荐 UTF-8
+- *JSON/XML*: 默认 UTF-8
+- *数据库*: PostgreSQL, SQLite 默认 UTF-8
+- *编程语言*: Python 3, Rust, Go 默认 UTF-8
+
+** 唯一例外: Windows
+
+Windows 内部用 UTF-16，但可以用 UTF-8:
+
+- 从 Windows 10 1903 开始，支持 UTF-8 作为系统 locale
+- 设置: *区域设置 → 管理 → 更改系统区域设置 → 勾选 "Beta: 使用 Unicode UTF-8 提供全球语言支持"*
+
+** 最佳实践
+
+1. *源代码*: UTF-8 (设置编辑器默认编码)
+2. *配置文件*: UTF-8 无 BOM
+3. *数据库*: =utf8mb4= (MySQL) 或 UTF-8 (PostgreSQL/SQLite)
+4. *网络传输*: UTF-8
+5. *文件系统*: Linux 用 UTF-8 文件名
+
+** 遗留编码的迁移
+
+如果被迫处理 GBK 等遗留编码:
+
+#+begin_src python
+# Python 读取 GBK 文件
+with open('old.txt', encoding='gbk') as f:
+    content = f.read()
+
+# 立刻转存为 UTF-8
+with open('new.txt', 'w', encoding='utf-8') as f:
+    f.write(content)
+#+end_src
+
+#+begin_src bash
+# iconv 批量转换
+iconv -f GBK -t UTF-8 old.txt > new.txt
+
+# 检测文件编码
+file -bi old.txt
+# text/plain; charset=unknown-8bit
+
+uchardet old.txt
+# GB18030
+#+end_src
+
+*永远不要创建新的 GBK 文件！*
+
+** 终极原则
+
+*一切文本数据，优先用 UTF-8。如果有人要求用 GBK，先问问他们为什么还活在 20 年前。*

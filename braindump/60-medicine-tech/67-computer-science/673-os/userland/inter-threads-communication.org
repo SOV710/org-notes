@@ -1,0 +1,978 @@
+#+title: Inter-Thread Communication Mechanisms: A Performance Deep Dive from 10 Cycles to 50000 Cycles
+#+author: SOV710
+#+date: 2025-12-23
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 为什么线程间通信的性能如此重要
+
+在多线程编程中，线程间通信 (Inter-Thread Communication, ITC) 是核心话题。无论是高频交易系统追求微秒级响应，实时音视频处理要求稳定的帧率，还是游戏引擎需要流畅的渲染管线，线程间通信的性能往往决定了整个系统的吞吐量上限。
+
+但这里存在一个有趣的矛盾: *最快的通信方式往往是最危险的* (共享内存 + 自旋轮询)，而 *最安全的方式往往是最慢的* (互斥锁 + 条件变量)。理解每种方案的性能特征、适用场景以及底层原理，是写出高性能多线程代码的基础。
+
+本文将从 CPU 缓存层级的角度，自底向上剖析各种线程间通信方案的性能特征，从最快的 *10 cycles* 纯缓存操作，到最慢的 *50000+ cycles* 阻塞系统调用。所有数据基于现代 x86_64 架构 (Intel/AMD)，频率约 3-5 GHz。
+
+* 第一梯队: 纯缓存操作 (10-30 Cycles)
+
+** 共享内存 + 自旋轮询 (同核/同 L1 命中)
+
+这是 *理论上最快* 的线程间通信方式，单向延迟可以低至 *10-30 cycles* (约 3-10 ns @ 3 GHz)。
+
+*** 原理
+
+两个线程共享一块内存 (通常是单个 =volatile= 或 =atomic= 变量)，生产者写入，消费者通过 *忙等待* (busy-wait) 轮询该变量:
+
+#+begin_src cpp
+// 生产者线程
+alignas(64) std::atomic<uint64_t> flag{0};
+alignas(64) uint64_t data;
+
+void producer() {
+    data = 42;                          // 写入数据
+    flag.store(1, std::memory_order_release);  // 发布
+}
+
+// 消费者线程 (同核)
+void consumer() {
+    while (flag.load(std::memory_order_acquire) == 0) {
+        _mm_pause();  // x86 的 PAUSE 指令
+    }
+    uint64_t value = data;  // 读取数据
+}
+#+end_src
+
+*** 为什么这么快?
+
+1. *L1 缓存命中*: 如果两个线程通过超线程 (HT/SMT) 运行在同一个物理核心上，它们共享 L1 缓存。=flag= 和 =data= 一直在 L1 中，读写延迟只有 *4-5 cycles*。
+
+2. *无系统调用*: 完全在用户态，没有上下文切换。
+
+3. *无锁开销*: 虽然用了 =atomic=，但在单核场景下，=load/store= 在 x86 上通常是普通的 =MOV= 指令 (因为 x86 是 TSO，Total Store Order)。
+
+*** =_mm_pause()= 的作用
+
+在 x86 上，=PAUSE= 指令告诉 CPU:
+- "我在自旋等待，请降低功耗"
+- 避免内存顺序违例 (Memory Order Violation) 的误判，优化流水线
+- 在超线程场景下，让出执行资源给同核的另一个线程
+
+在 ARM 上对应 =YIELD= 或 =WFE= (Wait For Event)。
+
+*** 适用场景
+
+- *极短延迟场景*: 生产者和消费者之间的延迟预期在微秒级以内
+- *高频交易系统*: 订单簿更新、市场数据分发
+- *实时音频处理*: DSP 算法的小缓冲区传递
+- *用户态调度器*: 如 Golang 的 M:N 模型中的 goroutine 切换
+
+*** 限制与风险
+
+1. *CPU 利用率*: 消费者会一直占用 100% 的 CPU 核心，即使没有数据。在移动设备或数据中心，功耗暴涨。
+
+2. *同核约束*: 必须保证两个线程运行在同一物理核心 (或超线程对) 上。跨核后性能骤降到 120-250 cycles (见下一节)。
+
+3. *优先级反转风险*: 如果生产者被调度器抢占，消费者会一直空转。
+
+4. *不公平调度*: 自旋线程可能 "饿死" 其他线程。
+
+*** 绑核技巧
+
+#+begin_src cpp
+#include <pthread.h>
+#include <sched.h>
+
+void bind_to_core(int core_id) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(core_id, &cpuset);
+    pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset);
+}
+
+// 生产者绑定到核心 0
+bind_to_core(0);
+
+// 消费者也绑定到核心 0 (超线程对)
+bind_to_core(0);
+#+end_src
+
+** =atomic= 非争用 (同核持有该线)
+
+如果一个 =atomic= 变量长期被同一个核心访问，延迟同样可以低至 *10-30 cycles*。
+
+#+begin_src cpp
+std::atomic<uint64_t> counter{0};
+
+void increment() {
+    counter.fetch_add(1, std::memory_order_relaxed);  // lock xadd
+}
+#+end_src
+
+在 x86 上，=fetch_add= 编译为 =lock xadd= 指令:
+
+#+begin_src asm
+lock xadd qword ptr [counter], rax
+#+end_src
+
+*** 为什么快?
+
+- 如果 =counter= 对应的缓存线已经在本核的 L1 中且处于 *Exclusive 或 Modified 状态* (MESI 协议)，=lock= 前缀可以被硬件优化为 "锁缓存线" 而非 "锁总线"，延迟非常低。
+- =memory_order_relaxed= 避免了不必要的内存栅栏。
+
+*** 一旦跨核争用...
+
+延迟会暴涨到 *150-800 cycles*，因为需要缓存一致性协议的介入 (见下一节)。
+
+* 第二梯队: 跨核缓存一致性开销 (120-800 Cycles)
+
+** 共享内存 + 一次缓存线所有权转移 (跨核同 NUMA)
+
+当两个线程运行在 *不同的物理核心* 上，但属于同一个 NUMA 节点，通信延迟会跃升到 *120-250 cycles* (约 35-70 ns @ 3.5 GHz)。
+
+*** MESI 协议的 Cache Line Ping-Pong
+
+现代 CPU 使用 *MESI (Modified, Exclusive, Shared, Invalid)* 缓存一致性协议:
+
+1. 核心 A 写入共享变量 → 缓存线在 A 的 L1 中变为 *Modified* 状态
+2. 核心 B 尝试读取 → 触发 *缓存一致性总线事务*:
+   - A 的缓存控制器检测到 B 的读请求
+   - A 将缓存线标记为 *Shared* 并回写到 L3 (或直接转发给 B)
+   - B 将缓存线加载到自己的 L1，状态为 *Shared*
+
+这个过程大约需要 *40-70 ns* (120-250 cycles @ 3.5 GHz)。
+
+*** 实测示例
+
+#+begin_src cpp
+alignas(64) std::atomic<uint64_t> ping{0};  // 独占一条缓存线
+
+// 线程 A (绑定核心 0)
+void thread_a() {
+    for (int i = 0; i < 1000000; ++i) {
+        ping.store(1, std::memory_order_release);
+        while (ping.load(std::memory_order_acquire) != 0) {
+            _mm_pause();
+        }
+    }
+}
+
+// 线程 B (绑定核心 1)
+void thread_b() {
+    for (int i = 0; i < 1000000; ++i) {
+        while (ping.load(std::memory_order_acquire) != 1) {
+            _mm_pause();
+        }
+        ping.store(0, std::memory_order_release);
+    }
+}
+#+end_src
+
+在 Intel Xeon 上测量: *单次 ping-pong 延迟约 150-200 cycles*。
+
+*** False Sharing 陷阱
+
+如果两个独立的变量恰好在同一条缓存线 (64 字节) 上，即使它们逻辑上无关，也会导致伪共享 (False Sharing):
+
+#+begin_src cpp
+struct BadLayout {
+    std::atomic<uint64_t> counter_a;  // 线程 A 独占
+    std::atomic<uint64_t> counter_b;  // 线程 B 独占
+    // counter_a 和 counter_b 在同一条缓存线!
+};
+
+// 线程 A 写 counter_a → 缓存线失效
+// 线程 B 写 counter_b → 又触发缓存线转移
+// 性能暴跌
+#+end_src
+
+*正确做法*: 用 =alignas(64)= 确保变量独占缓存线:
+
+#+begin_src cpp
+struct GoodLayout {
+    alignas(64) std::atomic<uint64_t> counter_a;
+    alignas(64) std::atomic<uint64_t> counter_b;
+    // 现在它们在不同缓存线上
+};
+#+end_src
+
+** =atomic= 轻度争用 (跨核线来回)
+
+当多个核心频繁竞争同一个 =atomic= 变量，延迟会进一步恶化到 *150-800 cycles*，甚至更高。
+
+*** 原因分析
+
+1. *缓存线抖动*: 缓存线在多个核心之间反复转移所有权
+2. *硬件重试*: =lock cmpxchg= (Compare-And-Swap) 在争用时可能需要多次重试
+3. *内存栅栏开销*: =memory_order_seq_cst= 会插入 =mfence=，强制所有先前的 store 完成
+
+#+begin_src cpp
+std::atomic<int> counter{0};
+
+// 10 个线程同时 increment
+for (int i = 0; i < 10; ++i) {
+    threads.emplace_back([&]() {
+        for (int j = 0; j < 1000000; ++j) {
+            counter.fetch_add(1, std::memory_order_seq_cst);
+        }
+    });
+}
+#+end_src
+
+*** 实测延迟 (Intel Xeon E5-2680 v4)
+
+- 2 线程争用: ~150 cycles/op
+- 4 线程争用: ~300 cycles/op
+- 8 线程争用: ~600 cycles/op
+- 16 线程争用: ~800+ cycles/op
+
+*** 优化策略
+
+1. *分片计数器* (Sharded Counter): 每个核心有自己的计数器，最后汇总
+
+#+begin_src cpp
+struct ShardedCounter {
+    static constexpr size_t NUM_SHARDS = 64;
+    alignas(64) std::atomic<uint64_t> shards[NUM_SHARDS];
+
+    void add(uint64_t val) {
+        int shard = sched_getcpu() % NUM_SHARDS;  // 获取当前 CPU 编号
+        shards[shard].fetch_add(val, std::memory_order_relaxed);
+    }
+
+    uint64_t total() const {
+        uint64_t sum = 0;
+        for (auto& s : shards) {
+            sum += s.load(std::memory_order_relaxed);
+        }
+        return sum;
+    }
+};
+#+end_src
+
+2. *无锁队列*: 减少共享点
+
+3. *读写锁*: 允许多读
+
+** SPSC 无锁环形队列 (分离 head/tail, 跨核)
+
+单生产者单消费者 (SPSC) 无锁队列是高性能线程间通信的经典方案，延迟在 *120-300 cycles*。
+
+*** 核心设计
+
+#+begin_src cpp
+template<typename T, size_t N>
+class SPSCQueue {
+    alignas(64) std::atomic<size_t> head_{0};  // 消费者独占
+    alignas(64) std::atomic<size_t> tail_{0};  // 生产者独占
+    T buffer_[N];
+
+public:
+    bool push(const T& item) {
+        size_t tail = tail_.load(std::memory_order_relaxed);
+        size_t next_tail = (tail + 1) % N;
+
+        // 队列满?
+        if (next_tail == head_.load(std::memory_order_acquire)) {
+            return false;
+        }
+
+        buffer_[tail] = item;
+        tail_.store(next_tail, std::memory_order_release);
+        return true;
+    }
+
+    bool pop(T& item) {
+        size_t head = head_.load(std::memory_order_relaxed);
+
+        // 队列空?
+        if (head == tail_.load(std::memory_order_acquire)) {
+            return false;
+        }
+
+        item = buffer_[head];
+        head_.store((head + 1) % N, std::memory_order_release);
+        return true;
+    }
+};
+#+end_src
+
+*** 为什么快?
+
+1. *无锁*: 生产者和消费者永不竞争同一变量 (=head= 和 =tail= 分离)
+
+2. *单次缓存线转移*: 每次 push/pop 只需一次 acquire-release 同步
+
+3. *批量传输*: 可以一次 push 多个元素再 release，均摊开销
+
+*** 性能测试
+
+#+begin_src cpp
+SPSCQueue<uint64_t, 1024> queue;
+
+// 生产者 (核心 0)
+void producer() {
+    for (uint64_t i = 0; i < 10000000; ++i) {
+        while (!queue.push(i)) _mm_pause();
+    }
+}
+
+// 消费者 (核心 1)
+void consumer() {
+    uint64_t value;
+    for (uint64_t i = 0; i < 10000000; ++i) {
+        while (!queue.pop(value)) _mm_pause();
+    }
+}
+#+end_src
+
+*实测吞吐量*: 约 *50-80 Million ops/sec* (每次 push+pop 约 150-250 cycles)。
+
+*** 适用场景
+
+- 多媒体处理管线 (解码 → 渲染)
+- 网络 I/O 线程 → 处理线程
+- 日志系统 (业务线程 → 日志线程)
+- 实时数据流 (传感器 → 处理)
+
+** =mfence= / 全栅栏指令
+
+在 x86 上，=mfence= (Memory Fence) 强制所有先前的 load/store 完成，延迟约 *40-80 cycles*。
+
+#+begin_src cpp
+std::atomic_thread_fence(std::memory_order_seq_cst);
+#+end_src
+
+编译为:
+
+#+begin_src asm
+mfence
+#+end_src
+
+*** 何时需要?
+
+- 实现全局顺序一致性 (Sequential Consistency)
+- 与 DMA 硬件交互 (确保 MMIO 写入完成)
+- 某些无锁算法的严格屏障点
+
+*** x86 特殊性
+
+x86 是 *TSO (Total Store Order)* 内存模型，Store-Load 顺序天然保证，所以大多数情况下不需要 =mfence=。
+
+ARM/RISC-V 是弱序模型，需要更频繁的栅栏指令 (=dmb=, =dsb=):
+
+#+begin_src c
+// ARM 的全栅栏
+__asm__ __volatile__("dmb sy" ::: "memory");
+#+end_src
+
+* 第三梯队: 带锁的同步原语 (3,000-50,000 Cycles)
+
+** 互斥锁 (无争用)
+
+=std::mutex= 在 *无争用* 的快路径上，延迟约 *40-120 cycles*:
+
+#+begin_src cpp
+std::mutex mtx;
+mtx.lock();    // 快路径: 一次 CAS
+// critical section
+mtx.unlock();
+#+end_src
+
+*** 实现原理
+
+在 Linux 上，=pthread_mutex= 的快路径实现:
+
+#+begin_src c
+// glibc 的简化版本
+int __pthread_mutex_lock(pthread_mutex_t *mutex) {
+    // 尝试 CAS: 如果锁值为 0，改为 1
+    if (__sync_bool_compare_and_swap(&mutex->__data.__lock, 0, 1)) {
+        return 0;  // 成功加锁，无争用
+    }
+    // 失败，进入慢路径
+    return __pthread_mutex_lock_slow(mutex);
+}
+#+end_src
+
+*** 为什么快?
+
+- 单次 CAS (Compare-And-Swap) 约 *20-50 cycles*
+- 少量分支预测和函数调用开销
+
+*** 一旦有争用...
+
+调用 =futex(FUTEX_WAIT)= 进入内核，延迟飙升到 *3,000-50,000 cycles* (见下节)。
+
+** 互斥锁 (争用 → park/futex)
+
+当多个线程竞争同一把锁时，失败的线程会调用 =futex= 系统调用 *阻塞*，延迟暴涨到 *3,000-50,000+ cycles* (0.9-15 µs)。
+
+*** Futex 的工作流程
+
+#+begin_src cpp
+// 线程 A 持有锁
+mtx.lock();
+// critical section...
+mtx.unlock();  // 调用 futex(FUTEX_WAKE)
+
+// 线程 B 尝试加锁
+mtx.lock();    // CAS 失败
+               // → 调用 futex(FUTEX_WAIT)
+               // → 进入内核，挂起到等待队列
+               // → 上下文切换到其他线程
+#+end_src
+
+*** 系统调用开销分解
+
+1. *陷入内核* (=syscall= 指令): ~100 cycles
+
+2. *内核处理 futex*: ~1,000-3,000 cycles
+   - 查找等待队列
+   - 修改线程状态 (RUNNING → WAITING)
+   - 调度器选择下一个线程
+
+3. *上下文切换*: ~3,000-15,000 cycles
+   - 保存寄存器 (通用寄存器、浮点寄存器、XMM/YMM)
+   - TLB flush (如果跨进程)
+   - 恢复新线程状态
+
+4. *唤醒时的对称开销*: 再来一次
+
+*** 实测数据
+
+#+begin_src cpp
+std::mutex mtx;
+std::thread t1([&]() {
+    for (int i = 0; i < 1000000; ++i) {
+        mtx.lock();
+        // 空临界区
+        mtx.unlock();
+    }
+});
+std::thread t2([&]() {
+    for (int i = 0; i < 1000000; ++i) {
+        mtx.lock();
+        mtx.unlock();
+    }
+});
+#+end_src
+
+*结果*:
+
+- 无争用 (单线程): ~60 ns/op (200 cycles @ 3.3 GHz)
+- 轻度争用 (2 线程): ~500 ns/op (1,750 cycles)
+- 重度争用 (8 线程): ~5,000 ns/op (17,500 cycles)
+
+*** 优化建议
+
+1. *尽量减小临界区*: 只保护必要的代码
+
+2. *考虑无锁算法*: 如 SPSC 队列
+
+3. *使用读写锁*: 允许多读
+
+4. *RAII*: 用 =std::lock_guard= 确保异常安全
+
+#+begin_src cpp
+void safe_function() {
+    std::lock_guard<std::mutex> lock(mtx);
+    // 即使抛异常，锁也会被释放
+}
+#+end_src
+
+** 条件变量 =condvar= (唤醒已阻塞线程)
+
+条件变量的 =notify_one()= 唤醒一个阻塞线程，延迟约 *3,000-10,000 cycles* (1-3 µs)。
+
+*** 基本用法
+
+#+begin_src cpp
+std::mutex mtx;
+std::condition_variable cv;
+bool ready = false;
+
+// 生产者
+void producer() {
+    std::unique_lock lock(mtx);
+    ready = true;
+    cv.notify_one();  // futex(FUTEX_WAKE)
+}
+
+// 消费者
+void consumer() {
+    std::unique_lock lock(mtx);
+    cv.wait(lock, [] { return ready; });  // futex(FUTEX_WAIT)
+    // ready 为 true 时被唤醒
+}
+#+end_src
+
+*** 开销来源
+
+1. =wait()= 调用 =futex(FUTEX_WAIT)=: ~3,000 cycles
+2. 线程挂起，上下文切换: ~5,000 cycles
+3. =notify_one()= 调用 =futex(FUTEX_WAKE)=: ~3,000 cycles
+4. 被唤醒线程恢复执行: ~5,000 cycles
+
+总计约 *10,000-20,000 cycles* (3-6 µs)。
+
+*** 虚假唤醒 (Spurious Wakeup)
+
+条件变量可能在没有 =notify= 的情况下唤醒 (操作系统实现细节)，因此必须在循环中检查条件:
+
+#+begin_src cpp
+// 错误写法
+cv.wait(lock);
+// ready 可能仍然是 false!
+
+// 正确写法
+cv.wait(lock, [] { return ready; });
+// 或者
+while (!ready) {
+    cv.wait(lock);
+}
+#+end_src
+
+*** 适用场景
+
+- 任务队列 (生产者-消费者模式)
+- 事件通知 (但频率不能太高)
+- 线程池的任务调度
+
+*** 不适用场景
+
+- 高频信号 (如每秒百万次) → 用无锁队列
+- 实时系统 → 避免阻塞
+
+* 第四梯队: 基于文件描述符的 IPC (3,000-16,000 Cycles)
+
+** =eventfd= 通知 (写 → 对端被 =epoll_wait= 唤醒)
+
+=eventfd= 是 Linux 特有的轻量级事件通知机制，延迟约 *3,000-7,000 cycles* (0.9-2 µs)。
+
+*** 基本用法
+
+#+begin_src cpp
+#include <sys/eventfd.h>
+#include <sys/epoll.h>
+
+int efd = eventfd(0, EFD_NONBLOCK | EFD_SEMAPHORE);
+
+// 生产者
+void producer() {
+    uint64_t value = 1;
+    write(efd, &value, sizeof(value));  // 触发事件
+}
+
+// 消费者 (epoll 模式)
+void consumer() {
+    int epfd = epoll_create1(0);
+    epoll_event ev = {.events = EPOLLIN, .data.fd = efd};
+    epoll_ctl(epfd, EPOLL_CTL_ADD, efd, &ev);
+
+    epoll_event events[1];
+    epoll_wait(epfd, events, 1, -1);  // 阻塞等待
+
+    uint64_t value;
+    read(efd, &value, sizeof(value));
+}
+#+end_src
+
+*** 性能特点
+
+- *一次写入 + 一次唤醒*: ~2 µs
+- 比 pipe 快 (无内核缓冲区拷贝)
+- 可与 =epoll= 结合，构建事件驱动架构
+
+*** =EFD_SEMAPHORE= 标志
+
+如果设置了 =EFD_SEMAPHORE=，每次 =read= 只返回 1，无论写入了多少:
+
+#+begin_src cpp
+int efd = eventfd(0, EFD_SEMAPHORE);
+write(efd, &(uint64_t){5}, 8);  // 写入 5
+read(efd, &value, 8);           // 返回 1 (不是 5)
+read(efd, &value, 8);           // 再返回 1
+// ... 总共可以读 5 次
+#+end_src
+
+这相当于一个 *信号量*。
+
+*** 适用场景
+
+- 异步 I/O 框架 (如 libuv、Boost.Asio)
+- 线程池的任务通知
+- 跨线程的 GUI 事件传递
+- 将 pthread 信号转换为 =epoll= 可监听的事件
+
+** =pipe= (8 字节通知)
+
+Unix pipe 的单次通知延迟约 *5,000-12,000 cycles* (1.5-3.5 µs)。
+
+*** 基本用法
+
+#+begin_src cpp
+int pipefd[2];
+pipe(pipefd);
+
+// 生产者
+void producer() {
+    uint64_t msg = 42;
+    write(pipefd[1], &msg, sizeof(msg));
+}
+
+// 消费者
+void consumer() {
+    uint64_t msg;
+    read(pipefd[0], &msg, sizeof(msg));
+}
+#+end_src
+
+*** 开销来源
+
+1. *系统调用*: =write()= 和 =read()= 各 ~1,000 cycles
+2. *内核缓冲区拷贝*: 数据从用户态 → 内核态 → 用户态
+3. *唤醒机制*: 如果消费者阻塞在 =read()=，需要调度器介入
+
+*** 为什么比 =eventfd= 慢?
+
+- Pipe 有一个 *4 KB 的内核缓冲区*，数据需要拷贝
+- =eventfd= 只是一个计数器，无实际数据传输
+
+*** Pipe 的容量限制
+
+Linux 上 pipe 的默认容量是 64 KB (可通过 =fcntl(F_SETPIPE_SZ)= 调整，最大 1 MB):
+
+#+begin_src cpp
+int size = fcntl(pipefd[1], F_GETPIPE_SZ);  // 查询容量
+fcntl(pipefd[1], F_SETPIPE_SZ, 1024*1024);  // 设置为 1 MB
+#+end_src
+
+如果写满了，=write()= 会阻塞。
+
+** UNIX =socketpair=
+
+本地 socket 对的延迟约 *7,000-16,000 cycles* (2-5 µs)。
+
+*** 基本用法
+
+#+begin_src cpp
+int sv[2];
+socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
+
+// 生产者
+void producer() {
+    uint64_t msg = 42;
+    send(sv[0], &msg, sizeof(msg), 0);
+}
+
+// 消费者
+void consumer() {
+    uint64_t msg;
+    recv(sv[1], &msg, sizeof(msg), 0);
+}
+#+end_src
+
+*** 为什么最慢?
+
+- *协议栈开销*: 即使是 =AF_UNIX=，仍需走内核网络栈
+- *缓冲区管理*: socket 有发送/接收缓冲区，更复杂
+- *流量控制*: TCP-like 的流式传输语义
+
+*** 适用场景
+
+- 进程间通信 (IPC)
+- 需要双向流式传输
+- 兼容 socket API 的场景 (可无缝替换为网络 socket)
+
+*** =AF_UNIX= vs. =AF_INET=
+
+本地 =AF_UNIX= socket 比 =AF_INET= 快得多:
+
+| 类型              | 延迟           | 说明               |
+|-----------------|--------------|------------------|
+| =AF_UNIX=         | 2-5 µs       | 本地，无网络栈         |
+| =AF_INET= (loopback) | 10-30 µs     | 经过完整 TCP/IP 栈   |
+| =AF_INET= (网络)     | 100 µs - 100 ms | 取决于网络延迟和丢包     |
+
+* 上下文切换和 NUMA 开销
+
+** 线程上下文切换 (同核)
+
+即使不涉及通信，单纯的线程切换也有 *3,000-15,000 cycles* (1-5 µs) 的开销。
+
+*** 开销分解
+
+1. *保存当前线程状态* (~1,000 cycles):
+   - 通用寄存器 (RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, R8-R15)
+   - 浮点/SIMD 寄存器 (XMM0-XMM15, YMM0-YMM15, ZMM0-ZMM31)
+   - 指令指针 (RIP)、栈指针 (RSP)
+
+2. *调度器决策* (~500-2,000 cycles):
+   - 选择下一个线程 (O(1) 或 O(log n))
+   - 更新 per-CPU 运行队列
+   - 处理优先级、CPU 亲和性
+
+3. *恢复新线程状态* (~1,000-5,000 cycles):
+   - 恢复寄存器
+   - 切换页表 (=CR3= 寄存器) → *TLB flush*
+   - 如果跨进程，TLB flush 开销尤其大
+
+4. *Cache 冷启动* (~5,000-10,000 cycles，视情况而定):
+   - 新线程的代码/数据不在 L1/L2 中
+   - 需要从 L3 或内存重新加载
+
+*** 实测工具
+
+#+begin_src bash
+# 统计上下文切换次数
+perf stat -e context-switches,cpu-cycles ./my_program
+
+# 示例输出
+# 12,345 context-switches
+# 3,456,789,012 cycles
+# 平均每次切换: 280,000 cycles
+#+end_src
+
+*** Linux 调度器的优化
+
+- *CFS (Completely Fair Scheduler)*: O(log n) 时间复杂度
+- *Cache 亲和性*: 尽量让线程回到之前运行的核心
+- *NUMA 感知*: 优先选择本地 NUMA 节点的核心
+
+** 远端 NUMA 线转移/内存访问附加
+
+在多 NUMA 节点系统上 (如双路 Xeon)，跨节点访问内存会增加 *+350-700 cycles* (+100-200 ns)。
+
+*** NUMA 拓扑示例
+
+#+begin_example
+Node 0: CPU 0-15, Memory 64 GB
+Node 1: CPU 16-31, Memory 64 GB
+#+end_example
+
+*** 访问延迟
+
+- 本地内存: ~80 ns (280 cycles @ 3.5 GHz)
+- 远端内存: ~180 ns (630 cycles @ 3.5 GHz)
+- *差距*: +100 ns (+350 cycles)
+
+*** 查看 NUMA 拓扑
+
+#+begin_src bash
+$ numactl --hardware
+available: 2 nodes (0-1)
+node 0 cpus: 0 1 2 3 4 5 6 7
+node 0 size: 65536 MB
+node 1 cpus: 8 9 10 11 12 13 14 15
+node 1 size: 65536 MB
+node distances:
+node   0   1
+  0:  10  21    # 21 = 约 2.1x 延迟
+  1:  21  10
+#+end_src
+
+*** 绑核优化
+
+#+begin_src cpp
+#include <numa.h>
+
+// 绑定线程到特定 NUMA 节点
+numa_run_on_node(0);
+
+// 分配内存到指定节点
+void* ptr = numa_alloc_onnode(size, 0);  // 节点 0
+#+end_src
+
+*** 实际案例
+
+某高频交易系统在双路 Xeon 上:
+
+- 线程绑定到 Node 0，内存也在 Node 0: *平均延迟 50 µs*
+- 线程在 Node 0，内存在 Node 1: *平均延迟 150 µs* (+100 µs！)
+
+*** NUMA 优化原则
+
+1. *数据局部性*: 让线程访问本地内存
+2. *绑核*: 用 =taskset= 或 =pthread_setaffinity_np= 绑定
+3. *监控*: 用 =numastat= 查看跨节点访问次数
+
+#+begin_src bash
+$ numastat -c qemu-kvm
+Per-node process memory usage (in MBs)
+PID         Node 0 Node 1 Total
+1234 (qemu) 1024   512    1536
+# 理想情况: Node 1 应该是 0
+#+end_src
+
+* 性能测量与验证
+
+** 使用 RDTSC 精确测量
+
+x86 的 =RDTSC= 指令可以读取 CPU 时间戳计数器 (Time Stamp Counter)，精度达 *单个 cycle*。
+
+#+begin_src cpp
+#include <x86intrin.h>
+
+uint64_t rdtsc() {
+    unsigned int lo, hi;
+    __asm__ __volatile__ ("rdtsc" : "=a" (lo), "=d" (hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+// 测量函数耗时
+uint64_t start = rdtsc();
+some_operation();
+uint64_t end = rdtsc();
+uint64_t cycles = end - start;
+#+end_src
+
+*** 注意乱序执行
+
+现代 CPU 可能乱序执行 =rdtsc=，需要栅栏:
+
+#+begin_src cpp
+uint64_t rdtsc_begin() {
+    _mm_lfence();  // 加载栅栏
+    return __rdtsc();
+}
+
+uint64_t rdtsc_end() {
+    unsigned int aux;
+    uint64_t tsc = __rdtscp(&aux);  // 序列化的 RDTSC
+    _mm_lfence();
+    return tsc;
+}
+#+end_src
+
+*** 频率变化
+
+Turbo Boost 或节能模式会改变 CPU 频率，导致 cycle 与时间不线性。解决:
+
+1. 禁用 Turbo Boost:
+
+#+begin_src bash
+echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
+#+end_src
+
+2. 固定频率:
+
+#+begin_src bash
+sudo cpupower frequency-set -g performance
+sudo cpupower frequency-set -d 3.5GHz -u 3.5GHz
+#+end_src
+
+** 使用 =perf= 统计硬件事件
+
+Linux =perf= 工具可以统计硬件事件:
+
+#+begin_src bash
+# 统计缓存失效
+perf stat -e cache-misses,cache-references,L1-dcache-load-misses ./my_program
+
+# 示例输出
+# 123,456 cache-misses         # 2.34% of all cache refs
+# 5,234,567 cache-references
+# 98,765 L1-dcache-load-misses
+
+# 统计上下文切换
+perf stat -e context-switches,cpu-migrations ./my_program
+
+# 记录函数级性能
+perf record -g ./my_program
+perf report
+#+end_src
+
+*** 常用事件
+
+| 事件                         | 含义           |
+|----------------------------|--------------|
+| =cycles=                     | CPU 周期数      |
+| =instructions=               | 指令数          |
+| =cache-references=           | 缓存访问次数       |
+| =cache-misses=               | 缓存失效次数       |
+| =L1-dcache-load-misses=      | L1 数据缓存失效    |
+| =LLC-load-misses=            | Last Level Cache 失效 |
+| =context-switches=           | 上下文切换次数      |
+| =cpu-migrations=             | 线程跨核迁移次数     |
+
+** 使用 BPF 追踪系统调用
+
+BPF (eBPF) 可以追踪系统调用延迟:
+
+#+begin_src bash
+# 追踪 futex 系统调用
+sudo bpftrace -e 'tracepoint:syscalls:sys_enter_futex { @start[tid] = nsecs; }
+                   tracepoint:syscalls:sys_exit_futex /@start[tid]/ {
+                       @latency_us = hist((nsecs - @start[tid]) / 1000);
+                       delete(@start[tid]);
+                   }'
+
+# 示例输出
+# @latency_us:
+# [1, 2)    1234 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+# [2, 4)    567  |@@@@@@@@@@@@@@@@@@@@                      |
+# [4, 8)    123  |@@@@                                      |
+#+end_src
+
+* 选择建议: 场景驱动
+
+| 场景                  | 推荐方案                     | 原因                      |
+|---------------------|--------------------------|-------------------------|
+| 超低延迟 (<100 ns)       | 共享内存 + 自旋轮询 / SPSC 队列   | 纯缓存操作，无系统调用             |
+| 中等延迟 (100-1000 ns)   | 无锁队列 / SeqLock          | 跨核可接受，争用低               |
+| 低频通知 (<1000 次/秒)    | 互斥锁 + 条件变量               | 简单安全，系统调用开销可忽略          |
+| 事件驱动架构             | =eventfd= + =epoll=      | 与 I/O 多路复用结合良好          |
+| 进程间通信               | UNIX socket / 共享内存       | 跨进程，需内核隔离               |
+| 高争用场景               | 分片锁 / 读写锁 / 无锁哈希表       | 降低单点争用                  |
+| 实时系统 (硬实时)          | 避免阻塞原语，使用自旋 + 优先级调度     | 不能接受不确定延迟               |
+| 移动设备 / 嵌入式         | 避免自旋，优先使用系统原语           | 功耗敏感                    |
+| 批量数据传输             | =pipe= / UNIX socket      | 适合大块数据                  |
+| 单向通知 (无数据)          | =eventfd= / 条件变量         | 最轻量                     |
+
+* 总结
+
+线程间通信的性能跨越了 *4 个数量级*:
+
+- *10 cycles* (共享内存 + 同核轮询) → *50,000 cycles* (阻塞系统调用)
+
+选择方案时需要权衡:
+
+1. *延迟 vs. 吞吐量*: 自旋快但烧 CPU，阻塞慢但省电
+2. *简单性 vs. 性能*: 互斥锁易用但慢，无锁难写但快
+3. *通用性 vs. 专用性*: socket 通用但慢，共享内存快但只限线程
+4. *确定性 vs. 平均性能*: 自旋延迟稳定，阻塞延迟波动大
+
+** 核心原则
+
+- *测量，不要猜测*: 用 =perf= 和 =rdtsc= 实测
+- *避免过早优化*: 先用简单方案 (互斥锁)，性能瓶颈再优化
+- *理解硬件*: 缓存一致性、NUMA、上下文切换都是真实成本
+- *关注长尾延迟*: 平均性能好不代表没有卡顿
+
+** 混合方案
+
+在实际工程中，往往是 *混合方案*:
+
+- 关键路径用无锁队列
+- 非关键路径用条件变量
+- 批量处理用 pipe
+- 事件通知用 eventfd
+
+例如一个实时音频处理系统:
+
+#+begin_example
+音频回调线程 (SPSC 队列，10-30 cycles)
+    ↓
+DSP 处理线程 (无锁)
+    ↓
+文件写入线程 (互斥锁 + 条件变量，3000 cycles 可接受)
+#+end_example
+
+理解每种方案的成本，才能做出正确的架构决策。
+
+* 参考资料与进一步阅读
+
+- [[https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html][Intel® 64 and IA-32 Architectures Software Developer's Manual]]
+- [[https://man7.org/linux/man-pages/man2/futex.2.html][Linux futex(2) man page]]
+- [[https://en.cppreference.com/w/cpp/atomic/memory_order][C++ memory_order documentation]]
+- [[https://rigtorp.se/ringbuffer/][Erik Rigtorp's SPSC Queue implementation]]
+- [[https://www.kernel.org/doc/Documentation/vm/numa][Linux NUMA documentation]]

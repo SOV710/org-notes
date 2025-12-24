@@ -1,0 +1,1340 @@
+#+title: Censorship Circumvention Protocols: A Technical Survey from Shadowsocks to Hysteria2
+#+author: SOV710
+#+date: 2025-12-23
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 为什么需要混淆和加密协议
+
+在一个理想的互联网世界中，我们不需要这些协议。但现实是，全球有数十亿人生活在网络审查之下。深度包检测 (DPI, Deep Packet Inspection)、主动探测 (Active Probing)、TLS 指纹识别 (TLS Fingerprinting)、流量分析 (Traffic Analysis)——审查者的武器库在不断扩充。
+
+这场猫鼠游戏的核心矛盾在于: *审查者需要区分 "正常流量" 和 "代理流量"，而代理协议的目标是让这种区分变得不可能。*
+
+本文将从技术角度剖析当前主流的混淆加密协议，理解它们的设计原理、攻防博弈，以及各自的优劣。
+
+* 协议分类体系
+
+在深入具体协议之前，我们需要理解混淆加密协议的分类逻辑。这些协议可以从多个维度分类:
+
+** 按伪装策略分类
+
+*** 1. 随机化流量 (Entropy-based)
+
+*代表协议*: Shadowsocks, ShadowsocksR
+
+*核心思路*: 将所有数据加密为高熵的均匀随机字节流，不留任何协议特征。
+
+*优势*:
+- 实现简单，性能优秀
+- 无明显协议签名
+
+*劣势*:
+- 高熵流量本身就是特征 (在某些网络环境下很少见)
+- 容易被统计学分析识别
+- 缺乏可信的掩护故事 (plausible deniability)
+
+*** 2. 协议模仿 (Protocol Mimicry)
+
+*代表协议*: Trojan, FTE, meek
+
+*核心思路*: *完全* 模仿某个广泛使用的协议 (如 HTTPS, HTTP/3)，从协议层面无法区分。
+
+*优势*:
+- 有可信的掩护故事
+- 流量特征与真实协议一致
+- 难以通过协议分析识别
+
+*劣势*:
+- 实现复杂度高
+- 必须完美模仿，否则反而暴露特征
+- 某些协议 (如 TLS) 的指纹仍可能泄露
+
+*** 3. 隧道封装 (Tunneling)
+
+*代表协议*: V2Ray/Xray (WebSocket/gRPC/HTTP/2 传输)
+
+*核心思路*: 将代理流量封装在合法协议 (如 WebSocket, gRPC) 内部传输。
+
+*优势*:
+- 依附于成熟协议栈
+- 可以利用 CDN 等基础设施
+- 多层封装增加识别难度
+
+*劣势*:
+- 性能开销较大
+- 依赖外层协议的安全性
+- 某些封装方式 (如 WebSocket over TLS) 仍有特征
+
+** 按传输层协议分类
+
+*** TCP-based
+
+传统代理协议几乎全部基于 TCP:
+
+- Shadowsocks (TCP + UDP)
+- Trojan (TCP)
+- V2Ray VMess (TCP)
+
+*优势*:
+- 成熟可靠，NAT 穿透好
+- 兼容性强
+
+*劣势*:
+- TCP 的拥塞控制在弱网环境下性能差
+- 头部阻塞 (Head-of-line Blocking)
+- 容易被 QoS 限速
+
+*** UDP-based / QUIC-based
+
+新一代协议几乎全部基于 QUIC (UDP):
+
+- Hysteria / Hysteria2
+- TUIC
+- Juicity
+
+*优势*:
+- 弱网环境性能优秀
+- 无头部阻塞
+- 连接迁移 (Connection Migration)
+
+*劣势*:
+- 某些 ISP 限制 UDP 或 QUIC
+- 特征相对明显 (虽然伪装为 HTTP/3)
+- 实现复杂度高
+
+*** VPN 协议
+
+专门设计的 VPN 协议:
+
+- WireGuard (UDP)
+- AmneziaWG (WireGuard + 混淆)
+
+*特点*:
+- 原生 VPN 功能，全局流量转发
+- 性能优秀，代码简洁
+- 但流量特征明显，容易被识别
+
+** 按安全模型分类
+
+*** Pre-Shared Key (PSK)
+
+*代表*: Shadowsocks, WireGuard
+
+客户端和服务器共享一个密钥，用于认证和加密。
+
+*优势*: 简单高效
+
+*劣势*: 密钥泄露风险，密钥分发问题
+
+*** TLS-based
+
+*代表*: Trojan, NaiveProxy, ShadowTLS
+
+使用标准 TLS 握手和证书体系。
+
+*优势*: 利用成熟的 PKI 体系，流量与 HTTPS 无异
+
+*劣势*: 需要域名和证书，TLS 指纹仍可能泄露
+
+*** Custom Authentication
+
+*代表*: VMess, VLESS
+
+自定义的认证机制，通常包含时间戳、UUID 等。
+
+*优势*: 灵活可扩展
+
+*劣势*: 容易出现设计缺陷 (如 VMess 的重放攻击漏洞)
+
+* 基础代理协议: 随机化流量的先驱
+
+** Shadowsocks (2012): 简单而优雅
+
+Shadowsocks (简称 ss) 是最早的现代混淆代理协议之一，由 @clowwindy 在 2012 年创建。它的设计哲学是: *通过加密将流量变为均匀随机的字节流，不留任何协议特征。*
+
+*** 核心设计
+
+Shadowsocks 不模仿任何协议，而是将所有数据加密为高熵流。审查者看到的只是一堆随机字节，无法判断这是什么协议。
+
+*工作流程*:
+
+1. 客户端发起连接，生成随机 *salt* (16 或 32 字节)
+2. 使用 salt 和 pre-shared key 通过 *HKDF-SHA1* 派生会话密钥 (session subkey)
+3. 所有后续数据用 AEAD 加密: =[加密的长度][长度标签][加密的载荷][载荷标签]=
+
+*** 加密演进: 从 Stream Cipher 到 AEAD
+
+*早期 (2012-2017)*: 使用流密码 (Stream Cipher)
+
+- =aes-256-cfb=, =chacha20=, =rc4-md5=
+- *致命缺陷*: 无认证，容易被解密 Oracle 攻击
+
+2017 年，GFW Report 披露了 *分区 Oracle 攻击* (Partitioning Oracle Attack): 攻击者可以利用 Shadowsocks 服务器作为解密 Oracle，在不知道密钥的情况下解密历史流量！
+
+*现代 (2017 至今)*: 强制使用 AEAD 加密
+
+标准方案 (SIP004/SIP007):
+
+- *推荐*: =chacha20-ietf-poly1305=, =aes-256-gcm=
+- *机制*: Authenticated Encryption with Associated Data
+  - 每个数据块包含: =[长度][长度 MAC][数据][数据 MAC]=
+  - 任何篡改都会导致解密失败
+- *Nonce 管理*: 每个数据块用递增的 nonce (从 0 开始)
+
+*2022 版本 (SIP022)*: 进一步强化
+
+- 引入 *独立的 header chunk*​，防止重放攻击
+- 支持 =2022-blake3-aes-128-gcm=, =2022-blake3-aes-256-gcm=
+- 每个请求和响应流都有独立的 salt 和会话密钥
+
+*** 实际数据结构
+
+*TCP 流*:
+
+#+begin_example
+[16/32B salt][加密的 header chunk][header MAC]
+[2B 加密长度][长度 MAC][N B 加密载荷][载荷 MAC]
+[2B 加密长度][长度 MAC][M B 加密载荷][载荷 MAC]
+...
+#+end_example
+
+*UDP 包*:
+
+#+begin_example
+[16/32B salt][加密的 SOCKS5 地址][地址 MAC][加密的载荷][载荷 MAC]
+#+end_example
+
+每个 UDP 包独立加密，使用全零 nonce。
+
+*** 安全性评估
+
+*优势*:
+
+- AEAD 加密保证机密性和完整性
+- 随机 salt 确保每个会话密钥唯一
+- 简单高效，代码量少 (官方 shadowsocks-libev 只有几千行 C 代码)
+
+*劣势*:
+
+1. *高熵流量特征*: 在某些网络环境 (如企业内网, 校园网) 中，持续的高熵流量非常罕见，容易被统计学识别
+2. *缺乏掩护故事*: 如果被质问 "这是什么流量"，无法给出合理解释
+3. *无抗主动探测*: 如果审查者随机发送数据，Shadowsocks 服务器会直接断开连接或无响应，这本身就是一个特征
+4. *固定端口特征*: 大多数用户使用常见端口 (8388, 8080 等)，容易被批量扫描
+
+*** GFW 的封锁历史
+
+- *2015 年*: GFW 开始通过统计学识别 Shadowsocks 流量 (连接时长、包大小分布)
+- *2020 年*: GFW Report 披露主动探测: GFW 会向疑似 Shadowsocks 服务器发送精心构造的数据，根据响应特征识别
+- *2021 年*: 大规模封锁使用弱密码 (短密码、常见密码) 的 Shadowsocks 服务器，利用分区 Oracle 攻击
+
+*防御建议* (GFW Report, 2021):
+
+1. *使用 AEAD 加密*: 禁用所有 stream cipher
+2. *长随机密码*: 至少 16 字节随机生成 (=openssl rand -base64 16=)
+3. *实现 replay filter*: 防止重放攻击
+4. *避免常见端口*: 使用随机高端口
+
+*** 实际使用
+
+#+begin_src json
+{
+  "server": "example.com",
+  "server_port": 8388,
+  "local_port": 1080,
+  "password": "your_long_random_password",
+  "method": "chacha20-ietf-poly1305",
+  "timeout": 300
+}
+#+end_src
+
+*性能*: 在中等质量网络 (100 Mbps, 50ms RTT) 下:
+
+- 延迟增加: ~5-10ms (加解密开销)
+- 吞吐量: 可达 500+ Mbps (单核)
+- CPU 占用: 低 (ChaCha20 在现代 CPU 上有硬件加速)
+
+** ShadowsocksR (2015): 争议的分支
+
+ShadowsocksR (SSR) 是由 @breakwa11 在 2015 年创建的 Shadowsocks 分支，引入了 *协议混淆* 和 *混淆插件*​。
+
+*** 核心改进
+
+1. *协议混淆层*: 在加密外层再加一层混淆
+   - =origin=: 不混淆
+   - =auth_aes128_md5=, =auth_aes128_sha1=: 添加认证头
+   - =auth_chain_a/b=: 更复杂的链式认证
+
+2. *混淆插件*:
+   - =plain=: 不混淆
+   - =http_simple=, =http_post=: 伪装为 HTTP 流量
+   - =tls1.2_ticket_auth=: 伪装为 TLS 握手
+
+*** 争议与衰落
+
+SSR 的历史充满争议:
+
+1. *社区分裂*: @clowwindy 被迫删除 Shadowsocks 仓库后，SSR 成为主要分支，但社区分裂严重
+2. *代码质量*: SSR 代码质量参差不齐，多次出现安全漏洞
+3. *过度工程*: 混淆层增加了复杂度，但效果有限 (后来被证明容易识别)
+4. *维护停滞*: 原作者 @breakwa11 在 2017 年后停止维护
+
+*现状*: SSR 已逐渐被淘汰，不建议新用户使用。现代方案 (Trojan, V2Ray) 提供了更好的混淆效果。
+
+** Brook: 极简主义的尝试
+
+Brook 是另一个基于随机化流量的代理协议，设计哲学是 "尽可能简单"。
+
+*特点*:
+
+- 单一二进制文件，Go 语言实现
+- 支持多种模式: server, client, wsserver, wsclient
+- 可选 WebSocket 封装
+
+*现状*: Brook 在中国大陆使用较少，主要流行于其他审查地区。相比 Shadowsocks, 没有明显优势。
+
+* V2Ray/Xray 系列: 模块化的瑞士军刀
+
+V2Ray (Project V) 和 Xray (Project X) 是模块化的代理平台，支持多种协议和传输方式的任意组合。
+
+** 架构设计
+
+V2Ray 的核心思想是 *分层*:
+
+1. *应用层协议*: VMess, VLESS, Trojan, Shadowsocks, SOCKS, HTTP
+2. *传输层*: TCP, mKCP (基于 KCP 的 UDP), WebSocket, HTTP/2, gRPC, QUIC
+3. *安全层*: TLS, XTLS, Reality
+4. *混淆层*: 路由规则, 分流, CDN 中转
+
+用户可以任意组合，例如:
+
+- =VMess + WebSocket + TLS + CDN= (流量通过 Cloudflare)
+- =VLESS + gRPC + TLS= (伪装为 gRPC 服务)
+- =Trojan + TCP + XTLS-Vision= (高性能 TLS)
+
+** VMess: V2Ray 的原生协议
+
+VMess (V2Ray Message) 是 V2Ray 最早的自定义协议。
+
+*** 设计特点
+
+1. *动态端口*: 理论上支持端口跳变 (实际少用)
+2. *时间戳认证*: 使用客户端时间戳防重放 (但这导致了问题)
+3. *UUID 认证*: 每个用户分配一个 UUID
+4. *加密*: AES-128-GCM, ChaCha20-Poly1305
+
+*** 数据结构
+
+*认证部分*:
+
+#+begin_example
+[16B 认证信息 HMAC] = HMAC(MD5(UUID), [时间戳][随机数][CRC32])
+#+end_example
+
+*加密载荷*:
+
+#+begin_example
+[1B 版本][16B IV][16B 加密的指令][变长 加密的数据][4B Checksum]
+#+end_example
+
+*** 安全问题
+
+VMess 曾被发现多个安全问题:
+
+1. *时间戳依赖*: 客户端和服务器时间必须同步 (误差 <2 分钟)，这本身是一个可利用的特征
+2. *重放攻击*: 早期版本未正确实现 replay filter
+3. *流量特征*: 认证头和加密结构有固定特征，容易被 DPI 识别
+
+*现状*: VMess 逐渐被 VLESS 取代，不建议新部署。
+
+** VLESS: 轻量化改进
+
+VLESS 是 Xray 项目提出的 "无状态轻量协议"，去除了 VMess 的复杂认证和加密层。
+
+*核心思路*: *把加密交给 TLS，协议本身只做最少的工作。*
+
+*** 数据结构
+
+#+begin_example
+[1B 版本][16B UUID][1B 附加信息长度][变长 指令][数据]
+#+end_example
+
+- 无复杂认证头
+- 无内层加密 (依赖 TLS)
+- 指令明文传输 (在 TLS 内)
+
+*** 优势
+
+1. *极简*: 代码量远小于 VMess
+2. *性能*: 无双重加密开销
+3. *安全*: 依赖成熟的 TLS 1.3
+4. *兼容*: 可与 XTLS, Reality 等扩展结合
+
+*现状*: VLESS 是目前 Xray 推荐的协议，配合 XTLS-Vision 或 Reality 使用。
+
+** XTLS: 消除双重加密
+
+XTLS (Xray TLS) 是 Xray 项目的核心创新，解决了一个长期存在的问题: *TLS 内再套 TLS 的双重加密浪费*​。
+
+*** 问题背景
+
+传统 TLS 代理 (如 Trojan) 的数据路径:
+
+#+begin_example
+浏览器 → TLS(内层, 访问目标网站) → 代理协议加密 → TLS(外层, 代理连接) → 代理服务器
+#+end_example
+
+这导致:
+
+- *双重加密*: 目标网站的 TLS 被代理协议再次加密，性能开销大
+- *流量膨胀*: TLS 头部被再次封装
+
+*** XTLS 方案
+
+XTLS 的核心是 *TLS Splice*: 检测内层 TLS 流量，将其 "直通" 到外层 TLS，避免双重加密。
+
+*XTLS-Direct*: 直接转发内层 TLS 的原始数据 (已废弃, 有安全问题)
+
+*XTLS-Vision*: 改进版，只在 TLS 握手后进行 splice
+
+*工作流程*:
+
+1. 客户端与代理建立外层 TLS 连接
+2. 客户端请求访问 HTTPS 网站
+3. 代理检测到内层 TLS Client Hello
+4. *Splice 激活*: 后续数据直接转发，不经过代理协议加密
+5. 从审查者视角: 只看到一条普通的 TLS 连接
+
+*性能提升*:
+
+- CPU 占用: 降低 50%+
+- 延迟: 降低 5-10ms
+- 吞吐量: 提升 30-50%
+
+*** Reality: 终极 TLS 伪装
+
+Reality 是 Xray 在 2023 年推出的 "完美 TLS 伪装" 方案，解决了以下问题:
+
+1. *SNI 过滤*: 审查者可以通过 TLS Client Hello 中的 SNI 域名封锁
+2. *证书特征*: 代理服务器的自签名证书容易识别
+3. *TLS 指纹*: Go 标准库的 TLS 实现有独特指纹
+
+*Reality 的方案*:
+
+*核心技巧*: 从真实网站 "借用" TLS Server Hello！
+
+1. 代理服务器预先从目标网站 (如 =www.apple.com=) 抓取 TLS Server Hello
+2. 客户端发起连接时，携带认证信息 (隐藏在 TLS 扩展中)
+3. 服务器返回 *真实网站的 Server Hello*​，包含真实证书
+4. 如果认证失败，服务器将连接转发给真实网站 (审查者只看到正常的 =apple.com= 访问)
+
+*从审查者视角*:
+
+- TLS 握手: 完全与 =apple.com= 一致
+- 证书: 真实的 Apple 证书
+- SNI: 可以是任意值 (甚至空)
+- 流量特征: 与访问 Apple 官网无异
+
+*配置示例*:
+
+#+begin_src json
+{
+  "protocol": "vless",
+  "settings": {
+    "clients": [{"id": "uuid", "flow": "xtls-rprx-vision"}]
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "reality",
+    "realitySettings": {
+      "dest": "www.apple.com:443",
+      "serverNames": ["www.apple.com"],
+      "privateKey": "...",
+      "shortIds": ["0123456789abcdef"]
+    }
+  }
+}
+#+end_src
+
+*安全性*: Reality 是目前抗审查能力最强的方案之一，即使 GFW 获取客户端也难以封锁 (因为无法区分真实访问)。
+
+** 传输层协议: 多样化封装
+
+V2Ray/Xray 支持多种传输层协议，用于不同的伪装场景。
+
+*** WebSocket
+
+将代理流量封装在 WebSocket 内:
+
+#+begin_example
+客户端 → WebSocket (wss://) → CDN/反向代理 → 服务器
+#+end_example
+
+*优势*:
+
+- 可以使用 CDN (如 Cloudflare) 隐藏真实 IP
+- 流量看起来像普通 WebSocket 应用
+
+*劣势*:
+
+- 性能开销较大 (HTTP 头部, WebSocket 分帧)
+- CDN 可能限速或记录日志
+
+*** gRPC
+
+将代理流量封装在 gRPC (HTTP/2) 内:
+
+*优势*:
+
+- gRPC 是企业级协议，流量更 "正常"
+- HTTP/2 多路复用，效率高
+- 可配合 CDN 使用
+
+*劣势*:
+
+- 配置复杂
+- 某些 CDN 不支持 gRPC
+
+*** mKCP
+
+基于 *KCP* 协议 (快速可靠的 ARQ 协议) 的 UDP 传输:
+
+*特点*:
+
+- *弱网优化*: KCP 在丢包率高的网络下性能优于 TCP
+- *伪装头*: 可以伪装为 SRTP, uTP, DTLS 等 UDP 协议
+
+*劣势*:
+
+- UDP 流量容易被 QoS 限制
+- 某些 ISP 完全阻断 UDP
+
+*** QUIC
+
+早期 V2Ray 实现的 QUIC 支持 (基于 gQUIC, 已过时)。
+
+*现状*: 已被 Hysteria, TUIC 等专门的 QUIC 代理取代。
+
+* Tor 可插拔传输: 学术界的贡献
+
+Tor 项目 (The Onion Router) 长期致力于抗审查研究，提出了 *可插拔传输* (Pluggable Transports) 框架，允许 Tor 使用不同的混淆层。
+
+** 早期协议 (已废弃)
+
+*** obfs2 / obfs3
+
+最早的流量混淆方案，简单地对流量进行随机化。
+
+*废弃原因*: 容易被 DPI 识别 (固定的握手模式)
+
+*** ScrambleSuit
+
+改进的随机化方案，使用 *Session Ticket* 机制隐藏握手。
+
+*废弃原因*: 仍然有统计学特征
+
+** 现代协议
+
+*** obfs4
+
+obfs4 是 Tor 目前主要的混淆协议，基于 ScrambleSuit 改进。
+
+*核心特性*:
+
+1. *动态握手*: 握手数据包大小和时序随机化
+2. *IAT 混淆*: Inter-Arrival Time (包间隔时间) 混淆
+3. *长度混淆*: 数据包填充至随机长度
+
+*流量特征*:
+
+- 看起来像 "某种未知的加密协议"
+- 无明显的 TLS, HTTP 等特征
+
+*现状*: obfs4 被 Tor Browser 广泛使用，但在中国大陆容易被识别和封锁。
+
+*** meek
+
+meek 是一种 *域前置* (Domain Fronting) 技术。
+
+*工作原理*:
+
+1. 客户端连接到 CDN (如 Azure, Cloudflare) 的某个允许域名 (如 =ajax.microsoft.com=)
+2. 在 *TLS 内部* 的 HTTP Host 头中指定真实的 Tor 中继域名
+3. CDN 根据内部 Host 头将流量转发到 Tor 中继
+
+*从审查者视角*:
+
+- TLS SNI: =ajax.microsoft.com= (合法)
+- 无法看到内部 HTTP Host (TLS 加密)
+- 流量看起来像访问 Microsoft 服务
+
+*现状*:
+
+- *2018 年*: Google, Amazon, Microsoft 先后禁用域前置 (在审查者压力下)
+- meek 仍可用，但可用的 CDN 越来越少
+
+*** Snowflake
+
+Snowflake 是一种 *临时代理* 方案，利用浏览器的 WebRTC 技术。
+
+*工作原理*:
+
+1. 志愿者在浏览器中运行 Snowflake 扩展，成为临时代理
+2. 审查区域的用户通过 WebRTC 连接到这些临时代理
+3. 代理将流量转发到 Tor 网络
+
+*优势*:
+
+- *动态 IP*: 每次连接的代理 IP 不同，难以封锁
+- *低门槛*: 任何人都可以成为代理 (只需安装浏览器扩展)
+
+*劣势*:
+
+- 性能不稳定 (依赖志愿者的网络)
+- 延迟较高
+
+*现状*: Snowflake 在伊朗、俄罗斯等地广泛使用，中国大陆部分可用。
+
+*** FTE (Format-Transforming Encryption)
+
+FTE 通过 *正则表达式* 定义流量格式，将加密数据伪装为符合该格式的流量。
+
+*示例*:
+
+- 定义正则: =^GET / HTTP/1\.1\r\nHost: [a-z]+\.com\r\n\r\n$=
+- FTE 将加密数据编码为符合该正则的 HTTP 请求
+
+*现状*: FTE 是学术项目，实际使用较少 (性能开销大)。
+
+*** WebTunnel
+
+WebTunnel 是 Tor 的最新混淆协议 (2023 年)，伪装为标准的 *HTTPS 流量*。
+
+*核心改进*:
+
+- 使用标准 HTTP/1.1 或 HTTP/2
+- 流量模式与普通 Web 浏览无异
+- 支持 CDN 中转
+
+*现状*: 正在逐步推广，尚未被大规模部署。
+
+* TLS/HTTPS 伪装: 最可信的掩护
+
+基于 TLS 的伪装协议是目前最主流的方案，核心思路是: *让代理流量在协议层面与 HTTPS 完全一致。*
+
+** Trojan: 简单而有效
+
+Trojan 由 @trojan-gfw 在 2017 年提出，设计目标是 "尽可能像普通的 HTTPS 服务器"。
+
+*** 核心设计
+
+*工作流程*:
+
+1. 客户端与服务器建立 *真实的 TLS 1.2/1.3 连接* (443 端口)
+2. TLS 握手后，客户端发送认证信息:
+   #+begin_example
+   [SHA-224(password)][CRLF][SOCKS5 地址][CRLF][载荷]
+   #+end_example
+3. 服务器验证 SHA-224 哈希:
+   - *正确*: 作为代理转发流量
+   - *错误*: 转发到后端 Web 服务器 (如 Nginx 托管的真实网站)
+
+*关键特性*:
+
+- *真实 TLS*: 使用标准库 (OpenSSL, BoringSSL)，完全符合 RFC
+- *真实证书*: 使用 Let's Encrypt 等 CA 签发的合法证书
+- *回落机制*: 非法连接看到真实网站，无法探测
+
+*** 从审查者视角
+
+审查者看到的:
+
+1. *TLS 握手*: 与访问 =example.com= 完全一致
+2. *证书*: 合法的 Let's Encrypt 证书
+3. *流量模式*: 持续的 HTTPS 流量 (无明显特征)
+
+如果审查者主动探测 (发送非法认证):
+
+- *返回*: 真实网站的 HTTP 响应 (如 Nginx 默认页面)
+- *无法区分*: 与普通 Web 服务器无异
+
+*** 安全性与局限
+
+*优势*:
+
+- 协议层面无懈可击
+- 无需复杂配置
+- 性能优秀 (纯 TLS, 无额外加密)
+
+*局限*:
+
+1. *TLS 指纹*: Trojan 使用的 TLS 库 (如 Go 的 crypto/tls) 有独特指纹
+   - *解决方案*: 使用 uTLS 库伪装为 Chrome, Firefox 等浏览器的指纹
+
+2. *流量模式*: 长时间的持续流量可能与普通 Web 浏览不同
+   - *缓解*: 使用 CDN 中转，流量经过 Cloudflare 等
+
+3. *主动探测的限制*: 如果审查者已知某个 IP 是 Trojan 服务器，可以暴力尝试所有可能的密码
+   - *缓解*: 使用长随机密码 (不是弱密码如 ="password123"=)
+
+*** 2022 年 10 月的封锁
+
+2022 年 10 月 3 日，中国大陆发生了 *大规模 TLS 代理封锁事件*:
+
+- Trojan, Trojan-Go, V2Ray+TLS 等协议几乎全部失效
+- 封锁机制: *TLS 指纹识别* (Go 的 crypto/tls 库指纹被加入黑名单)
+
+*应对方案*:
+
+- 使用 *uTLS* 库伪装指纹 (模仿 Chrome, Firefox, iOS Safari)
+- 切换到 Reality, NaiveProxy 等更激进的方案
+
+*** 配置示例
+
+*服务器* (Trojan-Go + uTLS):
+
+#+begin_src json
+{
+  "run_type": "server",
+  "local_addr": "0.0.0.0",
+  "local_port": 443,
+  "remote_addr": "127.0.0.1",
+  "remote_port": 80,
+  "password": ["your_long_random_password"],
+  "ssl": {
+    "cert": "/path/to/fullchain.pem",
+    "key": "/path/to/privkey.pem",
+    "sni": "example.com",
+    "fingerprint": "chrome"
+  }
+}
+#+end_src
+
+*客户端*:
+
+#+begin_src json
+{
+  "run_type": "client",
+  "local_addr": "127.0.0.1",
+  "local_port": 1080,
+  "remote_addr": "example.com",
+  "remote_port": 443,
+  "password": ["your_long_random_password"],
+  "ssl": {
+    "sni": "example.com",
+    "fingerprint": "chrome"
+  }
+}
+#+end_src
+
+** NaiveProxy: Chromium 级别的完美伪装
+
+NaiveProxy 由 Google Chrome 工程师 @klzgrad 开发，采用了一种极端的方案: *直接使用 Chromium 的网络栈*​。
+
+*** 核心思路
+
+*问题*: 即使使用 uTLS 模仿浏览器指纹，仍然有细微差异 (如 TLS 扩展的顺序, 加密套件的选择)。
+
+*NaiveProxy 的方案*: 既然模仿不完美，那就 *用真的*！
+
+- 客户端: 使用 Chromium 的 *cronet* 网络库 (Chrome 的底层网络栈)
+- 服务器: 基于 Caddy Web 服务器的 *forwardproxy* 插件
+
+*从审查者视角*:
+
+- TLS 指纹: *完全* 与 Chrome 浏览器一致 (因为就是 Chrome 的代码)
+- HTTP 行为: *完全* 与 Chrome 一致 (User-Agent, HTTP/2 设置等)
+
+*** 工作流程
+
+1. 客户端使用 Chromium 网络栈连接到 Caddy 服务器 (HTTPS)
+2. 使用 *HTTP CONNECT* 方法建立隧道:
+   #+begin_example
+   CONNECT example.com:443 HTTP/1.1
+   Host: proxy.example.com
+   Proxy-Authorization: Basic base64(username:password)
+   #+end_example
+3. Caddy 的 forwardproxy 插件验证认证并建立隧道
+4. 后续流量在隧道内传输
+
+*关键特性*:
+
+- *Padding*: NaiveProxy 对所有数据包进行填充，消除长度特征
+- *Cache partitioning*: 实现 Chrome 的缓存分区机制，进一步降低特征
+- *HTTP/2 SETTINGS*: 完全模仿 Chrome 的 HTTP/2 配置
+
+*** 性能与安全
+
+*优势*:
+
+- *无懈可击的伪装*: 即使获取客户端，审查者也无法写出 DPI 规则 (因为会误杀所有 Chrome 流量)
+- *QUIC 支持*: 可以使用 HTTP/3 (QUIC) 传输
+
+*劣势*:
+
+- *部署复杂*: 需要编译特殊版本的 Caddy
+- *性能开销*: Chromium 网络栈比简单的 TLS 库开销大
+- *不支持 UDP 转发*: 只能代理 TCP
+
+*** 配置示例
+
+*服务器* (Caddyfile):
+
+#+begin_src caddyfile
+{
+  order forward_proxy before file_server
+}
+
+:443, proxy.example.com:443 {
+  tls /path/to/fullchain.pem /path/to/privkey.pem
+
+  forward_proxy {
+    basic_auth user password
+    hide_ip
+    hide_via
+    probe_resistance
+  }
+
+  file_server {
+    root /var/www/html
+  }
+}
+#+end_src
+
+*客户端*:
+
+#+begin_src json
+{
+  "listen": "socks://127.0.0.1:1080",
+  "proxy": "https://user:password@proxy.example.com"
+}
+#+end_src
+
+** ShadowTLS: 理论完美的方案
+
+ShadowTLS 由 @ihciah 在 2023 年提出，目标是解决 Trojan 的核心问题: *如何让服务端也没有 TLS 指纹*​。
+
+*** Trojan 的遗留问题
+
+Trojan 的问题在于:
+
+- *服务端*: 使用自己的 TLS 实现 (Go, Rust 等)，有独特指纹
+- *客户端*: 即使用 uTLS 伪装，仍可能有 Application Data 的流量模式差异
+
+*** ShadowTLS 的方案
+
+*核心技巧*: *中间人自己*​。
+
+*v2 协议*:
+
+1. 客户端与 ShadowTLS 服务器建立连接
+2. ShadowTLS 服务器与 *真实网站* (如 =cloud.tencent.com=) 建立 TLS 连接
+3. *转发 TLS 握手*:
+   - Client → ShadowTLS → Real Site
+   - Real Site → ShadowTLS → Client
+4. 握手完成后，ShadowTLS 检测客户端发送的数据:
+   - *包含密码哈希*: 进入代理模式
+   - *不包含*: 继续转发到真实网站
+
+*从审查者视角*:
+
+- *Server Hello*: 来自真实网站 (如腾讯云)，证书、加密套件完全真实
+- *流量模式*: 与访问腾讯云无异
+
+*v3 协议*:
+
+进一步改进，使用 *strict mode*:
+
+- 客户端在 TLS 握手的 *Application Data* 阶段注入密码
+- 更难被主动探测识别
+
+*** 安全性分析
+
+*优势*:
+
+- *理论完美*: 从协议层面无法区分与真实网站的访问
+- *无服务端指纹*: 服务端只是转发，不暴露任何特征
+
+*局限*:
+
+1. *依赖目标网站*: 如果目标网站 (如 =cloud.tencent.com=) 被封锁，ShadowTLS 也会失效
+2. *流量模式*: 如果代理流量的模式与访问目标网站的正常模式差异过大，仍可能被统计学识别
+3. *性能开销*: 转发握手增加一跳延迟
+
+*** 配置示例
+
+#+begin_src toml
+[server]
+listen = "0.0.0.0:443"
+server_name = "cloud.tencent.com"  # 目标网站
+password = "your_password"
+upstream = "127.0.0.1:1080"  # 后端代理 (如 Shadowsocks)
+
+[client]
+server = "proxy.example.com:443"
+server_name = "cloud.tencent.com"
+password = "your_password"
+listen = "127.0.0.1:1080"
+#+end_src
+
+* 新一代高性能协议: QUIC 的崛起
+
+基于 QUIC 的新一代代理协议是最近几年的热点，核心优势是 *在弱网环境下的性能*。
+
+** QUIC 协议简介
+
+QUIC (Quick UDP Internet Connections) 最初由 Google 开发，后标准化为 RFC 9000。
+
+*核心特性*:
+
+1. *基于 UDP*: 避免 TCP 的队头阻塞
+2. *0-RTT 连接*: 重连时无需握手 (类似 TLS 1.3 session ticket)
+3. *连接迁移*: 切换网络 (如 Wi-Fi → 4G) 时连接不断
+4. *内置加密*: 类似 TLS 1.3 的加密层
+5. *多路复用*: 多个流在一个连接内并行，流之间独立
+
+*vs. TCP*:
+
+| 特性    | TCP                   | QUIC           |
+|---------+-----------------------+----------------|
+| 传输层   | TCP                   | UDP            |
+| 队头阻塞 | 是 (一个包丢失阻塞所有流) | 否 (流独立)     |
+| 连接建立 | 3 次握手 + TLS 握手     | 1-RTT 或 0-RTT |
+| 连接迁移 | 不支持                 | 支持           |
+| 拥塞控制 | 固定算法 (Cubic 等)     | 可插拔          |
+
+** Hysteria: 暴力美学
+
+Hysteria 由中国开发者 @HyNetwork 创建，设计目标是 *在弱网环境下榨干带宽*。
+
+*** 核心创新: Brutal 拥塞控制
+
+传统拥塞控制 (如 TCP Cubic, BBR) 的目标是 *公平*: 检测到丢包时减速，与其他流量共享带宽。
+
+Hysteria 的 *Brutal* 算法反其道而行:
+
+*目标*: 达到用户指定的目标速率, *无论丢包率多高*​。
+
+*工作原理*:
+
+1. 用户指定带宽 (如 100 Mbps)
+2. Brutal 以该速率发送数据
+3. 检测到丢包 → *不减速*, 反而 *增加发送速率* 来补偿丢失的包
+4. 动态调整直到达到目标速率
+
+*公式*:
+
+#+begin_example
+实际发送速率 = 目标速率 / (1 - 丢包率)
+
+例如: 目标 100 Mbps, 丢包率 10%
+实际发送 = 100 / 0.9 ≈ 111 Mbps
+#+end_example
+
+*适用场景*:
+
+- *独占链路*: 你是唯一用户 (如家庭宽带)
+- *弱网环境*: 高延迟或高丢包率 (如卫星网络, 跨国专线)
+
+*不适用*:
+
+- *共享网络*: 会抢占其他用户的带宽 (不公平)
+- *不知道带宽*: 必须准确指定，否则效果差
+
+*** Hysteria 协议设计
+
+*传输层*: QUIC (UDP)
+
+*伪装*: 模仿 HTTP/3
+
+*认证*: 类似 Trojan, 使用密码哈希
+
+*数据结构*:
+
+#+begin_example
+Client Hello: HTTP/3 request (GET /)
+  Header: Hysteria-Auth: base64(password)
+  Header: Hysteria-CC-RX: target_rx_rate
+
+Server Response:
+  Status: 233 (自定义状态码, 表示认证成功)
+  Header: Hysteria-CC-TX: target_tx_rate or "auto"
+
+后续:
+  Stream: TCP 转发
+  Datagram: UDP 转发
+#+end_example
+
+*如果认证失败*: 返回标准 HTTP 404 错误，伪装为普通 Web 服务器。
+
+*** Salamander 混淆
+
+Hysteria 支持可选的 *Salamander* 混淆层，将 QUIC 包伪装为随机字节:
+
+*工作原理*:
+
+1. 对每个 QUIC 包:
+   - 生成随机 8 字节 salt
+   - 计算 =BLAKE2b-256(salt || password)=
+   - 用哈希值 XOR 加密 QUIC 包
+
+*目的*: 如果 QUIC/HTTP/3 被封锁，使用 Salamander 让流量看起来像随机 UDP。
+
+*** Hysteria2 改进
+
+Hysteria2 (2023 年发布) 是完全重写的版本:
+
+*改进*:
+
+1. *更简单的协议*: 去除冗余字段
+2. *BBR 支持*: 如果不指定带宽，自动使用 BBR 算法 (更公平)
+3. *更好的 UDP 支持*: 改进 UDP 分片机制
+
+*现状*: Hysteria2 是目前最流行的 QUIC 代理之一，在弱网环境下性能优异。
+
+*** 配置示例
+
+*服务器*:
+
+#+begin_src yaml
+listen: :443
+
+acme:
+  domains:
+    - proxy.example.com
+  email: your@email.com
+
+auth:
+  type: password
+  password: your_password
+
+bandwidth:
+  up: 100 mbps
+  down: 100 mbps
+
+masquerade:
+  type: proxy
+  proxy:
+    url: https://news.ycombinator.com
+    rewriteHost: true
+#+end_src
+
+*客户端*:
+
+#+begin_src yaml
+server: proxy.example.com:443
+
+auth: your_password
+
+bandwidth:
+  up: 20 mbps
+  down: 100 mbps
+
+socks5:
+  listen: 127.0.0.1:1080
+
+http:
+  listen: 127.0.0.1:8080
+#+end_src
+
+*** 性能测试
+
+*场景*: 跨国链路 (中国 → 美国)
+
+- 延迟: 150ms
+- 丢包率: 5%
+- 带宽: 100 Mbps
+
+*结果*:
+
+| 协议              | 吞吐量   | 延迟  |
+|-------------------+---------+-------|
+| TCP (Trojan)      | 40 Mbps | 200ms |
+| BBR (TUIC)        | 60 Mbps | 180ms |
+| Brutal (Hysteria) | *95 Mbps* | *160ms* |
+
+*结论*: Hysteria 在弱网环境下性能远超 TCP, 接近理论带宽上限。
+
+** TUIC: 优雅的替代方案
+
+TUIC (TCP over UDP Internet Connections) 是另一个基于 QUIC 的代理协议。
+
+*vs. Hysteria*:
+
+- *拥塞控制*: 默认使用 *Cubic* 或 *BBR*, 更温和
+- *设计目标*: 通用性而非极致性能
+- *协议复杂度*: 更简单
+
+*现状*: TUIC 在性能和稳定性之间取得平衡，适合不知道确切带宽的场景。
+
+** Juicity: QUIC + 路由优化
+
+Juicity 是最新的 QUIC 代理，特点是集成了 *智能路由*:
+
+- *自动选路*: 根据延迟和丢包率自动选择最优路径
+- *多服务器负载均衡*: 可以同时连接多个服务器
+
+*现状*: 仍在开发中，社区较小。
+
+** QUIC 协议的局限
+
+尽管 QUIC 性能优秀，但也有明显缺点:
+
+1. *UDP 限制*: 某些 ISP 限制或屏蔽 UDP
+2. *QoS 歧视*: UDP 流量可能被优先丢弃
+3. *特征明显*: QUIC 的包头有固定特征，容易被 DPI 识别
+4. *CPU 开销*: QUIC 实现比 TCP 复杂，CPU 占用更高
+
+*建议*: QUIC 协议适合作为 *备选方案*，主力仍应使用 TLS 伪装 (Trojan, Reality 等)。
+
+* VPN 协议与混淆: 全局流量转发
+
+VPN 协议与代理协议的核心区别:
+
+- *代理*: 应用层，转发特定流量 (如浏览器)
+- *VPN*: 网络层，转发所有流量 (IP 层)
+
+** WireGuard: 现代 VPN 的标杆
+
+WireGuard 由 @zx2c4 开发，设计目标是 "简单、快速、安全"。
+
+*核心优势*:
+
+1. *代码量极少*: 内核模块只有 4000 行 C 代码 (OpenVPN 有 10 万+ 行)
+2. *性能优秀*: 比 OpenVPN 快 3-5 倍
+3. *现代加密*: Curve25519, ChaCha20, Poly1305
+4. *无状态*: 配置即策略，无运行时状态
+
+*工作原理*:
+
+- 使用 *Noise Protocol Framework* 进行密钥交换
+- 每个 peer 有一个公钥/私钥对
+- 通过 UDP 传输加密的 IP 包
+
+*配置示例*:
+
+#+begin_src ini
+[Interface]
+PrivateKey = <client_private_key>
+Address = 10.0.0.2/24
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = <server_public_key>
+Endpoint = proxy.example.com:51820
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
+#+end_src
+
+*局限*:
+
+- *流量特征明显*: WireGuard 的包头有固定格式，容易被 DPI 识别
+- *无混淆*: 原生不支持任何混淆
+
+*封锁状况*:
+
+- 中国: WireGuard 在 2019-2020 年被大规模封锁
+- 伊朗: 2022 年起封锁 WireGuard
+
+** AmneziaWG: 混淆的 WireGuard
+
+AmneziaWG 是 WireGuard 的 fork，增加了混淆功能。
+
+*改进*:
+
+1. *修改包头常数*: 将 WireGuard 的固定魔数 (=0x01000000=) 改为随机值
+2. *垃圾数据填充*: 在包中插入随机数据
+3. *Junk Packet*: 发送无意义的包以干扰流量分析
+
+*效果*: AmneziaWG 能绕过简单的 DPI, 但仍可能被统计学识别。
+
+** udp2raw: UDP 伪装为 TCP
+
+udp2raw 是一个 UDP 隧道工具，将 UDP 流量 *伪装为 TCP*。
+
+*使用场景*:
+
+- ISP 限制或丢弃 UDP
+- 结合 WireGuard 使用: =WireGuard (UDP) → udp2raw → TCP=
+
+*工作原理*:
+
+1. 在用户态伪造 TCP 包 (使用 raw socket)
+2. 完整的 TCP 三次握手和 ACK 机制
+3. 将 UDP 数据封装在伪造的 TCP payload 中
+
+*局限*:
+
+- *性能开销大*: 伪造 TCP 需要维护连接状态
+- *不稳定*: 某些网络环境下会出现问题 (如 NAT 超时)
+
+** SWGP: Shadowsocks over WireGuard
+
+SWGP 是一种 *叠加方案*: 先用 WireGuard 建立隧道，再在隧道内跑 Shadowsocks。
+
+*原理*:
+
+#+begin_example
+Client → Shadowsocks Client → WireGuard Client → Internet
+Internet → WireGuard Server → Shadowsocks Server → Target
+#+end_example
+
+*优势*:
+
+- 结合两者优点: WireGuard 的性能 + Shadowsocks 的混淆
+
+*劣势*:
+
+- 双重开销
+- 配置复杂
+
+* 实际应用建议: 如何选择协议
+
+** 场景 1: 轻度审查地区
+
+*推荐*: Shadowsocks (AEAD)
+
+*理由*:
+
+- 简单易用
+- 性能优秀
+- 部署快速
+
+*配置建议*:
+
+- 加密: =chacha20-ietf-poly1305=
+- 密码: 至少 16 字节随机生成
+- 端口: 避免常见端口 (8388, 8080)
+
+** 场景 2: 中等审查地区 (如中国, 2020 年前)
+
+*推荐*: Trojan + CDN
+
+*理由*:
+
+- TLS 伪装可靠
+- CDN 隐藏真实 IP
+- 成本低 (Cloudflare 免费)
+
+*配置建议*:
+
+- 使用 Let's Encrypt 证书
+- 配置 Nginx 作为回落网站
+- 使用 Cloudflare CDN (域名解析到 CDN)
+
+** 场景 3: 重度审查地区 (如中国, 2022 年后)
+
+*推荐*: VLESS + XTLS-Vision + Reality
+
+*理由*:
+
+- Reality 绕过 TLS 指纹检测
+- XTLS-Vision 性能优秀
+- 抗主动探测
+
+*配置建议*:
+
+- 选择可信的目标网站 (如 =www.microsoft.com=, =www.apple.com=)
+- 使用 uTLS 伪装客户端指纹
+- 避免在同一 IP 上运行其他服务
+
+** 场景 4: 弱网环境 (高延迟/高丢包)
+
+*推荐*: Hysteria2
+
+*理由*:
+
+- Brutal 算法优化弱网性能
+- QUIC 无队头阻塞
+- UDP 在某些网络下比 TCP 稳定
+
+*配置建议*:
+
+- 准确测量并填写带宽 (=up_mbps=, =down_mbps=)
+- 启用 Salamander 混淆 (如果 QUIC 被限制)
+- 使用 BBR 模式 (如果不确定带宽)
+
+** 场景 5: 完全阻断 UDP
+
+*推荐*: Trojan 或 NaiveProxy
+
+*理由*:
+
+- 纯 TCP, 不依赖 UDP
+- NaiveProxy 伪装最完美 (使用 Chrome 网络栈)
+
+*配置建议*:
+
+- NaiveProxy 配合 Caddy forwardproxy
+- Trojan 使用 uTLS 指纹伪装
+
+** 通用建议
+
+1. *多协议备份*: 不要只部署一种协议，至少准备 2-3 种
+2. *域前置/CDN*: 使用 Cloudflare 等 CDN 隐藏真实 IP
+3. *端口伪装*: 使用 443 端口 (HTTPS 标准端口)
+4. *监控告警*: 设置流量监控，检测异常封锁
+5. *定期更新*: 协议在不断演进，保持最新版本
+
+** 不推荐的协议
+
+- *ShadowsocksR*: 已过时，维护停滞
+- *VMess*: 被 VLESS 取代，存在安全问题
+- *obfs4 (单独使用)*: 在中国大陆容易被封锁
+- *简单混淆 (http_simple 等)*: 容易被 DPI 识别
+
+* 技术对比总结
+
+| 协议          | 传输层 | 伪装方式     | 抗审查能力   | 性能       | 部署难度  | 推荐度         |
+|---------------+-------+-------------+------------+------------+----------+---------------|
+| Shadowsocks   | TCP   | 随机化       | ⭐⭐       | ⭐⭐⭐⭐⭐ | ⭐       | 轻度审查       |
+| Trojan        | TCP   | TLS 模仿    | ⭐⭐⭐⭐   | ⭐⭐⭐⭐   | ⭐⭐     | 中度审查       |
+| VLESS+Reality | TCP   | TLS 借用    | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐   | ⭐⭐⭐   | *重度审查* (推荐) |
+| NaiveProxy    | TCP   | Chrome 伪装 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐     | ⭐⭐⭐⭐ | 完美伪装       |
+| Hysteria2     | QUIC  | HTTP/3 模仿 | ⭐⭐⭐     | ⭐⭐⭐⭐⭐ | ⭐⭐     | 弱网环境       |
+| WireGuard     | UDP   | 无          | ⭐         | ⭐⭐⭐⭐⭐ | ⭐       | *不推荐*         |
+| AmneziaWG     | UDP   | 修改常数     | ⭐⭐       | ⭐⭐⭐⭐   | ⭐⭐     | UDP 可用场景   |
+
+* 未来展望: 这场军备竞赛何时结束？
+
+审查与反审查的对抗是一场 *永无止境的军备竞赛*​。每当新的混淆技术出现，审查者就会研发新的检测手段。
+
+** 审查者的武器升级
+
+1. *机器学习*: 使用深度学习模型识别加密流量的统计特征
+2. *主动探测升级*: 模拟真实客户端行为，检测代理服务器响应
+3. *证书黑名单*: 收集所有代理服务器的 TLS 证书，建立黑名单
+4. *全局封锁*: 直接封锁 UDP, QUIC, 甚至所有加密流量 (成本极高, 但技术上可行)
+
+** 反审查技术的方向
+
+1. *去中心化*: 如 Tor, Snowflake, 没有单点可封锁
+2. *完美伪装*: 如 Reality, NaiveProxy, 协议层面无法区分
+3. *混合传输*: 同时使用多种传输方式, 增加封锁成本
+4. *社会工程*: 利用审查者不敢封锁的基础设施 (如微软, 苹果的服务)
+
+** 终极问题
+
+*如果审查者决定封锁所有加密流量呢？*
+
+这在技术上可行 (白名单模式: 只允许特定的 TLS 证书), 但社会成本极高:
+
+- 封锁所有国际 HTTPS 网站 (Google, Facebook, Twitter...)
+- 封锁企业 VPN (跨国公司无法运营)
+- 封锁学术交流 (研究者无法访问国际期刊)
+
+*结论*: 只要互联网的本质是 "端到端加密"，审查就无法彻底胜利。但代价是，自由访问互联网变得越来越困难、越来越昂贵。
+
+* 参考资料
+
+- Shadowsocks 官方文档: [[https://shadowsocks.org]]
+- GFW Report: [[https://gfw.report]]
+- V2Ray 官方文档: [[https://www.v2ray.com]]
+- Xray 官方文档: [[https://xtls.github.io]]
+- Hysteria 官方文档: [[https://v2.hysteria.network]]
+- Tor Pluggable Transports: [[https://gitlab.torproject.org/tpo/anti-censorship/pluggable-transports]]
+- WireGuard 官方网站: [[https://www.wireguard.com]]
+- NaiveProxy GitHub: [[https://github.com/klzgrad/naiveproxy]]
+
+-----
+
+*最后的建议*: 协议只是工具，真正的防线是 *信息本身*​。保持警惕，保护隐私，不要成为审查者的数据点。

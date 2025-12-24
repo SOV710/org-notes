@@ -1,0 +1,1041 @@
+#+title: How Displays and Computers Negotiate: A Deep Dive into EDID
+#+author: SOV710
+#+date: 2025-12-23
+#+startup: showall
+#+options: toc:2 num:nil
+
+* EDID: 显示器与主机的握手协议
+
+EDID (Extended Display Identification Data) 是显示器向计算机 "自我介绍" 的标准协议。当你插上 HDMI 或 DisplayPort 线，屏幕自动点亮并显示正确分辨率，背后就是 EDID 在工作。
+
+可以从物理层到应用层分层理解这个过程。
+
+* 物理层: HPD 信号与连接检测
+
+** HPD 引脚的作用
+
+每个 HDMI, DisplayPort, DVI 接口都有一根 *HPD 线* (Hot-Plug Detect)，这是一根 *单向* 的控制信号线:
+
+- 显示器上电并接入时，将 HPD 拉高 (通常是 +5V 或 +3.3V)
+- 拔掉或关机时拉低 (0V)
+
+#+begin_quote
+*注意*: HDMI 的 HPD 是 19 号引脚，DP 的 HPD 是 20 号引脚。VGA 没有 HPD，只能靠软件轮询 DDC。
+#+end_quote
+
+** GPU 侧的 HPD 检测
+
+在 PC 侧，HPD 是 *直连* 到 GPU 芯片上的 (核显 iGPU 或独显 dGPU)。GPU 内部有专门的 *中断控制器* 监听 HPD 的电平变化:
+
+1. HPD 拉高 → GPU 产生硬件中断
+2. 中断处理程序触发内核的 =drm_kms_helper_hotplug_event()=
+3. DRM 驱动更新 =/sys/class/drm/card*-*/status=
+
+#+begin_src sh
+$ sudo cat /sys/class/drm/card2-HDMI-A-3/status
+connected
+
+$ sudo cat /sys/class/drm/card1-HDMI-A-1/status
+disconnected
+#+end_src
+
+** 排查 HPD 不工作的情况
+
+如果这层没连上，除了硬件/线缆问题，还可能是:
+
+*** 1. 驱动未加载
+
+没有加载 =i915= / =nvidia= / =amdgpu= 驱动，导致内核没有注册 HPD 中断处理程序。
+
+检查当前加载的驱动:
+
+#+begin_src sh
+$ lsmod | grep -E 'i915|nvidia|amdgpu'
+i915                 3211264  12
+nvidia              62652416  45
+#+end_src
+
+*** 2. 驱动版本过老
+
+某些老显卡需要专有驱动才能正确处理 HPD。例如 NVIDIA Optimus 笔记本，需要 =nvidia-drm.modeset=1= 参数。
+
+#+begin_src sh
+# 检查内核参数
+cat /proc/cmdline | grep nvidia-drm
+
+# 如果没有，添加到 /etc/default/grub
+GRUB_CMDLINE_LINUX="... nvidia-drm.modeset=1"
+sudo grub-mkconfig -o /boot/grub/grub.cfg
+#+end_src
+
+*** 3. 硬件故障
+
+- HDMI 线的 HPD 引脚断路 (便宜线常见问题)
+- GPU 的 HPD 电路损坏 (少见，但无法修复)
+- 显示器的 HPD 电路故障 (可能是电容老化)
+
+** 确认 GPU 型号与驱动对应关系
+
+通过符号链接可以查看 DRM 设备对应的驱动:
+
+#+begin_src sh
+$ basename "$(readlink -f "/sys/class/drm/card1/device/driver" 2>/dev/null)"
+i915
+
+$ basename "$(readlink -f "/sys/class/drm/card2/device/driver" 2>/dev/null)"
+nvidia
+#+end_src
+
+进一步通过 PCI 总线号定位具体 GPU:
+
+#+begin_src sh
+$ basename "$(readlink -f "/sys/class/drm/card2/device" 2>/dev/null)"
+0000:01:00.0
+
+$ lspci -nn | grep -E "VGA|3D|Display"
+00:02.0 VGA compatible controller [0300]: Intel Corporation Raptor Lake-S UHD Graphics [8086:a788] (rev 04)
+01:00.0 VGA compatible controller [0300]: NVIDIA Corporation AD107M [GeForce RTX 4060 Max-Q / Mobile] [10de:28e0] (rev a1)
+#+end_src
+
+对照 PCI 号 =0000:01:00.0=，立刻知道 =card2= 是老黄家的 GeForce RTX 4060，还是 Mobile 款 (Max-Q)。
+
+*PCI 地址格式*: =DDDD:BB:DD.F=
+
+- =DDDD=: Domain (通常是 0000)
+- =BB=: Bus (总线号)
+- =DD=: Device (设备号)
+- =F=: Function (功能号)
+
+* EDID: 显示器的自我介绍
+
+** DDC 通道与 I²C 总线
+
+建立 HPD 连接后，GPU 需要知道显示器的能力 (分辨率、刷新率、色域...)，这通过 *EDID 数据块* 传递。
+
+每根 HDMI/DP/DVI 线上都有一根 *I²C 总线*，用于 *DDC* (Display Data Channel) 通信:
+
+- HDMI: 第 15 引脚 (SCL) 和第 16 引脚 (SDA)
+- DisplayPort: AUX 通道复用 (双向，还能传输音频和 USB)
+- DVI: 第 6 引脚 (SDA) 和第 7 引脚 (SCL)
+
+I²C 是一种 *同步串行总线*，只需两根线:
+
+- *SCL* (Serial Clock): 时钟线，由主设备 (GPU) 产生
+- *SDA* (Serial Data): 数据线，双向传输
+
+GPU 通过 I²C 向显示器发送读取命令 (地址 =0xA0= 或 =0xA1=)，显示器返回 128/256 字节的 EDID 数据。
+
+#+begin_quote
+*DisplayPort 的特殊性*: DP 不用传统 I²C，而是用 *AUX 通道* (Auxiliary Channel)，这是一个独立的双向半双工总线，速率可达 1 Mbps。AUX 不仅传 EDID，还能:
+
+- 传输 DPCD (DisplayPort Configuration Data)
+- 实现 DP++ (HDMI 适配)
+- 传输 USB 信号 (DP Alt Mode)
+#+end_quote
+
+** EDID 数据块的存储位置
+
+读取到的 EDID 二进制数据会被内核保存在:
+
+#+begin_example
+/sys/class/drm/card*-*/edid
+#+end_example
+
+例如:
+
+#+begin_src sh
+$ ls /sys/class/drm/card*/edid
+/sys/class/drm/card0-DP-1/edid
+/sys/class/drm/card0-HDMI-A-1/edid
+/sys/class/drm/card0-HDMI-A-2/edid
+#+end_src
+
+这是一个 *只读* 的二进制文件，可以用十六进制查看:
+
+#+begin_src sh
+$ sudo xxd /sys/class/drm/card0-HDMI-A-1/edid | head -n 8
+00000000: 00ff ffff ffff ff00 10ac 3c41 4c35 3132  ..........<4L512
+00000010: 0101 0000 1e01 0380 3c22 7838 2e51 5b4c  ........<"x8.Q[L
+00000020: 9726 0f50 5400 0000 0101 0101 0101 0101  .&.PT...........
+#+end_src
+
+** 解析 EDID: edid-decode
+
+安装 =edid-decode= 包后，可以人类可读的方式查看:
+
+#+begin_src sh
+$ sudo cat /sys/class/drm/card0-HDMI-A-1/edid | edid-decode
+#+end_src
+
+这会输出详细的 EDID 信息 (见下节)。
+
+* EDID 数据结构详解
+
+** EDID 1.3 vs 1.4
+
+EDID 有多个版本:
+
+- *EDID 1.3* (2000): 128 字节，最多 4 个 Detailed Timing Descriptors
+- *EDID 1.4* (2006): 支持扩展块 (最多 254 个，总共 256×255 = 65280 字节)
+- *EDID 2.0* (草案): 完全重新设计，但未广泛采用
+
+现代显示器几乎都是 EDID 1.4，包含 *CEA-861* 扩展块 (HDMI 特性)。
+
+** 基础块 (128 字节) 的结构
+
+#+begin_example
+Byte 0-7:    Header (固定为 00 FF FF FF FF FF FF 00)
+Byte 8-17:   Manufacturer ID, Product Code, Serial Number
+Byte 18-19:  Week/Year of Manufacture
+Byte 20-24:  EDID Version/Revision, Video Input Definition
+Byte 25-34:  Display Parameters (屏幕尺寸、Gamma)
+Byte 35-37:  Color Characteristics (色域坐标)
+Byte 38-53:  Established Timings (标准分辨率支持位图)
+Byte 54-71:  Standard Timings (常见分辨率列表)
+Byte 72-125: Detailed Timing Descriptors (最多 4 个精确时序)
+Byte 126:    Extension Flag (扩展块数量)
+Byte 127:    Checksum
+#+end_example
+
+*** Header (字节 0-7)
+
+固定魔数 =00 FF FF FF FF FF FF 00=，用于快速识别 EDID。
+
+*** Manufacturer ID (字节 8-9)
+
+3 个 5 位的字母编码，代表厂商:
+
+#+begin_example
+Byte 8-9: 0x10AC
+Binary:   00010000 10101100
+         ---xxxxx xxxxxxxx
+Bits:     00010 00010 10100 (去掉前 1 位)
+Letters:  B      B      U
+Result:   "DEL" (Dell)
+#+end_example
+
+编码规则: =A=1, B=2, ..., Z=26=
+
+常见厂商代码:
+
+- =DEL=: Dell
+- =SAM=: Samsung
+- =LGD=: LG Display
+- =AUO=: AU Optronics
+- =ACI=: ASUS
+- =ACR=: Acer
+
+*** Product Code & Serial Number (字节 10-17)
+
+- *Product Code* (字节 10-11): 厂商内部型号代码
+- *Serial Number* (字节 12-15): 32 位序列号 (小端序)
+
+例如:
+
+#+begin_example
+Product Code: 0x4156 = 16726 (十进制)
+Serial Number: 0x01010000 = 16843009
+#+end_example
+
+*** Week/Year of Manufacture (字节 18-19)
+
+- 字节 18: 生产周 (1-54, 0xFF 表示未知)
+- 字节 19: 生产年 (从 1990 年起的偏移)
+
+例如:
+
+#+begin_example
+Week: 0x01 = 第 1 周
+Year: 0x1F = 31 → 1990 + 31 = 2021 年
+Result: 2021 年第 1 周生产
+#+end_example
+
+** Detailed Timing Descriptor (DTD): 核心时序
+
+这是 EDID 中 *最关键* 的部分 (字节 72-125，每个 18 字节，最多 4 个)，定义了显示器的原生分辨率和精确时序。
+
+*** DTD 的 18 字节结构
+
+#+begin_example
+Byte 0-1:   Pixel Clock (10 kHz 单位)
+Byte 2-3:   H Active, H Blank (低 8 位)
+Byte 4:     H Active (高 4 位) | H Blank (高 4 位)
+Byte 5-6:   V Active, V Blank (低 8 位)
+Byte 7:     V Active (高 4 位) | V Blank (高 4 位)
+Byte 8-9:   H Sync Offset, H Sync Width (低 8 位)
+Byte 10-11: V Sync Offset, V Sync Width (低 4 位)
+Byte 12:    H/V Sync 高位
+Byte 13:    Display Size (H, mm, 低 8 位)
+Byte 14:    Display Size (V, mm, 低 8 位)
+Byte 15:    Display Size 高位
+Byte 16:    H Border, V Border
+Byte 17:    Flags (interlaced, sync polarity...)
+#+end_example
+
+*** 示例: 4K@60Hz 的 DTD
+
+#+begin_example
+Pixel Clock: 0xD041 = 533.25 MHz
+H Active:    3840 像素
+H Blank:     160 像素
+V Active:    2160 行
+V Blank:     62 行
+H Sync Offset: 48
+H Sync Width:  32
+V Sync Offset: 3
+V Sync Width:  5
+Flags: +hsync -vsync
+#+end_example
+
+刷新率计算:
+
+#+begin_example
+Total H = H Active + H Blank = 3840 + 160 = 4000
+Total V = V Active + V Blank = 2160 + 62 = 2222
+
+Refresh = Pixel Clock / (Total H × Total V)
+        = 533,250,000 / (4000 × 2222)
+        = 59.988 Hz ≈ 60 Hz
+#+end_example
+
+这些参数会被转换为 =xrandr= 的 *Modeline* 格式:
+
+#+begin_example
+Modeline "3840x2160" 533.25 3840 3888 3920 4000 2160 2163 2168 2222 +hsync -vsync
+#+end_example
+
+** CEA Extension Block (字节 128-255)
+
+如果 EDID 基础块的第 126 字节 > 0，表示有扩展块。HDMI 显示器通常包含 *CEA-861* 扩展，定义:
+
+*** Video Data Block (VDB)
+
+支持的视频格式 (VIC, Video Identification Code):
+
+#+begin_example
+VIC  16: 1920×1080@60Hz (16:9)
+VIC  97: 3840×2160@60Hz (16:9)
+VIC 118: 3840×2160@120Hz (16:9)
+VIC  95: 3840×2160@30Hz (16:9)
+#+end_example
+
+每个 VIC 对应一个标准时序，驱动可以直接使用而无需完整 DTD。
+
+*** Audio Data Block (ADB)
+
+支持的音频格式:
+
+#+begin_example
+Linear PCM:
+  Max channels: 2
+  Sample rates (kHz): 48, 44.1, 32
+  Sample sizes (bits): 24, 20, 16
+
+Dolby Digital (AC-3):
+  Max channels: 6
+  Sample rates (kHz): 48
+#+end_example
+
+这决定了通过 HDMI 传输音频时的能力。
+
+*** HDR Static Metadata Block
+
+HDR (High Dynamic Range) 支持:
+
+#+begin_example
+Electro-optical transfer functions:
+  - Traditional gamma (SDR)
+  - SMPTE ST2084 (Perceptual Quantizer, HDR10)
+  - Hybrid Log-Gamma (HLG, BBC/NHK 标准)
+
+Supported static metadata descriptors:
+  - Static Metadata Type 1 (MaxFALL, MaxCLL)
+
+Desired content max luminance: 1000 nits
+Desired content max frame-average luminance: 400 nits
+Desired content min luminance: 0.05 nits
+#+end_example
+
+这些参数告诉 GPU 如何进行 HDR tone mapping。
+
+*** Colorimetry Data Block
+
+支持的色彩空间:
+
+#+begin_example
+- xvYCC601 (扩展色域)
+- xvYCC709
+- sYCC601
+- Adobe RGB
+- BT2020 RGB (UHD 标准)
+- BT2020 YCC
+#+end_example
+
+** 真实 EDID 解析示例
+
+#+begin_src sh
+$ sudo cat /sys/class/drm/card2-HDMI-A-3/edid | edid-decode
+
+EDID (hex):
+00ffffffffffff0010ac3c414c353132
+0101000020010380221e78382e515b4c
+97260f5054000000010101010101ffff
+ffffffffffffffff023a801871382d40
+5a2c4500580e1100001e000000ff0012
+3435363738393000000000000fc0044
+454c4c20553237323051000000fd0038
+4c1e5311000a202020202020010802
+
+Extracted contents:
+header:          00 ff ff ff ff ff ff 00
+serial number:   534c3135 00000101
+manufacturer:    DEL (Dell Inc.)
+model:           4156 (0x103C)
+made in:         week 1 of 2021
+name:            DELL U2720Q
+display size:    600 × 340 mm (27.3 inch diagonal)
+EDID version:    1.4
+...
+
+Detailed Timing Descriptors:
+  DTD 1: 3840×2160@60.000 Hz
+    Pixel clock: 533.25 MHz
+    H: 3840 3888 3920 4000 (+hsync)
+    V: 2160 2163 2168 2222 (-vsync)
+    Size: 597×336 mm
+
+Color Characteristics:
+  Red:   x=0.640, y=0.330
+  Green: x=0.300, y=0.600
+  Blue:  x=0.150, y=0.060
+  White: x=0.313, y=0.329
+  (覆盖 sRGB 99%)
+
+CEA-861 Extension Block:
+  Video Data Block:
+    VIC 16: 1920×1080@60Hz
+    VIC 97: 3840×2160@60Hz (native)
+  Audio Data Block:
+    Linear PCM 2ch 48/44.1/32 kHz 24/20/16-bit
+  Colorimetry Data Block:
+    BT2020RGB
+    BT2020YCC
+  HDR Static Metadata Data Block:
+    SMPTE ST2084 (PQ)
+    Max luminance: 1000 nits
+#+end_src
+
+* 内核层: DRM 驱动的处理
+
+** DRM 子系统架构
+
+Linux 的 *DRM* (Direct Rendering Manager) 子系统负责所有显示输出管理，包括:
+
+- *KMS* (Kernel Mode Setting): 设置分辨率、刷新率
+- *GEM* (Graphics Execution Manager): 管理 GPU 内存
+- *Atomic Modesetting*: 原子化配置多个显示器
+
+当 HPD 触发且 EDID 读取成功后，DRM 驱动开始工作。
+
+** Connector 状态更新
+
+DRM 驱动 (=i915= / =nvidia= / =amdgpu=) 的处理流程:
+
+*** 1. 解析 EDID，生成 mode list
+
+内核解析 EDID 中的 DTD 和 VIC，生成 =drm_display_mode= 结构体数组。
+
+#+begin_src c
+struct drm_display_mode {
+    char name[DRM_DISPLAY_MODE_LEN];  // "3840x2160"
+    int clock;                         // 像素时钟 (kHz)
+    int hdisplay, hsync_start, hsync_end, htotal;
+    int vdisplay, vsync_start, vsync_end, vtotal;
+    u32 flags;                         // DRM_MODE_FLAG_PHSYNC, etc.
+    int type;                          // DRM_MODE_TYPE_PREFERRED
+    ...
+};
+#+end_src
+
+*** 2. 更新 connector 状态
+
+#+begin_src c
+connector->status = connector_status_connected;
+connector->edid_blob_ptr = edid_data;
+#+end_src
+
+这会更新 sysfs:
+
+#+begin_src sh
+$ cat /sys/class/drm/card2-HDMI-A-3/status
+connected
+
+$ cat /sys/class/drm/card2-HDMI-A-3/enabled
+enabled
+
+$ cat /sys/class/drm/card2-HDMI-A-3/modes
+3840x2160
+2560x1440
+1920x1080
+1280x720
+#+end_src
+
+*** 3. 写入 EDID 原始数据
+
+#+begin_src sh
+$ sudo cat /sys/class/drm/card2-HDMI-A-3/edid > /tmp/edid.bin
+$ file /tmp/edid.bin
+/tmp/edid.bin: EDID data, version 1.4, 1 extension blocks
+#+end_src
+
+** uevent 通知用户空间
+
+内核通过 *uevent* 机制通知用户空间有新设备:
+
+#+begin_src sh
+$ udevadm monitor --property --subsystem-match=drm
+
+KERNEL[123.456] change   /devices/pci0000:00/0000:00:01.0/0000:01:00.0/drm/card2 (drm)
+ACTION=change
+DEVNAME=/dev/dri/card2
+DEVPATH=/devices/pci0000:00/0000:00:01.0/0000:01:00.0/drm/card2
+HOTPLUG=1
+SEQNUM=2534
+SUBSYSTEM=drm
+#+end_src
+
+监听这个事件的进程:
+
+- =systemd-logind=: 管理会话和多用户权限
+- *X.Org Server*: 重新探测显示器
+- *Wayland Compositor* (Sway, KWin, Niri): 重新配置输出
+
+** Preferred Mode 的选择
+
+驱动会标记一个 *preferred mode*，通常是:
+
+1. EDID DTD 中的 *第一个* mode (原生分辨率)
+2. 标记为 =DRM_MODE_TYPE_PREFERRED=
+
+可以通过 modes 文件的 *第一行* 看到:
+
+#+begin_src sh
+$ cat /sys/class/drm/card2-HDMI-A-3/modes
+3840x2160    # ← preferred mode
+2560x1440
+1920x1080
+#+end_src
+
+X.Org 和 Wayland 会优先选择这个 mode。
+
+* 用户空间层: Mode Setting
+
+** 直接通过 DRM API (libdrm)
+
+用户空间程序可以通过 =/dev/dri/card*= 设备节点直接配置显示。这是 *KMS* (Kernel Mode Setting) 的核心接口。
+
+*** 完整的 KMS 流程
+
+#+begin_src c
+#include <xf86drm.h>
+#include <xf86drmMode.h>
+#include <fcntl.h>
+
+int main() {
+    // 1. 打开 DRM 设备
+    int fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
+
+    // 2. 获取资源列表
+    drmModeRes *resources = drmModeGetResources(fd);
+
+    // 3. 遍历 connectors
+    for (int i = 0; i < resources->count_connectors; i++) {
+        uint32_t connector_id = resources->connectors[i];
+        drmModeConnector *conn = drmModeGetConnector(fd, connector_id);
+
+        if (conn->connection != DRM_MODE_CONNECTED)
+            continue;
+
+        // 4. 选择 preferred mode
+        drmModeModeInfo *mode = &conn->modes[0];
+        printf("Using mode: %s (%dx%d@%dHz)\n",
+               mode->name, mode->hdisplay, mode->vdisplay,
+               mode->vrefresh);
+
+        // 5. 创建 framebuffer
+        uint32_t fb_id;
+        uint32_t handles[4] = {gem_handle, 0, 0, 0};
+        uint32_t pitches[4] = {stride, 0, 0, 0};
+        uint32_t offsets[4] = {0, 0, 0, 0};
+
+        drmModeAddFB2(fd, mode->hdisplay, mode->vdisplay,
+                      DRM_FORMAT_XRGB8888, handles, pitches,
+                      offsets, &fb_id, 0);
+
+        // 6. 找到可用的 CRTC
+        uint32_t crtc_id = find_crtc_for_connector(fd, resources, conn);
+
+        // 7. 设置 CRTC (激活显示)
+        drmModeSetCrtc(fd, crtc_id, fb_id, 0, 0,
+                       &connector_id, 1, mode);
+
+        drmModeFreeConnector(conn);
+    }
+
+    drmModeFreeResources(resources);
+    close(fd);
+    return 0;
+}
+#+end_src
+
+这个流程是 *所有* 显示服务器 (X.Org, Wayland) 的基础。
+
+** X.Org 的处理方式
+
+X.Org 通过 *DDX 驱动* (Device Dependent X) 调用 DRM API:
+
+- =xf86-video-intel=: Intel GPU (已废弃，用 modesetting)
+- =xf86-video-amdgpu=: AMD GPU
+- =xf86-video-nouveau=: NVIDIA 开源驱动
+- =nvidia=: NVIDIA 闭源驱动
+- =xf86-video-modesetting=: 通用 DRM 驱动
+
+*** X.Org 日志中的 EDID 信息
+
+#+begin_src sh
+$ grep -i edid /var/log/Xorg.0.log
+
+[    10.234] (II) modeset(0): EDID for output HDMI-3
+[    10.234] (II) modeset(0): Manufacturer: DEL  Model: 4156  Serial#: 16843009
+[    10.234] (II) modeset(0): Year: 2021  Week: 1
+[    10.234] (II) modeset(0): EDID Version: 1.4
+[    10.234] (II) modeset(0): Digital Display Input
+[    10.234] (II) modeset(0): Max Image Size [cm]: horiz.: 60  vert.: 34
+[    10.234] (II) modeset(0): Gamma: 2.20
+[    10.234] (II) modeset(0): Printing probed modes for output HDMI-3
+[    10.234] (II) modeset(0): Modeline "3840x2160"x60.0  533.25  3840 3888 3920 4000  2160 2163 2168 2222 +hsync -vsync (133.3 kHz eP)
+[    10.234] (II) modeset(0): Modeline "2560x1440"x60.0  241.50  2560 2608 2640 2720  1440 1443 1448 1481 +hsync -vsync (88.8 kHz e)
+#+end_src
+
+标记说明:
+
+- =eP=: *P*referred mode, *e*xternal clock
+- =e=: *e*xternal clock
+
+*** xrandr 的 Mode 列表
+
+X.Org 将 mode 暴露给 =xrandr=:
+
+#+begin_src sh
+$ xrandr
+Screen 0: minimum 320 x 200, current 3840 x 2160, maximum 16384 x 16384
+HDMI-3 connected primary 3840x2160+0+0 (normal left inverted right x axis y axis) 600mm x 340mm
+   3840x2160     60.00*+  59.94    50.00    30.00    25.00    24.00    29.97    23.98
+   2560x1440     59.95
+   1920x1080     60.00    59.94    50.00    60.05    60.00    50.04
+   1280x720      60.00    59.94    50.00
+#+end_src
+
+符号说明:
+
+- =*=: 当前使用的 mode
+- =+=: Preferred mode
+- 刷新率精度: =60.00= vs =59.94= (NTSC 色差)
+
+*** 动态切换分辨率
+
+#+begin_src sh
+# 切换到 1920x1080@60Hz
+xrandr --output HDMI-3 --mode 1920x1080 --rate 60
+
+# 旋转屏幕
+xrandr --output HDMI-3 --rotate left
+
+# 多显示器布局
+xrandr --output HDMI-3 --primary --output DP-1 --right-of HDMI-3
+#+end_src
+
+** Wayland 的处理方式
+
+Wayland compositor *直接* 使用 =libdrm=，无需 X.Org 的 DDX 层:
+
+- *wlroots* (Sway, Niri, Hyprland)
+- *KWin* (KDE Plasma Wayland)
+- *Mutter* (GNOME Wayland)
+
+*** wlroots 的实现 (伪代码)
+
+#+begin_src c
+// wlroots/backend/drm/drm.c
+
+struct wlr_drm_connector {
+    drmModeConnector *drm_conn;
+    struct wlr_output output;
+    ...
+};
+
+// 当 HPD 触发
+void handle_drm_event(struct wlr_drm_backend *drm, uint32_t connector_id) {
+    struct wlr_drm_connector *conn = find_connector(drm, connector_id);
+
+    // 重新读取 EDID
+    uint32_t prop_id = get_property_id("EDID");
+    drmModePropertyBlobPtr blob = drmModeGetPropertyBlob(drm->fd, prop_id);
+    parse_edid(blob->data, blob->length, &conn->output);
+
+    // 生成 mode list
+    conn->output.modes = generate_modes_from_edid(conn->drm_conn);
+
+    // 通知 compositor
+    wlr_signal_emit_safe(&drm->backend.events.new_output, &conn->output);
+}
+#+end_src
+
+*** Niri 中查看输出信息
+
+你在 Niri 中可以用 =niri msg= 查看:
+
+#+begin_src sh
+$ niri msg outputs
+Output "HDMI-A-3":
+  Make: Dell Inc.
+  Model: DELL U2720Q
+  Serial: L5121
+  Physical size: 600×340 mm
+  Modes:
+    3840×2160 @ 60.000 Hz (preferred)
+    2560×1440 @ 59.951 Hz
+    1920×1080 @ 60.000 Hz
+  Current mode: 3840×2160 @ 60.000 Hz
+  VRR: capable, not active
+  Transform: normal
+#+end_src
+
+*** Sway 中动态配置
+
+#+begin_src sh
+# 查看输出
+swaymsg -t get_outputs
+
+# 设置分辨率
+swaymsg output HDMI-A-3 mode 3840x2160@60Hz
+
+# 设置缩放 (HiDPI)
+swaymsg output HDMI-A-3 scale 1.5
+
+# 配置文件 (~/.config/sway/config)
+output HDMI-A-3 {
+    mode 3840x2160@60Hz
+    pos 0 0
+    scale 1.5
+    adaptive_sync on
+}
+#+end_src
+
+** VRR / FreeSync / G-Sync 与 EDID
+
+*VRR* (Variable Refresh Rate) 允许显示器动态调整刷新率，消除画面撕裂。
+
+*** EDID 中的 VRR 标识
+
+在 CEA 扩展块的 *Video Capability Data Block* 中:
+
+#+begin_example
+Video Capability Data Block:
+  YCbCr quantization: Selectable (via AVI YQ)
+  RGB quantization: Selectable (via AVI Q)
+  PT scan behavior: Always Underscanned
+  IT scan behavior: Always Underscanned
+  CE scan behavior: Always Underscanned
+
+FreeSync (AMD Adaptive Sync):
+  Min refresh rate: 48 Hz
+  Max refresh rate: 144 Hz
+#+end_example
+
+*** Wayland 中启用 VRR
+
+#+begin_src sh
+# Sway
+output HDMI-A-3 adaptive_sync on
+
+# KWin (系统设置中启用 "自适应同步")
+kwriteconfig5 --file kwinrc --group Compositing --key AllowTearing true
+#+end_src
+
+*** X.Org 中启用 VRR
+
+#+begin_src sh
+# 需要 NVIDIA 驱动 >= 435.17
+xrandr --output HDMI-3 --set "VRR_CAPABLE" 1
+
+# 或在 xorg.conf 中
+Section "Screen"
+    Option "AllowVRR" "on"
+EndSection
+#+end_src
+
+* 实际应用与故障排查
+
+** 场景 1: EDID 损坏或读取失败
+
+*** 症状
+
+- 显示器显示 "No Signal" 但 HPD 已连接
+- =dmesg= 报错: =EDID block 0 invalid=
+- =/sys/class/drm/card*/edid= 为空或全 =0xFF=
+
+*** 原因
+
+- 显示器 EEPROM 损坏 (老化或静电)
+- I²C 总线干扰 (劣质 HDMI 线)
+- GPU I²C 控制器故障
+
+*** 解决: 手动提供 EDID
+
+#+begin_src sh
+# 1. 从正常显示器导出 EDID
+sudo cat /sys/class/drm/card0-HDMI-A-1/edid > /tmp/my_monitor.bin
+
+# 2. 验证 EDID 有效性
+edid-decode < /tmp/my_monitor.bin
+
+# 3. 复制到固件目录
+sudo mkdir -p /lib/firmware/edid
+sudo cp /tmp/my_monitor.bin /lib/firmware/edid/dell_u2720q.bin
+
+# 4. 修改内核参数
+sudo nano /etc/default/grub
+# 添加:
+GRUB_CMDLINE_LINUX="drm.edid_firmware=HDMI-A-1:edid/dell_u2720q.bin"
+
+# 5. 更新 GRUB
+sudo grub-mkconfig -o /boot/grub/grub.cfg
+
+# 6. 重启
+sudo reboot
+#+end_src
+
+*** 验证加载成功
+
+#+begin_src sh
+$ dmesg | grep -i edid
+[    2.123] [drm] Got external EDID base block and 1 extension from "edid/dell_u2720q.bin" for connector "HDMI-A-1"
+[    2.456] [drm] EDID block 0 valid
+#+end_src
+
+** 场景 2: Mode 不理想 (例如 30Hz 而非 60Hz)
+
+*** 症状
+
+- 显示器支持 60Hz 但系统只显示 30Hz
+- =xrandr= 看不到 60Hz 选项
+
+*** 原因
+
+- EDID 中缺少 60Hz 的 DTD
+- HDMI 线不支持 HDMI 2.0 (带宽不足)
+- GPU 驱动限制 (如核显带宽限制)
+
+*** 解决: 手动添加 Modeline
+
+#+begin_src sh
+# 1. 用 cvt 生成 Modeline
+$ cvt 3840 2160 60
+# 3840x2160 59.98 Hz (CVT 8.29M9) hsync: 134.18 kHz; pclk: 712.75 MHz
+Modeline "3840x2160_60.00"  712.75  3840 4160 4576 5312  2160 2163 2168 2237 -hsync +vsync
+
+# 2. 添加到 X.Org
+xrandr --newmode "3840x2160_60" 712.75 3840 4160 4576 5312 2160 2163 2168 2237 -hsync +vsync
+xrandr --addmode HDMI-3 3840x2160_60
+xrandr --output HDMI-3 --mode 3840x2160_60
+
+# 3. 永久生效 (xorg.conf.d)
+sudo nano /etc/X11/xorg.conf.d/10-monitor.conf
+Section "Monitor"
+    Identifier "HDMI-3"
+    Modeline "3840x2160_60" 712.75 3840 4160 4576 5312 2160 2163 2168 2237 -hsync +vsync
+    Option "PreferredMode" "3840x2160_60"
+EndSection
+#+end_src
+
+*** 对于 Wayland
+
+#+begin_src sh
+# Sway 配置
+output HDMI-A-3 mode 3840x2160@60Hz
+
+# 如果不支持，检查 Wayland 日志
+journalctl -b | grep -i drm
+#+end_src
+
+** 场景 3: 多显示器识别错误
+
+*** 症状
+
+- 两个显示器型号相同，但内核分配错误的 EDID
+- =xrandr= 显示两个 "HDMI-3"
+
+*** 解决: 通过 Serial Number 区分
+
+#+begin_src sh
+# 查看 Serial Number
+edid-decode < /sys/class/drm/card0-HDMI-A-1/edid | grep -i serial
+serial number:   4C353132 (ASCII: L512)
+
+edid-decode < /sys/class/drm/card0-HDMI-A-2/edid | grep -i serial
+serial number:   4C353133 (ASCII: L513)
+
+# 在 X.Org 中按序列号匹配
+Section "Monitor"
+    Identifier "Left Monitor"
+    Option "EDID" "/lib/firmware/edid/left.bin"
+    MatchSerial "L512"
+EndSection
+#+end_src
+
+** 场景 4: DisplayPort MST (菊花链)
+
+*** 拓扑示例
+
+#+begin_example
+GPU → DP-1 → Monitor A (with DP out) → Monitor B
+#+end_example
+
+*** 内核中的表示
+
+#+begin_src sh
+$ ls /sys/class/drm/ | grep DP
+card0-DP-1        # 物理端口
+card0-DP-1-1      # MST 设备 1 (Monitor A)
+card0-DP-1-2      # MST 设备 2 (Monitor B)
+#+end_src
+
+每个 MST 设备有独立的:
+
+- EDID (=/sys/class/drm/card0-DP-1-1/edid=)
+- Mode list
+- 连接状态
+
+*** MST 带宽限制
+
+DisplayPort 1.2 的 HBR2 链路带宽:
+
+#+begin_example
+4 lanes × 5.4 Gbps/lane = 21.6 Gbps (物理)
+实际可用: 21.6 × 0.8 = 17.28 Gbps (编码开销)
+#+end_example
+
+两个 4K@60Hz 显示器:
+
+#+begin_example
+单个 4K@60Hz (8-bit RGB):
+  3840 × 2160 × 60 × 24 = 11.94 Gbps
+
+两个:
+  11.94 × 2 = 23.88 Gbps > 17.28 Gbps (超出！)
+#+end_example
+
+*解决*: 降低色深或刷新率:
+
+- 4K@60Hz 10-bit → 8-bit: 11.94 Gbps → 9.55 Gbps
+- 4K@60Hz → 4K@30Hz: 11.94 Gbps → 5.97 Gbps
+
+** 场景 5: HDR 不工作
+
+*** 检查 EDID 是否支持 HDR
+
+#+begin_src sh
+edid-decode < /sys/class/drm/card0-HDMI-A-1/edid | grep -A 5 "HDR"
+
+HDR Static Metadata Data Block:
+  Electro optical transfer functions:
+    SMPTE ST2084 (PQ)
+  Supported static metadata descriptors:
+    Static Metadata Type 1
+  Desired content max luminance: 1000 nits
+#+end_src
+
+*** 启用 HDR (Wayland)
+
+目前只有 *KDE Plasma 6* 和 *Gamescope* 完全支持 HDR。
+
+#+begin_src sh
+# Gamescope (Steam Deck)
+gamescope --hdr-enabled --hdr-itm-enable -- <game>
+
+# KDE Plasma 6 (自动检测)
+kscreen-doctor output.HDMI-A-3.hdr.enable
+#+end_src
+
+*** X.Org 不支持 HDR
+
+X11 协议本身不支持 HDR 元数据传递，需要:
+
+- 用 Wayland
+- 或用专用的 Vulkan/OpenGL 全屏应用 (绕过 compositor)
+
+* 完整流程总结
+
+#+begin_example
+物理连接
+  ↓ HPD 信号 (5V 拉高)
+GPU 硬件中断
+  ↓ 内核 IRQ handler
+DRM hotplug event
+  ↓ I²C/DDC 读取 EDID
+解析 EDID (DTD, CEA-861)
+  ↓ 生成 drm_display_mode 列表
+更新 /sys/class/drm/card*-*/
+  ↓ uevent 通知
+用户空间 (X.Org / Wayland)
+  ↓ libdrm: drmModeSetCrtc()
+设置 CRTC 和 Framebuffer
+  ↓ GPU 寄存器配置
+硬件 TMDS/DP 编码器
+  ↓ 差分信号
+显示器 TCON (Timing Controller)
+  ↓ 液晶/OLED 驱动
+画面显示
+#+end_example
+
+* 延伸阅读与工具
+
+** EDID 编辑工具
+
+- *edid-decode*: 解析 EDID (=sudo pacman -S edid-decode=)
+- *wxEDID*: 图形化 EDID 编辑器
+- *edid-generator*: [[https://github.com/akatrevorjay/edid-generator]]
+
+** 监控工具
+
+- *drm_info*: 显示所有 DRM 设备信息 (=drm_info=)
+- *modetest*: 测试 DRM mode (=modetest -M i915=)
+- *edid-rw*: 读写显示器 EEPROM (危险！)
+
+** 参考文档
+
+- VESA EDID 标准: [[https://glenwing.github.io/docs/VESA-EEDID-A2.pdf][VESA Enhanced EDID Release A, Revision 2]]
+- CEA-861 标准: [[https://en.wikipedia.org/wiki/CEA-861][CEA-861 - Wikipedia]]
+- DRM 内核文档: [[https://www.kernel.org/doc/html/latest/gpu/drm-kms.html][Kernel Mode Setting (KMS)]]
+- HDMI 规范: [[https://www.hdmi.org/spec/hdmi2_1][HDMI 2.1 Specification]]
+
+** 常见问题速查
+
+| 问题          | 检查点                                   |                          |
+|---------------+-----------------------------------------+--------------------------|
+| 显示器无信号    | =dmesg                                  | grep -i hpd=, 检查驱动加载 |
+| 分辨率不对      | =edid-decode=, 检查 EDID DTD              |                          |
+| 刷新率只有 30Hz | 检查 HDMI 线版本 (需 HDMI 2.0+)           |                          |
+| 颜色不正常      | =edid-decode=, 检查 Color Characteristics |                          |
+| HDR 灰蒙蒙     | 检查 HDR Metadata Block, 驱动是否支持      |                          |
+| 多显示器识别错误 | 按 Serial Number 匹配 EDID               |                          |
+| VRR 不工作     | =xrandr --prop=, 检查 =VRR_CAPABLE= 属性     |                          |
+
+* 结语
+
+EDID 是显示器与主机之间的 "协议书"，定义了双方能够协商的所有显示模式。从 HPD 的硬件握手，到 I²C 总线的 EDID 传输，再到内核 DRM 的 mode setting，最后到用户空间的 X.Org/Wayland 渲染——整个流程环环相扣。
+
+理解这套机制，不仅能帮你排查显示问题，还能让你在配置多显示器、高刷新率游戏、HDR 工作流时游刃有余。当你看到 =3840x2160@60Hz= 自动点亮时，你会知道背后发生了什么。
+
+*如果显示器不工作，从物理层 (HPD) → EDID 读取 → 内核驱动 → 用户空间，逐层排查。90% 的问题在前两层。*

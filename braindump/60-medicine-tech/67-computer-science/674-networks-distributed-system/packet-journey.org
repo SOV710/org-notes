@@ -1,0 +1,821 @@
+#+title: Packet Journey: From Application to Wire and Beyond
+#+author: SOV710
+#+date: 2025-12-24
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 一个网络包的诞生与旅程
+
+这篇笔记记录了一个网络包从用户程序诞生，经过内核协议栈，穿越路由器和交换机，最终到达目标主机的完整旅程。我们将从三个典型场景展开，然后深入每一层的技术细节。
+
+* 场景 1: 内网通信 (Same Subnet)
+
+** 包的诞生
+
+用户应用程序 (比如 =curl https://192.168.1.100/api=) 想向某个 IP 地址传包，一个数据包诞生了。
+
+应用程序调用系统调用 (=sendto()=, =write()=, 或通过 =libcurl= 等库间接调用)，将数据写入 socket 缓冲区，交给内核协议栈处理。
+
+** 内核协议栈处理
+
+1. *应用层 (Application Layer)*: 数据已经被封装为 HTTP 请求 (或其他应用层协议)
+2. *传输层 (Transport Layer)*: 加上 TCP/UDP header
+3. *网络层 (Network Layer)*: 加上 IP header
+4. *链路层 (Link Layer)*: 查找路由表，发现目标 IP =192.168.1.100= 在同一子网内 (根据本地 IP =192.168.1.50= 和子网掩码 =255.255.255.0= 判断)
+
+** 子网判断逻辑
+
+#+begin_src python
+# 伪代码
+local_ip = "192.168.1.50"
+subnet_mask = "255.255.255.0"
+target_ip = "192.168.1.100"
+
+def same_subnet(ip1, ip2, mask):
+    return (ip1 & mask) == (ip2 & mask)
+
+if same_subnet(local_ip, target_ip, subnet_mask):
+    # 在同一子网，直接发送到目标主机
+    next_hop = target_ip
+else:
+    # 不在同一子网，发送到默认网关
+    next_hop = "192.168.1.1"  # 网关 IP
+#+end_src
+
+** ARP 解析 MAC 地址
+
+由于在同一子网内，主机需要通过 *ARP (Address Resolution Protocol)* 获取目标主机的 MAC 地址。
+
+*** ARP 工作流程
+
+1. 主机检查本地 ARP 缓存 (=arp -a= 或 =ip neigh show=)
+2. 如果缓存未命中，广播 ARP 请求:
+   - 源 MAC: 本机 MAC (例如 =aa:bb:cc:dd:ee:ff=)
+   - 目标 MAC: =ff:ff:ff:ff:ff:ff= (广播地址)
+   - ARP 请求内容: "谁的 IP 是 192.168.1.100? 请告诉 192.168.1.50"
+
+3. 目标主机 (192.168.1.100) 收到广播后，发送 ARP 应答:
+   - 源 MAC: 目标主机 MAC (例如 =11:22:33:44:55:66=)
+   - 目标 MAC: 本机 MAC (=aa:bb:cc:dd:ee:ff=)
+   - ARP 应答内容: "192.168.1.100 的 MAC 是 11:22:33:44:55:66"
+
+4. 本机缓存此映射 (通常 TTL 为 60~300 秒)
+
+*** ARP 缓存查看
+
+#+begin_src bash
+# Linux
+ip neigh show
+# 输出:
+# 192.168.1.100 dev wlo1 lladdr 11:22:33:44:55:66 REACHABLE
+
+# 清空 ARP 缓存
+sudo ip neigh flush all
+#+end_src
+
+** 以太网帧封装
+
+链路层驱动 (如 =wlo1= 的 Wi-Fi 驱动) 将 IP 包封装为以太网帧:
+
+#+begin_example
++-------------------+-------------------+----------+-------------+---------+
+| 目标 MAC (6 B)     | 源 MAC (6 B)      | 类型 (2 B)| IP 包 (变长) | FCS (4 B)|
++-------------------+-------------------+----------+-------------+---------+
+| 11:22:33:44:55:66 | aa:bb:cc:dd:ee:ff | 0x0800   | ...         | CRC     |
++-------------------+-------------------+----------+-------------+---------+
+#+end_example
+
+- *目标 MAC*: 目标主机的 MAC (通过 ARP 获取)
+- *源 MAC*: 本机网卡的 MAC
+- *类型*: =0x0800= (IPv4), =0x86DD= (IPv6), =0x0806= (ARP)
+- *FCS (Frame Check Sequence)*: CRC 校验和，用于检测传输错误
+
+** 物理层传输
+
+网卡通过 *DMA (Direct Memory Access)* 将以太网帧从内核缓冲区传输到网卡硬件缓冲区，然后:
+
+- *有线网络*: 转换为电信号 (1000BASE-T) 或光信号 (光纤)，通过网线发送
+- *无线网络*: 调制为射频信号 (802.11ac/ax)，通过天线发送
+
+** 到达目标主机
+
+目标主机网卡接收到以太网帧后:
+
+1. *硬件层*: 网卡 DMA 将帧拷贝到内核内存
+2. *链路层*: 检查目标 MAC 是否匹配本机，检查 FCS 是否正确
+3. *网络层*: 拆掉以太网 header，检查目标 IP 是否匹配
+4. *传输层*: 拆掉 IP header，根据端口号找到对应的 socket
+5. *应用层*: 数据被写入 socket 接收缓冲区，应用程序通过 =recv()= 读取
+
+*全剧终。*
+
+* 场景 2: 跨网段通信 (Internet Routing)
+
+** 判断非同子网
+
+当目标 IP (如 =8.8.8.8=) 不在本地子网时:
+
+#+begin_src python
+local_ip = "192.168.1.50"
+subnet_mask = "255.255.255.0"
+target_ip = "8.8.8.8"
+
+# (192.168.1.50 & 255.255.255.0) = 192.168.1.0
+# (8.8.8.8 & 255.255.255.0) = 8.8.8.0
+# 不相等 → 不在同一子网
+#+end_src
+
+主机将包发送到 *默认网关* (通常是路由器的内网 IP，如 =192.168.1.1=)。
+
+** 路由表查找
+
+主机根据路由表决定下一跳:
+
+#+begin_src bash
+ip route show
+# 输出:
+# default via 192.168.1.1 dev wlo1 proto dhcp metric 600
+# 192.168.1.0/24 dev wlo1 proto kernel scope link src 192.168.1.50 metric 600
+#+end_src
+
+- *default via 192.168.1.1*: 所有非本地子网的包都发送到 192.168.1.1 (网关)
+- *192.168.1.0/24 dev wlo1*: 本地子网的包直接通过 wlo1 发送
+
+** 包到达网关路由器
+
+网关路由器 (=192.168.1.1=) 收到包后:
+
+1. *链路层*: 检查目标 MAC 是否是自己的内网接口 MAC → 是，接受帧
+2. *网络层*: 拆掉以太网 header，检查目标 IP → =8.8.8.8= 不是自己，需要转发
+3. *查找 FIB (Forwarding Information Base)*: 路由器的转发表
+
+*** FIB 和路由表的关系
+
+- *路由表 (Routing Table)*: 内核维护的完整路由信息，包含路由协议学习到的路由 (OSPF, BGP 等)
+- *FIB (Forwarding Information Base)*: 从路由表提取的 *快速查找表*，用于硬件转发
+
+FIB 示例:
+
+| 目标前缀          | 下一跳          | 出接口 | Metric |
+|------------------|-----------------|--------|--------|
+| 0.0.0.0/0        | 203.0.113.1     | eth0   | 10     |
+| 192.168.1.0/24   | 直连            | eth1   | 0      |
+| 8.0.0.0/8        | 203.0.113.50    | eth0   | 20     |
+| 8.8.8.0/24       | 203.0.113.100   | eth0   | 15     |
+
+*** LPM (Longest Prefix Match)
+
+对于目标 IP =8.8.8.8=，匹配规则:
+
+- =0.0.0.0/0= (0 位匹配) → 默认路由
+- =8.0.0.0/8= (8 位匹配)
+- =8.8.8.0/24= (24 位匹配) → *最长前缀*
+
+选择 =8.8.8.0/24=，下一跳是 =203.0.113.100=。
+
+*** 为什么需要 LPM?
+
+因为路由表可能同时包含:
+
+- =10.0.0.0/8= (运营商汇总路由)
+- =10.1.0.0/16= (企业路由)
+- =10.1.2.0/24= (具体子网)
+
+LPM 保证选择 *最精确* 的路由。
+
+** TTL 递减与 ICMP
+
+路由器在转发前会:
+
+1. 检查 IP header 的 *TTL (Time To Live)* 字段
+2. TTL 减 1
+3. 如果 TTL = 0，丢弃包并发送 *ICMP Time Exceeded* 消息给源主机
+
+TTL 机制防止包在网络中无限循环 (如路由环路)。
+
+*** =traceroute= 的原理
+
+=traceroute= 利用 TTL 机制探测路由路径:
+
+#+begin_src bash
+traceroute 8.8.8.8
+#+end_src
+
+1. 发送 TTL=1 的包 → 第一跳路由器返回 ICMP Time Exceeded，记录其 IP
+2. 发送 TTL=2 的包 → 第二跳路由器返回 ICMP Time Exceeded
+3. 递增 TTL，直到到达目标主机 (返回 ICMP Echo Reply 或 UDP Port Unreachable)
+
+** 重新封装以太网帧
+
+路由器转发时:
+
+1. *拆掉* 旧的以太网 header (源/目标 MAC 是上一跳的)
+2. *保持* IP header 不变 (源/目标 IP 始终是终端主机的)
+3. *重新封装* 以太网 header:
+   - 源 MAC: 路由器外网接口的 MAC
+   - 目标 MAC: 下一跳路由器的 MAC (通过 ARP 获取)
+
+** 递归转发
+
+包在互联网上经过多个路由器 (AS, Autonomous System)，每一跳都重复:
+
+1. 查 FIB，找下一跳
+2. TTL 减 1
+3. 重新封装链路层 header
+4. 转发
+
+直到到达目标主机所在的网络，最后一跳路由器通过 ARP 找到目标主机的 MAC，直接发送给目标。
+
+*全剧终。*
+
+* 场景 3: 完整的 HTTP 请求 (DNS + TCP + IP)
+
+** 前戏: DNS 域名解析
+
+用户在浏览器输入 =https://example.com=，首先需要将域名转换为 IP 地址。
+
+*** DNS 查询流程
+
+1. *浏览器缓存*: 检查浏览器内部 DNS 缓存
+2. *系统缓存*: 检查 OS 缓存 (Linux: =systemd-resolved= 缓存)
+3. *本地 DNS 配置*: 读取 =/etc/resolv.conf= 中的 DNS 服务器地址
+
+#+begin_src bash
+cat /etc/resolv.conf
+# nameserver 8.8.8.8
+# nameserver 1.1.1.1
+#+end_src
+
+4. *递归查询*:
+   - 客户端向 =8.8.8.8= (Google Public DNS) 发送 DNS 查询 (UDP 端口 53)
+   - 如果响应超过 512 字节 (UDP 限制)，改用 TCP 53
+
+5. *DNS 服务器递归解析*:
+   - 根域名服务器 (=.=) → TLD 域名服务器 (=.com=) → 权威域名服务器 (=example.com=)
+   - 返回 A 记录 (IPv4) 或 AAAA 记录 (IPv6)
+
+#+begin_src bash
+dig example.com
+
+# 输出:
+# ;; ANSWER SECTION:
+# example.com.		86400	IN	A	93.184.216.34
+#+end_src
+
+*** mDNS (Multicast DNS) - 局域网内的无中心 DNS
+
+在家庭网络或企业内网中，设备可能没有公网域名，但可以通过 *mDNS* 相互发现。
+
+*工作原理*:
+
+1. 设备启动时，向多播地址发送自己的主机名:
+   - IPv4: =224.0.0.251=, 端口 =5353=
+   - IPv6: =ff02::fb=, 端口 =5353=
+
+2. 其他设备监听此多播地址，维护本地主机名 → IP 映射
+
+*示例*:
+
+#+begin_src bash
+# macOS 或 Linux 通过 mDNS 访问树莓派
+ping raspberrypi.local
+# 自动解析为 192.168.1.123
+
+# 查看 mDNS 缓存
+avahi-browse -a  # Linux
+dns-sd -B _services._dns-sd._udp  # macOS
+#+end_src
+
+*典型应用*:
+
+- *Apple Bonjour*: macOS/iOS 设备互相发现 (AirDrop, AirPlay)
+- *Avahi*: Linux 的 mDNS 实现
+- *打印机*: 网络打印机通过 mDNS 暴露服务 (=printer.local=)
+
+*** SSDP (Simple Service Discovery Protocol) - UPnP 设备发现
+
+*SSDP* 是另一种局域网设备发现协议，常用于智能家居和 UPnP 设备。
+
+*工作原理*:
+
+1. 设备启动时，向多播地址 =239.255.255.250:1900= 发送 *NOTIFY* 消息
+2. 其他设备想发现服务时，发送 *M-SEARCH* 请求
+3. 设备回复其服务描述 (XML 格式)
+
+*怪异之处*:
+
+SSDP 虽然是 UDP 协议，但消息格式是 *HTTP 1.1 文本*:
+
+#+begin_example
+M-SEARCH * HTTP/1.1
+HOST: 239.255.255.250:1900
+MAN: "ssdp:discover"
+MX: 3
+ST: ssdp:all
+#+end_example
+
+这是历史原因，UPnP 设计时想复用 HTTP 的消息格式，但又想用 UDP 减少开销，于是造出了这个奇葩协议。
+
+** HTTP 请求封装
+
+浏览器通过 =libcurl= 或自带网络库构建 HTTP 请求:
+
+#+begin_example
+GET / HTTP/1.1
+Host: example.com
+User-Agent: Mozilla/5.0
+Accept: text/html
+Connection: keep-alive
+#+end_example
+
+调用 =connect()= 系统调用建立 TCP 连接，数据被写入 socket 缓冲区。
+
+** 进入内核协议栈
+
+*** 1. Socket 层
+
+内核通过文件描述符 (fd) 找到对应的 *TCB (TCP Control Block)*，这是内核为每个 TCP 连接维护的状态结构:
+
+#+begin_src c
+struct tcp_sock {
+    struct sock sk;           // 基础 socket 结构
+    u32 snd_nxt;              // 下一个要发送的序列号
+    u32 rcv_nxt;              // 期望接收的序列号
+    u32 snd_wnd;              // 发送窗口
+    u32 rcv_wnd;              // 接收窗口
+    u8 state;                 // TCP 状态 (LISTEN, SYN_SENT, ESTABLISHED...)
+    struct sk_buff_head write_queue;  // 发送队列
+    // ...
+};
+#+end_src
+
+*** 2. TCP 层 - 三次握手 (如果是新连接)
+
+如果是首次连接，需要进行 *TCP 三次握手*:
+
+#+begin_example
+Client                          Server
+  |                                |
+  |  SYN (seq=x)                   |
+  |------------------------------->|
+  |                                |
+  |  SYN-ACK (seq=y, ack=x+1)      |
+  |<-------------------------------|
+  |                                |
+  |  ACK (ack=y+1)                 |
+  |------------------------------->|
+  |                                |
+  |  [连接建立, 状态: ESTABLISHED]   |
+#+end_example
+
+1. *Client → Server*: SYN 包，序列号 =x= (随机生成)，状态 → =SYN_SENT=
+2. *Server → Client*: SYN-ACK 包，序列号 =y=，确认号 =x+1=，状态 → =SYN_RECV=
+3. *Client → Server*: ACK 包，确认号 =y+1=，状态 → =ESTABLISHED=
+
+*** 3. TCP 层 - 数据分段与可靠传输
+
+TCP 将应用层数据分割为多个 *段 (Segment)*，每段加上 TCP header:
+
+#+begin_example
++--------+--------+--------+--------+--------+
+| 源端口 | 目标端口 | 序列号 | 确认号 | 标志位 | ...
++--------+--------+--------+--------+--------+
+| 2 B    | 2 B    | 4 B    | 4 B    | 1 B    | ...
+#+end_example
+
+*关键机制*:
+
+- *序列号 (Sequence Number)*: 标识每个字节的位置，用于重组和检测丢包
+- *确认号 (Acknowledgment Number)*: 告诉对方 "我已收到序列号 < ack 的所有数据"
+- *窗口大小 (Window Size)*: 流量控制，告诉对方 "我的接收缓冲区还剩多少空间"
+- *校验和 (Checksum)*: 检测传输错误
+
+*可靠性保证*:
+
+- *超时重传*: 如果在 RTO (Retransmission Timeout) 时间内未收到 ACK，重传
+- *快速重传*: 如果收到 3 个重复 ACK，立即重传丢失的段 (不等超时)
+- *拥塞控制*: 慢启动、拥塞避免、快速恢复 (TCP Reno, TCP Cubic 等算法)
+
+*** 4. IP 层 - 路由与分片
+
+IP 层为 TCP 段加上 IP header:
+
+#+begin_example
++--------+--------+--------+--------+--------+
+| 版本   | 头部长度 | 服务类型 | 总长度 | 标识  | ...
++--------+--------+--------+--------+--------+
+| 4 bit  | 4 bit  | 1 B    | 2 B    | 2 B   | ...
+
++--------+--------+--------+--------+
+| 标志   | 片偏移 | TTL    | 协议   | 头部校验和 | 源 IP | 目标 IP |
++--------+--------+--------+--------+
+| 3 bit  | 13 bit | 1 B    | 1 B    | 2 B       | 4 B   | 4 B     |
+#+end_example
+
+*MTU (Maximum Transmission Unit)*:
+
+- 以太网 MTU: 1500 字节
+- IP header: 20 字节 (无选项)
+- TCP header: 20 字节 (无选项)
+- 可用 payload: 1500 - 20 - 20 = 1460 字节 (TCP MSS, Maximum Segment Size)
+
+如果 IP 包大于 MTU，需要 *分片 (Fragmentation)*:
+
+1. IP 层将包拆成多个片段，每个 < MTU
+2. 设置 *标识 (Identification)* 字段相同
+3. 设置 *片偏移 (Fragment Offset)* 标识每片的位置
+4. 目标主机根据标识和偏移 *重组* 原始包
+
+*问题*:
+
+- 分片增加路由器负担
+- 丢失一个片段，整个包都要重传
+
+*解决*: *Path MTU Discovery*:
+
+- TCP 发送 SYN 时设置 "Don't Fragment" (DF) 标志
+- 如果路径中某个路由器无法转发 (MTU 过小)，返回 ICMP "Fragmentation Needed"
+- 发送方降低 MSS，避免 IP 层分片
+
+*** 5. 链路层 - ARP 与以太网封装
+
+(同场景 1，通过 ARP 获取下一跳 MAC 地址，封装以太网帧)
+
+*** 6. 物理层 - DMA 与发送
+
+网卡驱动通过 *DMA* 将以太网帧从内核缓冲区搬运到网卡硬件缓冲区，避免 CPU 拷贝。
+
+*DMA 工作流程*:
+
+1. 驱动将帧地址和长度写入网卡的 *描述符环 (Descriptor Ring)*
+2. 网卡硬件通过 DMA 控制器直接访问内存，拷贝数据
+3. 拷贝完成后，网卡触发硬件中断通知驱动
+
+** 进入网络，递归转发
+
+(同场景 2，经过多级路由器转发，直到到达服务器)
+
+** 服务器接收与响应
+
+服务器网卡收到以太网帧后:
+
+1. *链路层*: DMA 到内存，检查 MAC 和 FCS
+2. *IP 层*: 检查目标 IP，如果是自己，传给传输层
+3. *TCP 层*: 检查端口号 (如 =443= for HTTPS)，找到监听 socket
+4. *应用层*: 数据写入 socket 接收缓冲区，Web 服务器 (如 Nginx) 通过 =accept()= 和 =recv()= 读取请求
+
+服务器处理 HTTP 请求后，构建响应:
+
+#+begin_example
+HTTP/1.1 200 OK
+Content-Type: text/html
+Content-Length: 1234
+
+<html>...</html>
+#+end_example
+
+响应数据沿着 *相反路径* 返回:
+
+- 应用层 → TCP 层 (分段、序列号)
+- TCP 层 → IP 层 (加 IP header)
+- IP 层 → 链路层 (封装以太网帧)
+- 链路层 → 物理层 (DMA 发送)
+- 经过路由器转发，回到客户端
+
+** 客户端接收响应
+
+客户端 TCP 层接收数据后:
+
+1. 检查序列号，丢弃重复包
+2. 发送 ACK 确认
+3. 将数据按序列号重组，写入 socket 接收缓冲区
+4. 浏览器通过 =recv()= 读取完整 HTTP 响应，渲染页面
+
+*全剧终。*
+
+* 网络协议栈的四层模型
+
+Stanford CS144 课程采用的 *四层模型* (相比 OSI 七层模型更实用):
+
+| 层次             | 职责                          | 典型协议          | PDU (协议数据单元) |
+|------------------|-------------------------------|-------------------|--------------------|
+| *应用层*         | 应用间通信                    | HTTP, DNS, SSH    | Message            |
+| *传输层*         | 端到端可靠传输                | TCP, UDP          | Segment (TCP) / Datagram (UDP) |
+| *网络层*         | 跨网络路由                    | IP, ICMP          | Packet             |
+| *链路层*         | 同一网络内传输                | Ethernet, Wi-Fi   | Frame              |
+
+*为什么不用 OSI 七层模型？*
+
+OSI 模型的会话层、表示层在实践中很少独立存在，功能被应用层或传输层吸收。
+
+- *会话层*: TLS/SSL 提供会话管理，但实现在应用层
+- *表示层*: 数据编码 (JSON, XML) 由应用层处理
+
+** 常见应用层协议速查
+
+| 协议      | 用途                    | 默认端口号 | 传输层协议 | 关键特性                                      |
+|-----------|-------------------------|------------|-------------|-------------------------------------------|
+| HTTP      | 网页浏览 (明文)        | 80         | TCP         | 无状态，请求/响应模式         |
+| HTTPS     | 加密网页浏览            | 443        | TCP         | HTTP over TLS，加密安全                   |
+| FTP       | 文件传输                | 21 (控制), 20 (数据) | TCP | 主动/被动模式，明文传输                         |
+| SSH       | 安全远程登录            | 22         | TCP         | 加密终端，替代 Telnet                 |
+| Telnet    | 远程终端 (不安全)      | 23         | TCP         | 明文传输，*已被淘汰*                        |
+| SMTP      | 邮件发送                | 25         | TCP         | 简单邮件传输协议，客户端 → 服务器                          |
+| POP3      | 邮件接收 (拉取)        | 110        | TCP         | 下载到本地后删除服务器邮件              |
+| IMAP      | 邮件接收 (同步)        | 143        | TCP         | 双向同步，邮件保留在服务器                      |
+| DNS       | 域名解析                | 53         | UDP/TCP     | UDP 为主，TCP 用于长响应 (>512 B) 或 DNSSEC      |
+| NTP       | 网络时间同步            | 123        | UDP         | 毫秒级精度                      |
+| DHCP      | 动态主机配置            | 67 (服务器), 68 (客户端) | UDP | 自动分配 IP/网关/DNS                   |
+| MQTT      | 轻量消息传输 (物联网)  | 1883, 8883 (TLS)| TCP         | 发布-订阅模式，低带宽                 |
+| WebSocket | 实时通信                | 80/443 (复用 HTTP) | TCP | 全双工，基于 HTTP Upgrade        |
+| gRPC      | 远程过程调用            | 任意       | TCP (HTTP/2)| Protobuf 序列化，流式 RPC              |
+| QUIC      | 快速 UDP 传输           | 443        | UDP         | HTTP/3 底层协议，多路复用，0-RTT 连接 |
+
+*** TCP vs UDP 选择
+
+| 协议 | 特点                          | 适用场景                       | 代表协议          |
+|------|-------------------------------|--------------------------------|-------------------|
+| TCP  | 可靠，有序，面向连接          | 文件传输，网页浏览             | HTTP, FTP, SSH    |
+| UDP  | 不可靠，无序，无连接，低延迟  | 实时视频，DNS 查询，游戏       | DNS, NTP, QUIC    |
+
+* 路由器视角: FIB 与 LPM
+
+** 路由器如何维护转发表？
+
+路由器的 *FIB (Forwarding Information Base)* 来自多个来源:
+
+1. *直连路由*: 路由器接口直连的子网 (=ip addr show= 可见)
+2. *静态路由*: 管理员手动配置 (=ip route add=)
+3. *动态路由协议*:
+   - *RIP (Routing Information Protocol)*: 基于距离向量，最大跳数 15，已淘汰
+   - *OSPF (Open Shortest Path First)*: 基于链路状态，企业内网常用
+   - *BGP (Border Gateway Protocol)*: 互联网骨干网协议，AS 之间路由
+
+*** OSPF 示例
+
+企业网络中，路由器通过 OSPF 交换链路状态:
+
+1. 每个路由器广播自己的 *LSA (Link State Advertisement)*
+2. 所有路由器构建相同的 *拓扑图*
+3. 每个路由器运行 *Dijkstra 算法*，计算最短路径树
+4. 将结果安装到 FIB
+
+#+begin_src bash
+# 查看 OSPF 邻居
+show ip ospf neighbor
+
+# 查看 OSPF 路由
+show ip route ospf
+#+end_src
+
+*** BGP 示例
+
+互联网路由器 (ISP 边界路由器) 通过 BGP 交换路由:
+
+#+begin_example
+AS 64512 (电信) ↔ AS 64513 (联通) ↔ AS 64514 (移动)
+#+end_example
+
+BGP 路由包含:
+
+- *前缀*: =8.8.8.0/24=
+- *AS 路径*: =64512 64513 64514= (经过的 AS)
+- *下一跳*: 下一个 AS 的边界路由器 IP
+
+#+begin_src bash
+# 查看 BGP 路由
+show ip bgp
+
+# 输出:
+# Network          Next Hop         Metric  LocPrf  AS Path
+# 8.8.8.0/24       203.0.113.1      0       100     64512 64513
+#+end_src
+
+** LPM (Longest Prefix Match) 算法
+
+现代路由器使用 *Trie (前缀树)* 或 *TCAM (Ternary Content-Addressable Memory)* 实现 LPM。
+
+*** 软件 LPM: Patricia Trie
+
+#+begin_example
+路由表:
+- 0.0.0.0/0 → 默认路由
+- 10.0.0.0/8 → AS 1234
+- 10.1.0.0/16 → AS 5678
+- 10.1.2.0/24 → 直连
+
+查找 10.1.2.50:
+1. 匹配 10.0.0.0/8 (8 位)
+2. 匹配 10.1.0.0/16 (16 位)
+3. 匹配 10.1.2.0/24 (24 位) → 选择此路由
+#+end_example
+
+*** 硬件 LPM: TCAM
+
+TCAM 是一种特殊的硬件存储器，支持 *三态匹配* (0, 1, X):
+
+#+begin_example
+目标 IP: 10.1.2.50 = 00001010.00000001.00000010.00110010
+
+TCAM 表项:
+00001010.XXXXXXXX.XXXXXXXX.XXXXXXXX → AS 1234  (匹配 8 位)
+00001010.00000001.XXXXXXXX.XXXXXXXX → AS 5678  (匹配 16 位)
+00001010.00000001.00000010.XXXXXXXX → 直连     (匹配 24 位，最长)
+#+end_example
+
+TCAM 可以 *并行* 匹配所有表项，在一个时钟周期内完成 LPM，延迟 < 1 微秒。
+
+** TTL 与 ICMP 错误处理
+
+*** TTL 归零触发 ICMP Time Exceeded
+
+#+begin_example
+路由器收到包，TTL = 1:
+1. TTL 减 1 → TTL = 0
+2. 丢弃包
+3. 发送 ICMP Time Exceeded 消息给源 IP
+#+end_example
+
+ICMP 消息格式:
+
+#+begin_example
++--------+--------+--------+--------+
+| 类型   | 代码   | 校验和 | 保留   |
++--------+--------+--------+--------+
+| 11     | 0      | ...    | 0      |
++--------+--------+--------+--------+
+| 原始 IP header + 前 8 字节 payload |
++--------------------------------------+
+#+end_example
+
+- *类型 11*: Time Exceeded
+- *代码 0*: TTL expired in transit
+
+*** 其他常见 ICMP 消息
+
+| 类型 | 代码 | 含义                          | 触发场景                       |
+|------|------|-------------------------------|--------------------------------|
+| 0    | 0    | Echo Reply (ping 响应)        | 目标主机响应 ping              |
+| 3    | 0    | Destination Network Unreachable | 路由器无路由到目标网络         |
+| 3    | 1    | Destination Host Unreachable  | 同一网络内找不到主机 (ARP 失败) |
+| 3    | 3    | Destination Port Unreachable  | 目标主机端口未监听 (UDP)       |
+| 3    | 4    | Fragmentation Needed (DF set) | MTU 过小，需要分片但设置了 DF  |
+| 8    | 0    | Echo Request (ping 请求)      | 用户执行 =ping= 命令           |
+| 11   | 0    | TTL Exceeded                  | TTL 归零                       |
+
+* 可靠性保证机制
+
+原笔记中 "如何确保" 章节未完成，这里补充。
+
+** TCP 的可靠性保证
+
+*** 1. 序列号与确认
+
+每个字节都有唯一的序列号:
+
+#+begin_example
+发送端:
+- 发送 [seq=1000, len=100] 的段 (字节 1000~1099)
+- 发送 [seq=1100, len=200] 的段 (字节 1100~1299)
+
+接收端:
+- 收到 [seq=1000, len=100]
+- 发送 ACK [ack=1100] (确认已收到 < 1100 的所有字节)
+#+end_example
+
+*** 2. 超时重传
+
+发送端维护 *RTO (Retransmission Timeout)*，如果超时未收到 ACK，重传:
+
+#+begin_example
+RTO = SRTT + 4 * RTTVAR
+
+SRTT: Smoothed Round-Trip Time (平滑 RTT)
+RTTVAR: RTT 变异
+#+end_example
+
+*** 3. 快速重传
+
+如果收到 3 个重复 ACK (说明后续包已到达，但中间有丢包)，立即重传:
+
+#+begin_example
+发送: [seq=1000], [seq=1100], [seq=1200], [seq=1300]
+接收: 收到 1000, 1200, 1300 (1100 丢失)
+
+接收端发送:
+- ACK 1100 (收到 1000)
+- ACK 1100 (收到 1200，但期望 1100)
+- ACK 1100 (收到 1300，仍期望 1100)
+- ACK 1100 (第 3 次重复)
+
+发送端收到 3 个 ACK 1100 → 立即重传 [seq=1100]
+#+end_example
+
+*** 4. 流量控制 (滑动窗口)
+
+接收端通过 *窗口大小* 告知发送端自己的缓冲区剩余空间:
+
+#+begin_example
+接收端缓冲区: 64 KB
+已接收但未读取: 32 KB
+剩余空间: 32 KB
+
+接收端在 ACK 中设置 Window=32768 (32 KB)
+发送端不会发送超过 32 KB 的未确认数据
+#+end_example
+
+*** 5. 拥塞控制 (慢启动、拥塞避免)
+
+*慢启动 (Slow Start)*:
+
+#+begin_example
+cwnd (拥塞窗口) 初始值 = 1 MSS (1460 字节)
+每收到一个 ACK, cwnd += 1 MSS
+指数增长: 1, 2, 4, 8, 16, 32...
+
+直到 cwnd >= ssthresh (慢启动阈值) 或发生丢包
+#+end_example
+
+*拥塞避免 (Congestion Avoidance)*:
+
+#+begin_example
+cwnd >= ssthresh 后，改为线性增长
+每 RTT 增加 1 MSS
+#+end_example
+
+*快速恢复 (Fast Recovery)*:
+
+#+begin_example
+收到 3 个重复 ACK:
+1. ssthresh = cwnd / 2
+2. cwnd = ssthresh + 3 MSS
+3. 重传丢失的段
+4. 每收到一个重复 ACK, cwnd += 1 MSS (暂时膨胀)
+5. 收到新 ACK 后, cwnd = ssthresh (恢复)
+#+end_example
+
+** UDP 的不可靠性与应用层补偿
+
+UDP 本身 *不保证* 可靠性，但应用层可以自行实现:
+
+*** QUIC (HTTP/3 底层协议)
+
+QUIC 在 UDP 之上实现 TCP-like 的可靠传输:
+
+- *连接 ID*: 允许 IP 地址变化 (移动设备切换网络不断连)
+- *流式多路复用*: 一个连接多个独立流，丢包不阻塞其他流 (HTTP/2 的 head-of-line blocking 问题)
+- *0-RTT 连接*: 恢复连接无需握手
+
+*** DNS over UDP
+
+DNS 查询通过 UDP 53 端口，但有超时重传机制:
+
+#+begin_src c
+// 伪代码
+for retry in 0..3 {
+    send_dns_query();
+    if wait_response(timeout=1s) {
+        return response;
+    }
+}
+return DNS_TIMEOUT;
+#+end_src
+
+** 链路层的错误检测
+
+以太网使用 *FCS (Frame Check Sequence)* 检测传输错误:
+
+#+begin_example
+FCS = CRC-32(以太网帧的目标 MAC ~ payload)
+
+接收端:
+1. 重新计算 CRC-32
+2. 与 FCS 比较
+3. 不匹配 → 丢弃帧，不通知上层 (让 TCP 重传)
+#+end_example
+
+* 总结: 从应用到物理，层层嵌套的魔法
+
+一个简单的 =curl https://example.com= 背后，涉及:
+
+1. *DNS 解析*: 域名 → IP (UDP 53, 递归查询)
+2. *TCP 三次握手*: 建立连接 (SYN, SYN-ACK, ACK)
+3. *TLS 握手*: 加密协商 (ClientHello, ServerHello, 证书验证)
+4. *HTTP 请求*: 应用层协议 (GET / HTTP/1.1)
+5. *TCP 分段*: 数据分割，序列号，流量控制
+6. *IP 路由*: 查 FIB，LPM，TTL 递减
+7. *ARP 解析*: IP → MAC (局域网广播)
+8. *以太网封装*: 加 MAC 地址，FCS 校验
+9. *物理层传输*: DMA，电信号/光信号/射频
+10. *路由器转发*: 递归 LPM，重新封装
+11. *服务器接收*: 逆向拆包，直到应用层
+
+整个过程中:
+
+- *每一层* 只关心自己的职责 (封装与解封装)
+- *每一跳* 只修改链路层 header (MAC 地址)
+- *端到端* 的 IP 和端口始终不变
+
+这就是 *分层协议栈* 的优雅之处，也是互联网能够扩展到全球的基石。
+
+*全剧终。*

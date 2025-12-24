@@ -1,0 +1,951 @@
+#+title: APIC Architecture: From Hardware Interrupts to ISR Execution
+#+author: SOV710
+#+date: 2025-12-19
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 引言
+
+*感谢 [[https://zhuanlan.zhihu.com/p/393195942][再谈中断]] 这篇出色的文章。*
+
+在现代 x86-64 架构中，中断处理系统已经从古老的 8259A PIC (Programmable Interrupt Controller) 进化到 APIC (Advanced Programmable Interrupt Controller)。APIC 是多核系统中断管理的核心，负责将外设产生的硬件中断路由到正确的 CPU 核心，并触发中断服务程序 (ISR) 的执行。
+
+本文将深入剖析 APIC 的物理结构、工作模型，以及一个中断从硬件产生到软件处理的完整生命周期。
+
+* 物理结构与组件
+
+APIC 系统由多个组件构成，形成一个完整的中断处理链路:
+
+** LAPIC (Local APIC)
+
+*Local APIC* 是每个 CPU 核心内部的中断控制器，负责处理:
+
+- *核心本地中断*: 如 LAPIC Timer 定时器中断、温度传感器中断、性能计数器溢出中断
+- *处理器间中断* (IPI, Inter-Processor Interrupt): 用于多核通信，例如 TLB Shootdown、CPU 唤醒/停止
+- *外部中断的最终接收*: 从 I/O APIC 路由过来的中断
+- *NMI* (Non-Maskable Interrupt): 不可屏蔽中断，如硬件故障
+- *INIT* 和 *SIPI* 信号: 用于 CPU 初始化和启动其他核心
+
+LAPIC 的关键寄存器 (Memory-Mapped I/O, 默认地址 =0xFEE00000=):
+
+- =TPR= (Task Priority Register): 任务优先级，低于此优先级的中断会被屏蔽
+- =ISR= (In-Service Register): 正在处理的中断向量位图 (256 位)
+- =IRR= (Interrupt Request Register): 等待处理的中断向量位图
+- =EOI= (End of Interrupt): 写入此寄存器表示中断处理完毕
+- =LVT= (Local Vector Table): 配置本地中断源 (Timer, Thermal, Performance Counter, LINT0/1, Error)
+- =ICR= (Interrupt Command Register): 发送 IPI 到其他核心
+
+*** LAPIC Timer
+
+LAPIC Timer 是高精度定时器，可工作在三种模式:
+
+1. *One-shot*: 倒计时到 0 触发一次中断
+2. *Periodic*: 周期性触发中断 (用于操作系统调度)
+3. *TSC-Deadline*: 当 TSC (Time Stamp Counter) 达到指定值时触发
+
+#+begin_src c
+// 配置 LAPIC Timer 为 Periodic 模式，1ms 中断一次
+void setup_lapic_timer(void) {
+    // 设置 Divide Configuration Register (除以 16)
+    lapic_write(LAPIC_TDCR, 0x3);
+
+    // 设置 LVT Timer 寄存器 (vector 32, periodic mode)
+    lapic_write(LAPIC_LVTT, 0x20020);  // vector 32, periodic
+
+    // 设置初始计数值 (假设 LAPIC 频率为 1GHz, 1ms = 1,000,000 cycles)
+    lapic_write(LAPIC_TICR, 1000000 / 16);
+}
+#+end_src
+
+** I/O APIC
+
+*I/O APIC* 是外部中断的集中管理器，监控外部设备的中断请求:
+
+- *输入管脚*: 通常有 24 个 IRQ 输入管脚 (某些芯片组支持更多)
+- *重定向表* (Redirection Table, IOREDTBL): 24 个 64 位寄存器，每个对应一个 IRQ 管脚
+- *MMIO 寄存器*: 通过 Memory-Mapped I/O 访问 (默认地址 =0xFEC00000=)
+
+I/O APIC 的职责:
+
+1. 接收来自外设的硬件中断 (IRQ0~IRQ23)
+2. 根据 RTE 配置，决定中断的路由方式
+3. 将中断封装为 APIC 消息，通过 APIC Bus 发送给目标 LAPIC
+
+*** RTE (Redirection Table Entry) 结构
+
+每个 RTE 是一个 64 位寄存器，控制一个 IRQ 的行为:
+
+| Bit 范围 | 字段                | 说明                                       |
+|-------+--------------------+--------------------------------------------|
+| 0-7   | Vector             | 中断向量号 (32-255, 0-31 为 CPU 保留)           |
+| 8-10  | Delivery Mode      | 传输模式 (Fixed, Lowest Priority, SMI, NMI, INIT, ExtINT) |
+| 11    | Destination Mode   | 目标模式 (0=Physical, 1=Logical)              |
+| 12    | Delivery Status    | 传输状态 (0=Idle, 1=Send Pending, 只读)        |
+| 13    | Interrupt Polarity | 极性 (0=High Active, 1=Low Active)          |
+| 14    | Remote IRR         | 远程 IRR (Level-Triggered 专用, 只读)          |
+| 15    | Trigger Mode       | 触发模式 (0=Edge, 1=Level)                   |
+| 16    | Mask               | 屏蔽位 (0=Enabled, 1=Masked)                |
+| 17-55 | Reserved           | 保留                                       |
+| 56-63 | Destination        | 目标 LAPIC ID (Physical) 或逻辑组 (Logical)    |
+
+*示例: 配置键盘中断 (IRQ1)*
+
+#+begin_src c
+// 键盘中断: IRQ1 -> Vector 33, Fixed, Edge-triggered, Dest LAPIC 0
+void setup_keyboard_irq(void) {
+    uint64_t rte = 0;
+    rte |= 33;              // Vector 33
+    rte |= (0 << 8);        // Fixed delivery
+    rte |= (0 << 11);       // Physical destination
+    rte |= (0 << 13);       // High active
+    rte |= (0 << 15);       // Edge-triggered
+    rte |= (0 << 16);       // Unmask
+    rte |= (0ULL << 56);    // Destination: LAPIC 0
+
+    ioapic_write_rte(1, rte);  // 写入 RTE[1]
+}
+#+end_src
+
+*** Delivery Mode (传输模式)
+
+| 模式              | 值   | 说明                              |
+|-----------------+-----+-----------------------------------|
+| Fixed           | 000 | 发送给 Destination 指定的 CPU         |
+| Lowest Priority | 001 | 发送给优先级最低的 CPU (已废弃, 现代 CPU 不支持) |
+| SMI             | 010 | System Management Interrupt (系统管理) |
+| NMI             | 100 | Non-Maskable Interrupt (不可屏蔽)    |
+| INIT            | 101 | 初始化信号 (复位 CPU)                  |
+| ExtINT          | 111 | 8259A 兼容模式 (传统 PIC)              |
+
+现代系统通常使用 *Fixed* 模式，将中断绑定到特定 CPU 核心。
+
+** APIC Bus
+
+*APIC Bus* 是连接 I/O APIC 和所有 LAPIC 的专用总线，用于传输中断消息。
+
+- *物理实现*: 在老旧系统 (Pentium/P6) 中是独立的 3 线总线 (APIC_CLK, APIC_DATA, APIC_RESET)
+- *现代实现*: 通过 *System Bus* 或 *QPI/UPI* 传输，不再是独立总线
+- *消息格式*: APIC 消息包含 Vector, Delivery Mode, Destination 等信息
+
+** IRQ (Interrupt Request)
+
+*IRQ* 是外部设备的中断请求信号线:
+
+- *传统分配*:
+  - IRQ0: PIT Timer (现已废弃)
+  - IRQ1: 键盘
+  - IRQ3: COM2 串口
+  - IRQ4: COM1 串口
+  - IRQ6: 软盘控制器
+  - IRQ12: PS/2 鼠标
+  - IRQ14: Primary ATA
+  - IRQ15: Secondary ATA
+
+- *现代系统*: PCIe 设备使用 *MSI/MSI-X* (Message Signaled Interrupts)，绕过 I/O APIC 直接向 LAPIC 发送中断消息
+
+查看 IRQ 分配:
+
+#+begin_src bash
+$ cat /proc/interrupts
+           CPU0       CPU1       CPU2       CPU3
+  0:         24          0          0          0   IO-APIC   2-edge      timer
+  1:          9          0          0          0   IO-APIC   1-edge      i8042
+  8:          0          0          0          0   IO-APIC   8-edge      rtc0
+  9:          0          0          0          0   IO-APIC   9-fasteoi   acpi
+ 12:        155          0          0          0   IO-APIC  12-edge      i8042
+ 16:      12345          0          0          0   IO-APIC  16-fasteoi   nvme0q0
+#+end_src
+
+** ISR (Interrupt Service Routine)
+
+*ISR* 是中断服务程序，APIC 的最终输出是触发 CPU 执行 ISR:
+
+1. CPU 接收到 LAPIC 的中断信号
+2. CPU 保存当前上下文 (通过硬件自动压栈):
+   - =RFLAGS=, =CS=, =RIP= (返回地址)
+   - 如果发生特权级切换 (如用户态 → 内核态)，还会保存 =SS=, =RSP=
+   - 错误码 (如果中断带 Error Code)
+3. 通过 *IDT* (Interrupt Descriptor Table) 查找 ISR 入口地址
+4. 跳转到 ISR 执行
+5. ISR 结束后执行 =iretq= 指令，恢复上下文并返回
+
+*** 上下文保存位置
+
+上下文保存在 *当前任务的内核栈* 上:
+
+- 如果中断发生在用户态，切换到内核栈 (通过 TSS 中的 =RSP0= 字段)
+- 如果中断发生在内核态，继续使用当前内核栈
+
+#+begin_example
+中断前 (用户态):
+    用户栈: [用户数据...]
+    内核栈: [空]
+
+中断后 (内核态):
+    用户栈: [用户数据...]  (不变)
+    内核栈: [SS] [RSP] [RFLAGS] [CS] [RIP] [Error Code?] ← RSP 指向这里
+#+end_example
+
+** IDT (Interrupt Descriptor Table)
+
+*IDT* 是中断描述符表，存储在 *内存* 中，负责将中断向量号 (Vector) 映射到 ISR 地址:
+
+- *表项数量*: 256 个 (Vector 0~255)
+- *每个表项大小*: 16 字节 (x86-64 模式)
+- *表结构*:
+  - Offset: ISR 地址 (64 位)
+  - Segment Selector: 代码段选择子 (通常指向内核代码段)
+  - IST (Interrupt Stack Table): 栈切换索引 (0 表示不切换)
+  - Type: 门类型 (Interrupt Gate 或 Trap Gate)
+  - DPL: 描述符特权级 (通常为 0, 只允许内核访问)
+  - P: 存在位 (1=有效)
+
+*IDT Entry 结构 (x86-64)*:
+
+#+begin_example
+Bytes 0-1:   Offset 15:0      (ISR 地址低 16 位)
+Bytes 2-3:   Segment Selector (代码段)
+Byte 4:      IST (Bits 0-2) | Reserved (Bits 3-7)
+Byte 5:      Type (Bits 0-3) | 0 (Bit 4) | DPL (Bits 5-6) | P (Bit 7)
+Bytes 6-7:   Offset 31:16     (ISR 地址中 16 位)
+Bytes 8-11:  Offset 63:32     (ISR 地址高 32 位)
+Bytes 12-15: Reserved
+#+end_example
+
+*** Vector 分配约定
+
+| Vector 范围 | 用途                        |
+|-----------+-----------------------------|
+| 0-31      | CPU 异常 (由硬件定义)           |
+| 32-255    | 外部中断和软件中断              |
+
+*常见 CPU 异常*:
+
+| Vector | 名称               | 说明                     |
+|------+--------------------+--------------------------|
+| 0    | #DE (Divide Error) | 除零错误                 |
+| 6    | #UD (Invalid Opcode) | 非法指令                 |
+| 8    | #DF (Double Fault) | 双重故障 (异常处理时又发生异常) |
+| 13   | #GP (General Protection) | 一般保护异常 (段错误等)       |
+| 14   | #PF (Page Fault)   | 页错误                   |
+
+*外部中断*:
+
+- Vector 32~47: 传统 IRQ0~15 (通过 I/O APIC)
+- Vector 48+: MSI/MSI-X 中断、IPI、自定义软中断
+
+** IOREDTBL vs. IDT
+
+*IOREDTBL* 和 *IDT* 是两层不同的路由表:
+
+1. *IOREDTBL* (I/O APIC Redirection Table):
+   - 位置: I/O APIC 内部寄存器
+   - 作用: 将 *IRQ 管脚* 映射到 *APIC 消息* (Vector + Destination + Mode)
+   - 配置者: BIOS/UEFI 或操作系统内核
+   - 示例: IRQ1 (键盘) → Vector 33, Destination LAPIC 0
+
+2. *IDT* (Interrupt Descriptor Table):
+   - 位置: 主内存
+   - 作用: 将 *Vector* 映射到 *ISR 地址*
+   - 配置者: 操作系统内核
+   - 示例: Vector 33 → =keyboard_irq_handler= 函数地址
+
+流程:
+
+#+begin_example
+键盘按下
+   ↓
+I/O APIC IRQ1 管脚触发
+   ↓
+查 IOREDTBL[1]: Vector 33, Dest LAPIC 0
+   ↓
+APIC Bus 发送消息到 LAPIC 0
+   ↓
+LAPIC 0 接收，触发 CPU 中断
+   ↓
+CPU 查 IDT[33]: ISR = keyboard_irq_handler
+   ↓
+跳转执行 ISR
+#+end_example
+
+* 工作模型
+
+** I/O APIC 的中断处理流程
+
+当外设产生硬件中断时，I/O APIC 按以下步骤处理:
+
+*** 1. 接收硬中断信号
+
+外设通过 IRQ 管脚发送中断信号，信号可以是:
+
+- *Edge-triggered* (边沿触发): 检测信号 0→1 或 1→0 跳变
+- *Level-triggered* (电平触发): 检测信号持续为高电平或低电平
+
+#+begin_example
+Edge-triggered:
+  ────┐     ┌────
+      └─────┘
+       ↑ 此时触发中断
+
+Level-triggered:
+  ────┐
+      └────────  (持续低电平)
+       ↑ 进入中断状态，直到软件清除
+#+end_example
+
+*** 2. 查询 RTE
+
+I/O APIC 读取对应 IRQ 管脚的 RTE:
+
+#+begin_src c
+uint64_t rte = ioapic_read_rte(irq_pin);
+
+if (rte & (1 << 16)) {  // Mask bit
+    return;  // 中断被屏蔽，忽略
+}
+
+uint8_t vector = rte & 0xFF;
+uint8_t delivery_mode = (rte >> 8) & 0x7;
+uint8_t dest_mode = (rte >> 11) & 0x1;
+uint8_t destination = (rte >> 56) & 0xFF;
+#+end_src
+
+*** 3. 封装 APIC 消息
+
+根据 RTE 配置，I/O APIC 生成一条 APIC 消息:
+
+#+begin_example
+APIC Message:
+  - Vector: 33
+  - Delivery Mode: Fixed (000)
+  - Destination Mode: Physical (0)
+  - Level: Deassert (0)
+  - Trigger Mode: Edge (0)
+  - Destination: LAPIC 0
+#+end_example
+
+*** 4. 发送到目标 LAPIC
+
+消息通过 APIC Bus (或 System Bus) 发送到目标 LAPIC。
+
+- *Physical Mode*: 直接发送给指定 LAPIC ID 的核心
+- *Logical Mode*: 发送给逻辑组内的所有核心 (用于负载均衡)
+
+*** 5. Level-triggered 的特殊处理
+
+如果 RTE 配置为 Level-triggered:
+
+1. I/O APIC 发送中断后，设置 *Remote IRR* 位 (RTE bit 14)
+2. ISR 执行完毕后，软件必须 *显式清除设备的中断状态*
+3. 设备清除中断后，IRQ 管脚恢复到非激活状态
+4. I/O APIC 检测到管脚变化，清除 Remote IRR 位
+
+如果软件未清除设备中断，Remote IRR 位会一直置位，导致 *无法接收新的中断* (中断风暴)。
+
+** LAPIC 的中断处理流程
+
+LAPIC 接收到中断消息后:
+
+*** 1. 写入 IRR (Interrupt Request Register)
+
+LAPIC 在 IRR 的对应 bit 置位，表示有待处理的中断:
+
+#+begin_example
+IRR[33] = 1  (Vector 33 pending)
+#+end_example
+
+*** 2. 优先级仲裁
+
+LAPIC 比较:
+
+- *TPR* (Task Priority Register): 当前任务优先级
+- *IRR* 中最高优先级的中断向量
+
+如果 =Vector Priority > TPR=，则可以处理；否则延迟。
+
+*优先级计算*:
+
+- Vector 的高 4 位 (Bits 7:4) 决定优先级类别 (0~15)
+- 低 4 位 (Bits 3:0) 决定同类别内的优先级
+
+#+begin_example
+Vector 33 = 0x21 = 0010_0001
+  Priority Class: 2
+  Sub-priority: 1
+
+Vector 200 = 0xC8 = 1100_1000
+  Priority Class: 12  (更高优先级)
+  Sub-priority: 8
+#+end_example
+
+*** 3. 转移到 ISR (In-Service Register)
+
+当 CPU 准备处理中断时:
+
+1. IRR[33] 清零
+2. ISR[33] 置位 (表示 "正在处理")
+3. CPU 进入中断上下文
+
+*** 4. 触发 CPU 中断
+
+LAPIC 通过 CPU 的 INTR 引脚通知核心:
+
+1. CPU 检查 =RFLAGS.IF= (Interrupt Flag)，如果为 0 则延迟
+2. CPU 保存当前上下文到栈
+3. 查询 IDT[33]，跳转到 ISR
+
+*** 5. ISR 执行与 EOI
+
+ISR 执行完毕后，必须向 LAPIC 发送 *EOI* (End of Interrupt) 信号:
+
+#+begin_src c
+void keyboard_irq_handler(void) {
+    // 读取键盘扫描码
+    uint8_t scancode = inb(0x60);
+    handle_keypress(scancode);
+
+    // 发送 EOI
+    lapic_write(LAPIC_EOI, 0);  // 写任意值到 EOI 寄存器
+}
+#+end_src
+
+LAPIC 收到 EOI 后:
+
+1. ISR[33] 清零
+2. 允许接收新的中断
+
+** IPI (Inter-Processor Interrupt) 的发送
+
+核心 A 向核心 B 发送 IPI:
+
+#+begin_src c
+void send_ipi(uint8_t dest_lapic, uint8_t vector) {
+    // 写 ICR (Interrupt Command Register)
+    uint64_t icr = 0;
+    icr |= vector;               // Vector
+    icr |= (0 << 8);             // Fixed delivery
+    icr |= (0 << 11);            // Physical destination
+    icr |= (1 << 14);            // Assert level
+    icr |= (0 << 15);            // Edge-triggered
+    icr |= ((uint64_t)dest_lapic << 56);  // Destination
+
+    lapic_write(LAPIC_ICR_LOW, (uint32_t)icr);
+    lapic_write(LAPIC_ICR_HIGH, (uint32_t)(icr >> 32));
+}
+
+// 发送 TLB Shootdown IPI (Vector 240) 到核心 1
+send_ipi(1, 240);
+#+end_src
+
+核心 B 的 LAPIC 接收到 IPI 后，执行 ISR (例如刷新 TLB)。
+
+* 中断的完整生命周期
+
+让我们跟踪一个键盘中断从硬件产生到软件处理的完整过程:
+
+** Phase 1: 硬件触发 (0~10 ns)
+
+1. 用户按下键盘上的 'A' 键
+2. 键盘控制器 (8042) 生成扫描码 =0x1E=
+3. 键盘控制器拉高 IRQ1 管脚 (Edge-triggered)
+4. 信号通过芯片组传递到 I/O APIC 的 IRQ1 输入
+
+** Phase 2: I/O APIC 处理 (10~50 ns)
+
+1. I/O APIC 检测到 IRQ1 的 0→1 跳变
+2. 读取 IOREDTBL[1]:
+   #+begin_example
+   Vector: 33
+   Delivery Mode: Fixed
+   Destination: Physical, LAPIC 0
+   Trigger Mode: Edge
+   Mask: Disabled
+   #+end_example
+3. 封装 APIC 消息:
+   #+begin_example
+   { Vector=33, Mode=Fixed, Dest=0 }
+   #+end_example
+4. 通过 APIC Bus 发送消息
+
+** Phase 3: APIC Bus 传输 (50~100 ns)
+
+消息经过:
+
+- 芯片组 (PCH)
+- System Bus / QPI / UPI
+- 目标 CPU 的 Uncore 部分
+- 到达 LAPIC 0
+
+** Phase 4: LAPIC 接收 (100~150 ns)
+
+1. LAPIC 0 接收消息
+2. IRR[33] 置位
+3. 优先级仲裁: =Vector 33 (Priority 2) > TPR (Priority 1)=
+4. 等待当前指令执行完毕
+
+** Phase 5: CPU 保存上下文 (150~200 ns)
+
+1. CPU 检查 =RFLAGS.IF=，允许中断
+2. 硬件自动压栈 (假设从用户态进入):
+   #+begin_example
+   Push SS          (用户栈段)
+   Push RSP         (用户栈指针)
+   Push RFLAGS      (标志寄存器)
+   Push CS          (用户代码段)
+   Push RIP         (返回地址)
+   #+end_example
+3. 切换到内核栈 (通过 TSS.RSP0)
+4. IRR[33] → ISR[33]
+
+** Phase 6: IDT 查询与跳转 (200~250 ns)
+
+1. CPU 读取 IDTR 寄存器，获取 IDT 基址
+2. 计算 IDT Entry 地址: =IDT_BASE + 33 * 16=
+3. 读取 IDT[33]:
+   #+begin_example
+   Offset: 0xFFFFFFFF81234560  (ISR 地址)
+   Selector: 0x08              (内核代码段)
+   Type: Interrupt Gate
+   DPL: 0
+   #+end_example
+4. 加载 CS:RIP = =0x08:0xFFFFFFFF81234560=
+5. 跳转到 ISR 入口
+
+** Phase 7: ISR 执行 (250 ns ~ 几微秒)
+
+#+begin_src c
+// Linux 内核的键盘中断处理 (简化版)
+void do_IRQ_keyboard(void) {
+    // 1. 保存更多寄存器 (软件)
+    push_regs();
+
+    // 2. 读取扫描码
+    uint8_t scancode = inb(0x60);  // 从键盘控制器读取
+
+    // 3. 处理按键
+    if (scancode == 0x1E) {  // 'A' 键
+        input_event(KEY_A, 1);  // 按下事件
+    }
+
+    // 4. 发送 EOI
+    lapic_write(LAPIC_EOI, 0);
+
+    // 5. 恢复寄存器
+    pop_regs();
+
+    // 6. 返回
+    iretq;
+}
+#+end_src
+
+执行时间分解:
+
+- =inb(0x60)=: ~100 ns (I/O 端口读取)
+- 键码处理: ~500 ns (查表、事件队列)
+- EOI 写入: ~50 ns (MMIO 写)
+- 寄存器保存/恢复: ~100 ns
+
+总计: *~1 µs*
+
+** Phase 8: 中断返回 (几微秒后)
+
+1. =iretq= 指令弹出栈:
+   #+begin_example
+   Pop RIP
+   Pop CS
+   Pop RFLAGS
+   Pop RSP          (如果发生特权级切换)
+   Pop SS
+   #+end_example
+2. ISR[33] 清零 (由 EOI 触发)
+3. 恢复用户态执行
+
+** 时间线总结
+
+#+begin_example
+T=0 ns:     用户按下键盘
+T=10 ns:    I/O APIC 接收 IRQ1
+T=50 ns:    APIC 消息发送
+T=100 ns:   LAPIC 接收，IRR 置位
+T=150 ns:   CPU 开始保存上下文
+T=200 ns:   查询 IDT
+T=250 ns:   跳转到 ISR
+T=1.2 µs:   ISR 执行完毕，发送 EOI
+T=1.3 µs:   iretq 返回用户态
+#+end_example
+
+*总延迟: 约 1.3 微秒* (从硬件触发到返回用户态)
+
+* 初始化与配置
+
+** 谁负责配置 IDT 和 IOREDTBL?
+
+*** BIOS/UEFI 的初始化 (启动阶段)
+
+*BIOS/UEFI* 在系统启动时执行以下操作:
+
+1. *检测硬件*:
+   - 枚举 APIC (通过 ACPI 表或 MP Table)
+   - 读取 MADT (Multiple APIC Description Table) 获取 LAPIC 和 I/O APIC 地址
+
+2. *初始化 LAPIC*:
+   - 映射 LAPIC MMIO 到物理地址 =0xFEE00000=
+   - 启用 LAPIC (通过 IA32_APIC_BASE MSR)
+   - 配置 Spurious Interrupt Vector 寄存器
+
+3. *初始化 I/O APIC*:
+   - 映射 I/O APIC MMIO 到物理地址 =0xFEC00000=
+   - 设置 *默认的 IOREDTBL 配置* (通常全部 Mask)
+   - 某些 BIOS 会配置基本的 IRQ (如 Timer, Keyboard)
+
+4. *设置兼容模式*:
+   - 配置 8259A PIC (如果存在) 并禁用它
+   - 将 I/O APIC 的 IRQ0 配置为 ExtINT 模式 (兼容老系统)
+
+5. *不配置 IDT*:
+   - BIOS/UEFI *不负责* 配置 IDT，这是操作系统的职责
+   - BIOS 只使用实模式中断 (通过 IVT, Interrupt Vector Table)
+
+*** 操作系统内核的接管 (运行时)
+
+操作系统启动后，接管中断系统:
+
+*1. 配置 IDT*
+
+#+begin_src c
+// Linux 内核初始化 IDT (arch/x86/kernel/idt.c)
+void __init idt_setup(void) {
+    // 设置 CPU 异常处理 (Vector 0~31)
+    set_intr_gate(0, divide_error);
+    set_intr_gate(6, invalid_op);
+    set_intr_gate(13, general_protection);
+    set_intr_gate(14, page_fault);
+
+    // 设置外部中断处理 (Vector 32~255)
+    for (int i = 32; i < 256; i++) {
+        set_intr_gate(i, common_interrupt);
+    }
+
+    // 加载 IDTR 寄存器
+    load_idt(&idt_descr);
+}
+#+end_src
+
+*2. 重新配置 I/O APIC*
+
+#+begin_src c
+// 重新配置键盘中断
+void setup_keyboard(void) {
+    // 读取当前 RTE
+    uint64_t rte = ioapic_read_rte(1);
+
+    // 修改配置
+    rte &= ~0xFF;              // 清除 Vector
+    rte |= 33;                 // 设置 Vector 33
+    rte &= ~(1 << 16);         // Unmask
+    rte |= (0ULL << 56);       // Destination: LAPIC 0
+
+    // 写回 RTE
+    ioapic_write_rte(1, rte);
+}
+#+end_src
+
+*3. 绑定中断亲和性 (IRQ Affinity)*
+
+#+begin_src bash
+# 查看 IRQ 绑定到哪些 CPU
+$ cat /proc/irq/1/smp_affinity
+f  # 二进制: 1111 (允许 CPU 0-3)
+
+# 将键盘中断绑定到 CPU 0
+$ echo 1 | sudo tee /proc/irq/1/smp_affinity
+#+end_src
+
+内核会根据 =smp_affinity= 动态修改 IOREDTBL 的 Destination 字段。
+
+*4. 启用中断*
+
+#+begin_src c
+// 启用 CPU 中断 (设置 RFLAGS.IF)
+sti();  // Set Interrupt Flag
+
+// 或者在 C 代码中
+__asm__ volatile("sti");
+#+end_src
+
+** ACPI 表与 MADT
+
+操作系统通过 *ACPI MADT* (Multiple APIC Description Table) 获取 APIC 信息:
+
+#+begin_src c
+// 简化的 MADT 结构
+struct acpi_madt {
+    struct acpi_table_header header;
+    uint32_t lapic_address;     // LAPIC MMIO 地址 (通常 0xFEE00000)
+    uint32_t flags;             // Bit 0: 是否有 8259A PIC
+    // 后面跟随多个 APIC 结构体...
+};
+
+struct acpi_madt_lapic {
+    uint8_t type;               // 0 = Processor Local APIC
+    uint8_t length;
+    uint8_t acpi_processor_id;
+    uint8_t apic_id;            // LAPIC ID
+    uint32_t flags;             // Bit 0: Enabled
+};
+
+struct acpi_madt_ioapic {
+    uint8_t type;               // 1 = I/O APIC
+    uint8_t length;
+    uint8_t ioapic_id;
+    uint8_t reserved;
+    uint32_t ioapic_address;    // MMIO 地址
+    uint32_t global_irq_base;   // 起始 IRQ 号
+};
+#+end_src
+
+查看 ACPI 表:
+
+#+begin_src bash
+$ sudo cat /sys/firmware/acpi/tables/APIC | hexdump -C
+00000000  41 50 49 43 bc 00 00 00  02 6c 56 42 4f 58 20 20  |APIC.....lVBOX  |
+00000010  56 42 4f 58 41 50 49 43  00 00 00 00 41 4d 49 20  |VBOXAPIC....AMI |
+00000020  13 00 00 01 00 00 e0 fe  01 00 00 00 00 08 00 00  |................|
+00000030  00 00 00 00 01 00 00 00  00 08 01 01 00 00 00 00  |................|
+...
+#+end_src
+
+* 现代扩展: MSI/MSI-X
+
+** 为什么需要 MSI?
+
+传统 IRQ 的局限:
+
+1. *管脚数量有限*: I/O APIC 通常只有 24 个 IRQ
+2. *共享中断*: 多个设备可能共享同一个 IRQ (性能差)
+3. *额外延迟*: 需要经过 I/O APIC 转发
+
+*MSI* (Message Signaled Interrupts) 解决了这些问题:
+
+- 设备直接向 LAPIC 发送中断消息，绕过 I/O APIC
+- 每个设备可以有多个独立的中断向量 (MSI-X 支持 2048 个)
+- 减少延迟
+
+** MSI 的工作原理
+
+1. *PCIe 设备配置*:
+   - 操作系统配置设备的 MSI Capability 寄存器
+   - 设置 *Message Address* (LAPIC MMIO 地址, =0xFEE00000=)
+   - 设置 *Message Data* (Vector 编号)
+
+2. *设备触发中断*:
+   - 设备执行一次 *Memory Write* 到 Message Address
+   - 写入的数据包含 Vector 和 Delivery Mode
+
+3. *LAPIC 接收*:
+   - LAPIC 检测到 MMIO 写入，解析为中断消息
+   - 触发对应 Vector 的 ISR
+
+** 配置 MSI 示例
+
+#+begin_src c
+// PCI 配置空间偏移
+#define PCI_MSI_CAP      0x50
+#define PCI_MSI_ADDR_LO  (PCI_MSI_CAP + 0x04)
+#define PCI_MSI_ADDR_HI  (PCI_MSI_CAP + 0x08)
+#define PCI_MSI_DATA     (PCI_MSI_CAP + 0x0C)
+
+void setup_msi(struct pci_device *dev, uint8_t vector, uint8_t dest_lapic) {
+    // Message Address: 0xFEE00000 + (dest_lapic << 12)
+    uint32_t addr = 0xFEE00000 | (dest_lapic << 12);
+    pci_write_config32(dev, PCI_MSI_ADDR_LO, addr);
+    pci_write_config32(dev, PCI_MSI_ADDR_HI, 0);
+
+    // Message Data: Vector + Fixed delivery
+    uint16_t data = vector;  // Bit 0-7: Vector, Bit 8-10: Delivery Mode
+    pci_write_config16(dev, PCI_MSI_DATA, data);
+
+    // 启用 MSI
+    uint16_t control = pci_read_config16(dev, PCI_MSI_CAP);
+    control |= 0x0001;  // MSI Enable
+    pci_write_config16(dev, PCI_MSI_CAP, control);
+}
+#+end_src
+
+查看 MSI 配置:
+
+#+begin_src bash
+$ lspci -vv -s 01:00.0 | grep MSI
+Capabilities: [50] MSI: Enable+ Count=1/1 Maskable- 64bit+
+    Address: 00000000fee00000  Data: 4022
+    # Vector 34 (0x22), Delivery Mode 0 (Fixed)
+#+end_src
+
+** MSI-X 的优势
+
+*MSI-X* 是 MSI 的增强版:
+
+- 支持 *最多 2048 个中断向量* (MSI 只支持 32 个)
+- 每个向量可以独立配置 Address 和 Data
+- 支持向量级别的 Mask/Unmask
+
+高性能网卡 (如 Intel X710) 使用 MSI-X 为每个 RX/TX 队列分配独立中断:
+
+#+begin_example
+Vector 100: RX Queue 0 → CPU 0
+Vector 101: RX Queue 1 → CPU 1
+Vector 102: TX Queue 0 → CPU 2
+...
+#+end_example
+
+这样每个 CPU 只处理自己的队列，避免锁竞争。
+
+* 实际应用场景
+
+** 高性能网络 I/O
+
+*问题*: 传统单队列网卡，所有数据包触发同一个中断，单核瓶颈。
+
+*方案*: 使用 *RSS* (Receive Side Scaling) + MSI-X:
+
+1. 网卡有 8 个 RX 队列
+2. 每个队列绑定一个 MSI-X 向量，路由到不同 CPU
+3. 硬件根据数据包的 4 元组 (SrcIP, DstIP, SrcPort, DstPort) Hash 分配到队列
+
+#+begin_src bash
+# 配置 NIC 的 RSS
+ethtool -X eth0 equal 8  # 8 个队列平均分配
+
+# 查看中断分布
+$ cat /proc/interrupts | grep eth0
+ 100:  1234567      0      0      0  IR-PCI-MSI 524288-edge  eth0-rx-0
+ 101:       0  2345678      0      0  IR-PCI-MSI 524289-edge  eth0-rx-1
+ 102:       0      0  3456789      0  IR-PCI-MSI 524290-edge  eth0-rx-2
+...
+#+end_src
+
+结果: 网卡吞吐量从 *10 Gbps* 提升到 *80 Gbps*。
+
+** 实时系统的中断隔离
+
+*问题*: 关键任务 (如控制回路) 被非关键中断打断，导致延迟抖动。
+
+*方案*: 使用 *CPU 隔离* + *IRQ 绑定*:
+
+#+begin_src bash
+# 启动时隔离 CPU 2-3 (不运行普通任务)
+# 内核参数: isolcpus=2,3
+
+# 将关键任务绑定到 CPU 2
+taskset -c 2 ./realtime_app &
+
+# 将所有非关键中断绑定到 CPU 0-1
+for irq in $(ls /proc/irq/); do
+    if [ -d "/proc/irq/$irq" ]; then
+        echo 3 > /proc/irq/$irq/smp_affinity  # CPU 0-1 (0b0011)
+    fi
+done
+
+# 将关键设备中断 (如 CAN 总线) 绑定到 CPU 2
+echo 4 > /proc/irq/50/smp_affinity  # CPU 2 (0b0100)
+#+end_src
+
+结果: 控制回路延迟从 *500 µs* 降低到 *50 µs*。
+
+** 调试中断风暴
+
+*症状*: 系统 CPU 占用 100%, =top= 显示大量时间在 =si= (Software Interrupt)。
+
+*诊断*:
+
+#+begin_src bash
+# 查看中断计数
+$ watch -n 1 'cat /proc/interrupts | grep -E "eth0|nvme"'
+
+# 某个中断计数疯涨
+ 16:  999999999      0      0      0   IO-APIC  16-fasteoi   eth0
+#+end_src
+
+*原因*: 网卡驱动未正确发送 EOI，或 Level-triggered 中断未清除设备状态。
+
+*修复*:
+
+#+begin_src c
+// 驱动代码中确保发送 EOI
+void eth_irq_handler(int irq, void *dev_id) {
+    struct eth_device *dev = dev_id;
+
+    // 处理中断
+    handle_rx_packets(dev);
+
+    // 清除设备中断状态 (关键!)
+    eth_write_reg(dev, ETH_INT_STATUS, 0xFFFFFFFF);
+
+    // 内核会自动发送 EOI
+}
+#+end_ref>
+
+** 嵌入式系统的 GPIO 中断
+
+在 ARM/RISC-V 嵌入式系统中，GPIO 管脚可以触发中断:
+
+#+begin_src c
+// 配置 GPIO 为中断模式 (例如 STM32)
+void setup_gpio_interrupt(void) {
+    // 配置 PA0 为输入，上拉
+    GPIOA->MODER &= ~(0x3 << 0);
+    GPIOA->PUPDR |= (0x1 << 0);
+
+    // 配置 EXTI (External Interrupt) 连接到 PA0
+    SYSCFG->EXTICR[0] |= (0x0 << 0);  // PA0
+
+    // 启用 EXTI0, 下降沿触发
+    EXTI->IMR |= (1 << 0);   // Interrupt Mask Register
+    EXTI->FTSR |= (1 << 0);  // Falling Trigger Selection Register
+
+    // 配置 NVIC (ARM 的中断控制器)
+    NVIC_SetPriority(EXTI0_IRQn, 2);
+    NVIC_EnableIRQ(EXTI0_IRQn);
+}
+
+// 中断处理
+void EXTI0_IRQHandler(void) {
+    if (EXTI->PR & (1 << 0)) {  // Pending Register
+        // 处理按键
+        button_pressed();
+
+        // 清除 Pending 位
+        EXTI->PR = (1 << 0);
+    }
+}
+#+end_src
+
+* 总结
+
+APIC 是现代 x86-64 多核系统中断管理的基石，理解其工作原理对于:
+
+- *系统编程*: 编写操作系统内核、驱动程序
+- *性能优化*: 中断亲和性、MSI-X 队列分配、实时系统调优
+- *故障排查*: 中断风暴、延迟抖动、CPU 占用异常
+
+*核心要点*:
+
+1. *LAPIC* 是每核独立的中断控制器，处理本地和外部中断
+2. *I/O APIC* 是外部中断的路由器，通过 IOREDTBL 配置转发规则
+3. *IDT* 是软件层的路由表，将中断向量映射到 ISR
+4. *MSI/MSI-X* 绕过 I/O APIC，实现更低延迟和更高并发
+5. *中断延迟* 从硬件触发到 ISR 执行约 1~2 µs
+
+*实践建议*:
+
+- 使用 =perf= 和 =/proc/interrupts= 监控中断
+- 合理配置 IRQ 亲和性，避免单核瓶颈
+- 高性能设备优先使用 MSI-X
+- 实时系统隔离 CPU 并绑定关键中断
+- 调试中断问题时检查 EOI 和设备状态清除
+
+*进一步阅读*:
+
+- Intel SDM Volume 3, Chapter 10: APIC
+- Linux Kernel Documentation: [[https://www.kernel.org/doc/html/latest/core-api/genericirq.html][Generic IRQ Handling]]
+- OSDev Wiki: [[https://wiki.osdev.org/APIC][APIC]]

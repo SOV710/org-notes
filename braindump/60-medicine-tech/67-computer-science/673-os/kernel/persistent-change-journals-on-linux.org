@@ -1,0 +1,910 @@
+#+title: Persistent Change Journals on Linux: A Decade-Long Journey
+#+author: SOV710
+#+date: 2025-12-23
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 问题: Linux 缺失持久化变更日志
+
+持久化变更日志 (Persistent Change Journal) 这个 Windows 和 macOS 实现了许久的功能，在 Linux 上却迟迟难产。
+
+想象一下，你在做一个持久化的文件同步系统，你想赋予其足够的鲁棒性，让它能够保证跨重启依旧可续接。你本来以为这个相当显明的需求应该早就被实现了，但是你查到了 Windows 的 *USN Journal* 的 =last_usn=，查到了 macOS 的 *FSEvents* 的 =since_id=，但是偏偏却发现 Linux 的这个 API 到了 2025 年也还是没有实现。
+
+你的程序希望能够在文件系统发生更改时执行某些操作，"无论是什么"。它的应用场景包括:
+
+- *云同步*: 将本地文件变更同步到云端 (Dropbox, Google Drive, OneDrive, Syncthing)
+- *备份系统*: 增量备份需要知道哪些文件被修改过 (Time Machine, Restic)
+- *搜索索引*: 桌面搜索工具需要实时更新索引 (Everything, Spotlight, Recoll)
+- *版本控制*: Git 仓库状态监控、IDE 自动编译触发
+- *安全审计*: 监控敏感目录的所有变更操作
+
+要做可续接 (resume after reboot)，内核必须在磁盘上维护一个 *全局变更日志*。
+
+但是，*Linux 没有*。这意味着 Linux 上的同步系统要么仅依赖 =inotify= 不做全局变更日志，要么 *重启后扫盘*。
+
+虽然 Linux 上还有个 =fanotify=，但这俩 API 都是 *内存队列*，重启就没了，依然不管用。
+
+** 对比: Windows USN Journal
+
+Windows 的 *USN Journal* (Update Sequence Number Journal) 是 NTFS 文件系统的内建特性。
+
+*** USN Journal 的工作原理
+
+每当文件系统发生变更 (创建、删除、重命名、数据修改)，NTFS 会在磁盘上的专用日志区域写入一条记录:
+
+#+begin_src c
+typedef struct {
+    DWORDLONG      Usn;             // 单调递增的序列号
+    DWORDLONG      FileReferenceNumber;
+    DWORDLONG      ParentFileReferenceNumber;
+    DWORD          Reason;          // USN_REASON_DATA_EXTEND 等
+    DWORD          SourceInfo;
+    DWORD          SecurityId;
+    DWORD          FileAttributes;
+    WORD           FileNameLength;
+    WORD           FileNameOffset;
+    WCHAR          FileName[1];     // 变长
+} USN_RECORD_V2;
+#+end_src
+
+关键字段:
+
+- *Usn*: 64 位单调递增序列号，全局唯一，持久化在磁盘
+- *Reason*: 变更类型位掩码 (数据修改、重命名、删除等)
+- *FileReferenceNumber*: 文件的唯一 ID (类似 inode 号)
+
+*** 续接机制
+
+应用程序可以:
+
+1. *首次启动*: 调用 =FSCTL_QUERY_USN_JOURNAL= 获取当前最新的 USN 号，记录为 =last_usn=
+2. *后续轮询*: 调用 =FSCTL_READ_USN_JOURNAL=，从 =last_usn= 开始读取所有后续变更
+3. *重启续接*: 从磁盘读取上次保存的 =last_usn=，继续轮询
+
+#+begin_src cpp
+// Windows 应用示例
+HANDLE hVol = CreateFile(L"\\\\.\\C:", ...);
+
+// 查询当前 USN
+USN_JOURNAL_DATA journalData;
+DeviceIoControl(hVol, FSCTL_QUERY_USN_JOURNAL, NULL, 0,
+                &journalData, sizeof(journalData), ...);
+
+// 从上次位置读取
+READ_USN_JOURNAL_DATA readData = {
+    .StartUsn = last_saved_usn,  // 从这里续接
+    .ReasonMask = 0xFFFFFFFF,
+    .ReturnOnlyOnClose = 0,
+    .Timeout = 0,
+    .BytesToWaitFor = 0,
+    .UsnJournalID = journalData.UsnJournalID
+};
+
+BYTE buffer[4096];
+DeviceIoControl(hVol, FSCTL_READ_USN_JOURNAL, &readData, sizeof(readData),
+                buffer, sizeof(buffer), ...);
+
+// 解析 USN_RECORD_V2，更新 last_saved_usn
+#+end_src
+
+这就是 Windows 上 *Everything* 搜索工具能在几秒内索引整个硬盘，并实时更新的原因。
+
+** 对比: macOS FSEvents
+
+macOS 的 *FSEvents* 是 APFS (Apple File System) 和 HFS+ 的内建特性。
+
+*** FSEvents 的工作原理
+
+文件系统在磁盘上维护一个 *event stream database*，每个事件有一个单调递增的 =FSEventStreamEventId=:
+
+#+begin_src objc
+FSEventStreamRef stream = FSEventStreamCreate(
+    NULL,
+    &callback,
+    &context,
+    pathsToWatch,
+    kFSEventStreamEventIdSinceNow,  // 或者从某个 ID 开始
+    1.0,  // 延迟 1 秒批量上报
+    kFSEventStreamCreateFlagFileEvents
+);
+
+void callback(ConstFSEventStreamRef streamRef,
+              void *clientCallBackInfo,
+              size_t numEvents,
+              void *eventPaths,
+              const FSEventStreamEventFlags eventFlags[],
+              const FSEventStreamEventId eventIds[])
+{
+    for (size_t i = 0; i < numEvents; i++) {
+        printf("Event %llu: %s (flags: 0x%x)\n",
+               eventIds[i], ((char **)eventPaths)[i], eventFlags[i]);
+        // 保存 eventIds[i] 作为下次的 sinceWhen
+    }
+}
+#+end_src
+
+*** APFS 的持久化机制
+
+APFS 在卷的元数据区维护一个 *change journal*，包含:
+
+- *Transaction ID*: 每个文件系统事务有唯一 ID
+- *Event ID*: 单调递增的全局事件 ID
+- *Path*: 文件路径 (可选，根据 flag 决定)
+- *Flags*: 事件类型 (创建、删除、修改、重命名等)
+
+即使系统重启，应用也可以从上次的 =eventId= 继续读取:
+
+#+begin_src objc
+// 从磁盘读取上次保存的 event ID
+FSEventStreamEventId lastEventId = load_from_disk();
+
+// 创建 stream 从该位置续接
+FSEventStreamRef stream = FSEventStreamCreate(
+    NULL, &callback, &context, pathsToWatch,
+    lastEventId,  // 从这里继续
+    1.0, kFSEventStreamCreateFlagFileEvents
+);
+#+end_src
+
+这就是 macOS *Spotlight* 搜索和 *Time Machine* 备份能够高效工作的原因。
+
+** Linux 的困境: inotify 和 fanotify
+
+Linux 提供了两个文件系统监控 API: =inotify= 和 =fanotify=，但它们都是 *内存队列*，无法跨重启续接。
+
+*** inotify 的局限
+
+=inotify= 是 2005 年引入 Linux 2.6.13 的特性，用于监控文件/目录变更:
+
+#+begin_src c
+int fd = inotify_init();
+int wd = inotify_add_watch(fd, "/home/user/Documents", IN_MODIFY | IN_CREATE | IN_DELETE);
+
+while (1) {
+    char buf[4096];
+    int len = read(fd, buf, sizeof(buf));
+    struct inotify_event *event = (struct inotify_event *)buf;
+    // 处理事件...
+}
+#+end_src
+
+*问题*:
+
+1. *内存队列*: 事件存储在内核内存中，重启后全部丢失
+2. *需要递归监控*: 要监控整个目录树，必须对每个子目录调用 =inotify_add_watch=
+3. *Watch 数量限制*: =/proc/sys/fs/inotify/max_user_watches= 默认 8192，对于大型目录树不够用
+4. *错过事件*: 如果应用来不及读取，事件队列满后会丢失事件 (返回 =IN_Q_OVERFLOW=)
+
+*** fanotify 的改进与局限
+
+=fanotify= (2010, Linux 2.6.36) 是为了解决 =inotify= 的一些问题:
+
+#+begin_src c
+int fd = fanotify_init(FAN_CLASS_NOTIF, O_RDONLY);
+fanotify_mark(fd, FAN_MARK_ADD | FAN_MARK_MOUNT,
+              FAN_MODIFY | FAN_CREATE | FAN_DELETE, AT_FDCWD, "/");
+
+while (1) {
+    struct fanotify_event_metadata buf[200];
+    int len = read(fd, buf, sizeof(buf));
+    // 处理事件...
+}
+#+end_src
+
+*改进*:
+
+- *Mount-point watch*: 可以监控整个挂载点，无需递归添加 watch
+- *更丰富的事件类型*: 支持 =FAN_OPEN_PERM= 等权限事件
+
+*依然的问题*:
+
+- *内存队列*: 事件仍然在内存中，重启后丢失
+- *无序列号*: 没有类似 USN/EventID 的全局单调递增序列号
+- *性能开销*: 监控整个 mount point 会产生大量事件
+
+*** 实际影响
+
+这导致 Linux 上的云同步软件 (如 Dropbox, Syncthing) 在重启后必须:
+
+1. *全盘扫描*: 遍历整个同步目录，计算文件 hash，对比数据库
+2. *或者信任本地数据库*: 假设重启期间没有变更 (不安全)
+
+对于包含百万文件的目录，全盘扫描可能需要 *数十分钟*。
+
+* 根本原因: Linux 的 VFS 架构
+
+我认为这个 feature 不能实现的主要问题是，*Linux 生态和具体的 FS 是不绑定的*。
+
+** Windows/macOS 的优势
+
+- *Windows*: 99% 都是 NTFS，USN Journal 直接内建在 NTFS 驱动中
+- *macOS*: 99% 都是 APFS，FSEvents 直接内建在 APFS 驱动中
+
+这些文件级的事件 API 都是把数据结构内建在 FS 里的，它们本来就能跟踪数据块变更 (通过 journal 或 copy-on-write)。
+
+** Linux 的挑战
+
+Linux 要想实现这个功能，就只能在 *VFS 层* 加 *写前 hook* 或 *写后 hook*，实现一个"跨文件系统的持久 change journal API"。
+
+*** VFS 层的困难
+
+Linux 的 *VFS* (Virtual File System) 是一个抽象层，为上层应用提供统一接口，隐藏底层文件系统的差异:
+
+#+begin_example
+应用
+  ↓
+系统调用 (open, read, write, rename...)
+  ↓
+VFS 层 (dentry cache, inode cache, page cache)
+  ↓
+文件系统驱动 (ext4, btrfs, xfs, f2fs, nfs...)
+  ↓
+块设备层 (bio, request)
+  ↓
+硬件
+#+end_example
+
+要在 VFS 层实现全局 change journal，需要:
+
+1. *拦截所有写操作*: =write=, =mmap= 写入, =truncate=, =rename=, =unlink=, =mkdir=, =symlink=...
+2. *持久化到磁盘*: 但 VFS 本身不直接操作磁盘，必须依赖某个文件系统
+3. *与所有文件系统兼容*: ext4, btrfs, xfs, f2fs, zfs, bcachefs, 甚至网络文件系统 (nfs, cifs)
+
+*** 每个文件系统的语义差异
+
+不同文件系统的内部机制差异巨大:
+
+*ext4*:
+
+- 基于 journal (jbd2)，但 journal 是用于崩溃恢复，不是变更日志
+- 数据模式: =data=journal= (元数据+数据都 journal), =data=ordered= (只 journal 元数据), =data=writeback= (无序)
+- 没有内建的变更跟踪
+
+*btrfs*:
+
+- Copy-on-Write (COW) 文件系统
+- 有 *subvolume* 概念 (类似 ZFS dataset)
+- 支持 *send/receive* 增量传输 (但那是快照级别，不是文件级别)
+- 有 =BTRFS_IOC_TREE_SEARCH= 可以查询 extent tree，但没有统一的变更日志
+
+*xfs*:
+
+- 基于 journal，但同样是崩溃恢复用
+- 没有内建变更跟踪
+
+*f2fs*:
+
+- 为 Flash 存储优化的日志结构文件系统
+- 有 checkpoint 机制，但同样没有用户可访问的变更日志
+
+*zfs* (OpenZFS):
+
+- 有 *ZIL* (ZFS Intent Log) 用于加速同步写入
+- 有 *txg* (transaction group) 的概念，每个 txg 有唯一 ID
+- 但 ZIL 和 txg 都是内部机制，没有暴露为持久化变更 API
+
+*网络文件系统* (nfs, cifs):
+
+- 服务器端的变更如何传递给客户端？
+- 需要协议支持 (如 NFSv4.2 的 =CB_NOTIFY=)，但实现复杂
+
+*** 如果硬要在 VFS 层做...
+
+假设内核团队决定在 VFS 层实现，会遇到的问题:
+
+*1. 日志存储在哪里？*
+
+- 存在某个文件中？那么该文件在哪个文件系统上？如果监控的是 =/home= (ext4)，日志存在 =/var= (btrfs) 上？
+- 存在每个文件系统的内部？那么每个 FS 驱动都要实现一遍，回到原点
+
+*2. 性能开销*
+
+每次文件操作都要写 journal，overhead 巨大:
+
+- 普通写入: 数据 + journal 记录 = *双写*
+- 小文件高频修改: journal 比数据还大
+
+*3. 并发和锁*
+
+VFS 的 dentry/inode 缓存已经很复杂，加入 journal 记录会引入新的锁竞争点。
+
+*4. 与现有 FS 特性冲突*
+
+- btrfs 的 reflink/snapshot 怎么处理？journal 记录 COW 的每一层？
+- zfs 的 dedup 怎么处理？两个文件 dedup 后，修改其中一个算几次变更？
+
+** 对比: Everything 和 Spotlight 的实现
+
+这也解释了为什么 Windows 和 macOS 的桌面搜索工具如此快速。
+
+*** Everything (Windows)
+
+*Everything* 是 Windows 上的极速文件搜索工具，索引速度和实时更新能力远超 Linux 上的任何方案。
+
+*实现原理*:
+
+1. *首次索引*: 读取 NTFS 的 *MFT* (Master File Table)，直接从磁盘解析所有文件的元数据
+   - MFT 是 NTFS 的核心数据结构，每个文件有一个 MFT 记录 (包含文件名、大小、时间戳等)
+   - Everything 直接读取 =\\\\.\\C:\$MFT= 设备文件 (需要管理员权限)
+   - 扫描整个 1TB 硬盘只需 *几秒钟*
+
+2. *实时更新*: 监听 USN Journal
+   - Everything 启动时调用 =FSCTL_QUERY_USN_JOURNAL= 获取当前 USN
+   - 后台线程轮询 =FSCTL_READ_USN_JOURNAL=，增量更新索引
+   - 重启后从上次保存的 USN 续接
+
+*为什么 Linux 做不到*:
+
+- ext4/btrfs 没有类似 MFT 的 "单一文件表" 可以快速读取
+- 没有持久化的 change journal
+
+*** Spotlight (macOS)
+
+*Spotlight* 是 macOS 的系统级搜索框架，支持全文搜索和元数据搜索。
+
+*实现原理*:
+
+1. *元数据提取*: =mds= (metadata server) 和 =mdworker= 进程在后台解析文件内容，提取元数据
+   - 文档: 标题、作者、关键词
+   - 图片: EXIF 信息 (GPS、相机型号)
+   - 音乐: ID3 标签
+
+2. *索引存储*: 数据存储在 =/.Spotlight-V100= 目录 (每个卷一个)
+
+3. *实时更新*: 监听 FSEvents
+   - =mds= 调用 =FSEventStreamCreate= 监控整个卷
+   - 文件变更后，=mdworker= 重新提取元数据并更新索引
+   - 重启后从上次的 =FSEventStreamEventId= 续接
+
+*为什么 Linux 做不到*:
+
+- 缺少持久化的事件流
+- Linux 的搜索工具 (如 =recoll=, =tracker=) 必须重启后重新扫描，或者依赖 =inotify= 丢失重启期间的变更
+
+* 十年长征: 从 2014 到 2025
+
+让我们看看为什么 Linux 这么久也没把这个 feature 合并进主线。
+
+** 2014: LWN 首次提出
+
+这个问题首次被公开讨论，在 [[https://lwn.net/Articles/605128/][LWN.net]] 上可见。
+
+当时的讨论主要集中在:
+
+- 云同步软件 (如 Dropbox) 需要跨重启的变更追踪
+- 现有的 =inotify= 不够用
+- 是否应该在 VFS 层实现，还是由各个文件系统自己实现
+
+社区的反应是: "这个需求合理，但实现起来太复杂了。"
+
+** 2017 LSFMM: Amir Goldstein 的提案
+
+在 [[https://lwn.net/Articles/723492/][2017 年的 Linux Storage, Filesystem, and Memory-Management Summit (LSFMM)]] 上，*Amir Goldstein* (overlayfs 的 co-maintainer) 提出了一个解决方案。
+
+#+begin_quote
+Goldstein is trying to make fsnotify more scalable for getting notifications of changes in a large filesystem. To that end, he has proposed a "superblock watch" mechanism to efficiently report all changes made to a filesystem. For his use case, he just needs to be able to receive notifications when any file in any directory in the filesystem has changed (been created, deleted, or moved). There was a question about whether the names of the files that are changed should be included in the event, but Goldstein said he did not need that functionality (though others might); his application simply rescans the directory if anything has changed in it.
+#+end_quote
+
+Goldstein 试图使 =fsnotify= 更具可扩展性，以便在大型文件系统中获取更改通知。为此，他提出了一种 *"superblock watch"* 机制，以高效地报告对文件系统所做的所有更改。对于他的用例，他只需要在文件系统中的任何目录中的任何文件发生更改 (被创建、删除或移动) 时能够接收通知。有一个关于更改的文件名是否应该包含在事件中的问题，但 Goldstein 表示他不需要该功能 (尽管其他人可能需要); 他的应用程序只是在目录中有任何更改时重新扫描该目录。
+
+#+begin_quote
+Al Viro was concerned that the file names would not stay valid while notifications were being delivered. Jan Kara said that there could be races that would make it hard to reproduce the sequence of changes that were made to the directory. But adding names to the fsnotify events does add significant complexity to the code. There is a clear demand for being able to get notification events on a large directory tree, however, Kara said. For now, he is not convinced that adding file names into the event is warranted and it could lead to various kinds of problems.
+#+end_quote
+
+*Al Viro* 担心在传递通知时文件名可能会无效。*Jan Kara* 表示可能会出现竞争 (race condition)，使得难以重现对目录所做更改的顺序。但是，向 =fsnotify= 事件添加名称确实给代码增加了显著的复杂性。然而，Kara 表示，确实存在对能够在大型目录树上获取通知事件的明显需求。目前，他并不认为在事件中添加文件名是必要的，这可能会导致各种问题。
+
+#+begin_quote
+Goldstein said that the superblock watch is the simplest approach, rather than having a recursive fanotify watch on the mount point, which does not scale well. That API could eventually be extended to allow the creation of a change journal like NTFS supports, he said. There did not seem to be any fundamental opposition to the superblock watch feature as it stands.
+#+end_quote
+
+Goldstein 表示，*superblock watch* 是最简单的方法，而不是在挂载点上进行递归 =fanotify= 监视，这种方法不具有良好的可扩展性。他说，该 API 最终可以扩展以允许创建类似 NTFS 支持的 *change journal*。对于目前的 superblock watch 功能似乎没有任何根本上的反对意见。
+
+*** 技术细节: Superblock Watch
+
+*Superblock* 是文件系统的元数据结构，包含:
+
+- 文件系统类型 (ext4, btrfs...)
+- 块大小
+- inode 数量
+- 挂载点
+
+Goldstein 的提议是: 允许应用监听整个 *superblock* (即整个文件系统)，而不是递归监听每个目录。
+
+这在内核中的实现相对简单:
+
+#+begin_src c
+// 现有 fanotify 监听目录
+fanotify_mark(fd, FAN_MARK_ADD, FAN_MODIFY, AT_FDCWD, "/home/user");
+
+// 提议的 superblock watch
+fanotify_mark(fd, FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
+              FAN_MODIFY, AT_FDCWD, "/");  // 监听整个文件系统
+#+end_src
+
+但这仍然是 *内存队列*，没有解决持久化的问题。
+
+** 2018 LSFMM: overlayfs 的实践
+
+在 [[https://lwn.net/Articles/755277/][2018 年的 LSFMM]] 上，Amir Goldstein 带着他在 *overlayfs* 上的初步实践回来了。
+
+他明确表示他在 overlayfs 上的类似实现 *误报有点多*，但是最主要的原因是很多 FS 并没有实现这层语义，导致在 VFS 层做简明的实现是有很多困难的。
+
+*** overlayfs 的特殊性
+
+*overlayfs* 是一个特殊的文件系统，它将多个目录层叠在一起:
+
+#+begin_example
+overlayfs
+  ↓
+upper dir (可写层)
+  ↓
+lower dir (只读层)
+#+end_example
+
+Docker 和 Podman 用 overlayfs 来实现容器的分层镜像。
+
+Goldstein 在 overlayfs 中实现了一个简化版的 change journal:
+
+1. *监听 upper dir*: 所有写入操作都发生在 upper dir
+2. *记录变更*: 创建、删除、修改都记录到一个日志文件
+3. *问题*: 如果底层文件系统不支持某些操作 (如 reflink)，会产生误报
+
+*** 为什么误报？
+
+以 *reflink* (copy-on-write 复制) 为例:
+
+1. 用户在 overlayfs 上复制一个大文件
+2. 如果底层是 btrfs，可以用 reflink 瞬间完成 (只复制元数据)
+3. 但 overlayfs 不知道底层用了 reflink，以为发生了 "完整的文件写入"
+4. change journal 记录了一次 "数据修改"，但实际上磁盘上没有写入数据
+
+这种语义差异在 VFS 层无法完全抹平。
+
+** 2019: 改用独立 Change Journal
+
+在 [[https://lwn.net/Articles/789024/][2019 年的 LSFMM]] 上，Amir Goldstein 汇报了最新的进展。
+
+*** 新方案: 自己实现文件系统
+
+他决定不再依赖底层文件系统的特性，而是:
+
+1. *监控命名空间变化*: 只跟踪新建、删除、重命名 (这些操作在 VFS 层语义明确)
+2. *不跟踪数据变化*: 避免依赖底层文件系统的 reflink 等特性
+3. *自己实现 change journal*: 类似 NTFS 的持久日志，存储在用户空间管理的文件中
+
+这个方案已经在他们公司内部生产环境使用。
+
+*** 遇到的技术难点
+
+*1. 缺少 "写前通知" 机制*
+
+现在只能在文件被 =open()= for write 时得到通知。但是:
+
+- 如果文件已打开，再次 =write()= 或 =mmap= 写入不会触发通知
+- 如果用 =O_APPEND= 模式打开，写入位置不确定
+
+Goldstein 希望有一种方式: 能在文件 *第一次被真正写入前* 冻结、刷盘，并产生通知 → 记录到 change journal。
+
+理想效果类似 *"pre-write one-shot mark"*: 只在首次修改时触发，之后解除冻结。
+
+但这需要新的 VFS hook 或 LSM (Linux Security Module) 钩子，而进入 =page-fault= 路径的复杂度和锁问题让内核开发者担心。
+
+*2. 缺少子树级过滤*
+
+希望内核能支持 "把某目录标记为子树根"，只报告该子树内的事件。
+
+macOS 的 FSEvents 有类似功能:
+
+#+begin_src objc
+// 只监听 /Users/alice/Documents 及其子目录
+CFArrayRef pathsToWatch = CFArrayCreate(NULL,
+    (const void *[]){CFSTR("/Users/alice/Documents")}, 1, NULL);
+
+FSEventStreamRef stream = FSEventStreamCreate(..., pathsToWatch, ...);
+#+end_src
+
+在 Linux 上，btrfs 的 *subvolume* 和这个概念有共通点:
+
+#+begin_src bash
+# 创建 subvolume
+btrfs subvolume create /mnt/data/project1
+
+# 监控这个 subvolume
+fanotify_mark(fd, FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
+              FAN_MODIFY, AT_FDCWD, "/mnt/data/project1");
+#+end_src
+
+但社区 (如 *Jan Kara*) 担心强制隔离子树 (禁止 =rename= 进出、hard link 跨越) 的语义怪异，不好让用户理解。
+
+** 2025 LSFMM: 两种新思路
+
+在 [[https://lwn.net/Articles/1002221/][2025 年的 LSFMM]] 上，Goldstein 继续先前的话题，提出了两种实现思路。
+
+*** 方案 1: 写入前后各发一次事件
+
+类似数据库的 *Write-Ahead Logging* (WAL):
+
+1. *Pre-Write Event*: 文件即将被写入前，发送事件
+   - 应用可以在此时: 刷盘、备份旧内容、记录到 journal
+2. *Post-Write Event*: 写入完成后，再发送一次事件
+   - 应用可以在此时: 更新索引、通知其他组件
+
+#+begin_example
+时间线:
+  open("/file", O_WRONLY)
+    → 内核发送 PRE_WRITE 事件
+  write("/file", data, len)
+    → 数据写入 page cache
+    → 内核发送 POST_WRITE 事件
+  close("/file")
+#+end_example
+
+*问题*:
+
+- *性能开销*: 每次写入发两次事件，overhead 加倍
+- *复杂度*: =mmap= 写入怎么处理？page fault 路径加 hook？
+- *锁竞争*: VFS 的 inode lock、page lock 本来就是热点
+
+*** 方案 2: 提供新系统调用，挂起写入
+
+类似 *SRCU* (Sleepable Read-Copy-Update) 机制:
+
+1. 应用调用 =fsync_wait_begin(fd)=，告诉内核: "我需要一致性快照"
+2. 内核挂起 (suspend) 所有对该文件的写入操作
+3. 应用完成备份/journal 记录
+4. 应用调用 =fsync_wait_end(fd)=，内核恢复写入
+
+#+begin_src c
+// 伪代码
+int fd = open("/file", O_RDONLY);
+fsync_wait_begin(fd);  // 挂起所有写入
+
+// 此时文件处于一致性状态，可以安全备份
+read(fd, backup_buffer, ...);
+record_to_journal("file modified at offset X");
+
+fsync_wait_end(fd);  // 恢复写入
+close(fd);
+#+end_src
+
+*问题*:
+
+- *死锁风险*: 如果应用挂起后自己也尝试写入？
+- *公平性*: 如果某个应用长时间不调用 =fsync_wait_end=，其他进程会饿死
+- *与现有同步机制冲突*: =fsync=, =fdatasync=, =sync_file_range= 的语义如何协调？
+
+*** 社区的态度
+
+内核社区 *认可需求场景*，但担心复杂度和性能。
+
+*Jan Kara* (ext4 维护者) 的评论:
+
+#+begin_quote
+"我理解这个需求，但在 VFS 层加这些 hook 的代价太高了。每次 write() 都要检查是否有人在监听？每次 page fault 都要发事件？这会拖慢整个系统。"
+#+end_quote
+
+*Ted Ts'o* (ext4 作者) 的建议:
+
+#+begin_quote
+"也许我们应该让文件系统自己实现 change journal，VFS 只提供一个统一的接口。ext4 可以基于 jbd2 实现，btrfs 可以基于 COW tree 实现。"
+#+end_quote
+
+但这又回到了原点: 需要每个文件系统各自实现一遍。
+
+目前 (2025 年底)，*尚未达成共识*。
+
+* 现实世界的妥协方案
+
+既然内核还没有提供持久化 change journal，Linux 上的应用只能自己想办法。
+
+** 方案 1: inotify + 数据库
+
+最常见的方案: 用 =inotify= 监控目录树，维护一个本地数据库记录文件状态。
+
+#+begin_example
+[inotify 监控] → [事件队列] → [更新 SQLite DB]
+                                    ↓
+                          [文件路径、mtime、size、hash]
+#+end_example
+
+*重启后的处理*:
+
+1. 从数据库读取上次的状态
+2. 扫描目录树，对比当前状态
+3. 找出差异 (新增、删除、修改)
+4. 同步到云端
+
+*缺点*:
+
+- 重启后必须扫描，大型目录树很慢
+- 数据库可能与文件系统不同步 (如果应用崩溃)
+
+*使用这个方案的软件*:
+
+- *Syncthing*: 开源的点对点同步工具
+- *Dropbox*: 早期版本用 =inotify=，后来改用自己的内核模块 (Nautilus)
+- *rclone*: 云存储挂载工具，=rclone mount= 模式
+
+** 方案 2: fanotify + 定期扫描
+
+用 =fanotify= 监控整个挂载点，减少 watch 数量。
+
+#+begin_src c
+int fd = fanotify_init(FAN_CLASS_NOTIF, O_RDONLY);
+fanotify_mark(fd, FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
+              FAN_MODIFY | FAN_CREATE | FAN_DELETE | FAN_MOVED_FROM | FAN_MOVED_TO,
+              AT_FDCWD, "/home");
+#+end_src
+
+*重启后的处理*:
+
+- 定期 (如每小时) 做一次增量扫描
+- 或者在空闲时 (CPU/IO 不繁忙) 扫描
+
+*缺点*:
+
+- 仍然需要扫描
+- =fanotify= 的事件比 =inotify= 更底层，处理更复杂
+
+** 方案 3: 自己实现内核模块
+
+激进的方案: 写一个内核模块，hook VFS 层的操作。
+
+Dropbox 曾经走过这条路:
+
+- *Nautilus*: Dropbox 的内核模块，监控文件系统事件
+- 后来因为维护成本太高，改用其他方案
+
+*技术细节*:
+
+#+begin_src c
+// hook VFS 操作
+static struct file_operations original_fops;
+
+int my_open(struct inode *inode, struct file *file) {
+    log_event("OPEN", inode);
+    return original_fops.open(inode, file);
+}
+
+ssize_t my_write(struct file *file, const char __user *buf,
+                 size_t count, loff_t *pos) {
+    log_event("WRITE", file->f_inode);
+    return original_fops.write(file, buf, count, pos);
+}
+#+end_src
+
+*缺点*:
+
+- 内核模块风险高: 一个 bug 能让整个系统崩溃
+- 维护成本高: 每个内核版本可能需要适配
+- 发行版不愿意包含第三方内核模块
+
+** 方案 4: eBPF + 用户态 journal
+
+近年来的新方案: 用 *eBPF* hook VFS 操作，在用户态维护 journal。
+
+*eBPF* (extended Berkeley Packet Filter) 允许在内核中运行沙箱化的程序:
+
+#+begin_src c
+// eBPF 程序: 监控 vfs_write
+SEC("kprobe/vfs_write")
+int trace_vfs_write(struct pt_regs *ctx) {
+    struct file *file = (struct file *)PT_REGS_PARM1(ctx);
+    u64 inode = file->f_inode->i_ino;
+
+    // 发送事件到用户态
+    bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU,
+                          &inode, sizeof(inode));
+    return 0;
+}
+#+end_src
+
+*优势*:
+
+- 无需编写内核模块，更安全
+- 性能不错 (eBPF 有 JIT 编译)
+- 灵活 (可以只监控特定目录)
+
+*缺点*:
+
+- eBPF 仍然是内存队列，重启后丢失
+- 需要 root 权限
+
+*使用这个方案的项目*:
+
+- *bpftrace*: 用 eBPF 做系统追踪
+- 某些安全监控工具 (如 Falco)
+
+** 方案 5: btrfs send/receive (仅 btrfs)
+
+如果使用 *btrfs*，可以利用其快照和增量传输功能。
+
+#+begin_src bash
+# 创建快照
+btrfs subvolume snapshot /data /data/.snapshots/$(date +%Y%m%d-%H%M%S)
+
+# 发送增量数据
+btrfs send -p /data/.snapshots/old /data/.snapshots/new | \
+    btrfs receive /backup
+#+end_src
+
+*优势*:
+
+- 文件系统原生支持，效率高
+- 增量传输基于 extent tree，非常快
+
+*缺点*:
+
+- 只支持 btrfs
+- 快照级别，不是文件级别
+- 需要定期创建快照 (无法实时)
+
+** 方案 6: zfs send/receive (仅 ZFS)
+
+类似 btrfs，*OpenZFS* 也有增量传输:
+
+#+begin_src bash
+# 创建快照
+zfs snapshot tank/data@2025-01-01
+
+# 发送增量
+zfs send -i tank/data@2025-01-01 tank/data@2025-01-02 | \
+    zfs receive backup/data
+#+end_src
+
+*优势*:
+
+- ZFS 的快照几乎瞬间完成 (COW)
+- 增量传输高效
+
+*缺点*:
+
+- 只支持 ZFS
+- Linux 上的 ZFS 支持有法律风险 (CDDL vs GPL 许可证冲突)
+
+* 未来展望
+
+** 可能的转机: io_uring
+
+*io_uring* (2019, Linux 5.1+) 是 Linux 新一代高性能 I/O 接口，或许能为 change journal 提供新思路。
+
+*** io_uring 的优势
+
+- *异步*: 无需阻塞等待
+- *批量*: 一次提交多个操作，减少系统调用
+- *零拷贝*: 用户态和内核态共享内存
+
+*** 如何用于 change journal？
+
+假设内核提供一个 =io_uring_register_change_journal()= 操作:
+
+#+begin_src c
+struct io_uring ring;
+io_uring_queue_init(256, &ring, 0);
+
+// 注册 change journal
+struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
+io_uring_prep_register_change_journal(sqe, "/home/user", journal_fd);
+io_uring_submit(&ring);
+
+// 异步接收事件
+while (1) {
+    struct io_uring_cqe *cqe;
+    io_uring_wait_cqe(&ring, &cqe);
+
+    struct change_event *event = io_uring_cqe_get_data(cqe);
+    printf("File changed: %s (usn: %llu)\n", event->path, event->usn);
+
+    io_uring_cqe_seen(&ring, cqe);
+}
+#+end_src
+
+*关键点*:
+
+- =journal_fd= 指向一个磁盘文件，内核负责持久化
+- 事件包含 =usn= (单调递增序列号)，应用可以保存并续接
+
+但这需要内核团队的支持，目前 (2025) 还没有相关提案。
+
+** 可能的妥协: 文件系统级实现
+
+也许最现实的路径是: 让每个文件系统自己实现 change journal，VFS 提供统一接口。
+
+*** 统一接口设计
+
+#+begin_src c
+// 新系统调用
+int change_journal_open(const char *path, int flags);
+// 返回 fd，用于读取事件
+
+struct change_event {
+    __u64 usn;                // 单调递增序列号
+    __u64 timestamp;
+    __u32 event_type;         // CREATE, DELETE, MODIFY, RENAME
+    __u64 inode;
+    __u32 path_len;
+    char path[];              // 变长
+};
+
+ssize_t change_journal_read(int fd, struct change_event *buf, size_t count);
+// 从 fd 读取事件
+
+int change_journal_seek(int fd, __u64 usn);
+// 跳转到指定 USN
+#+end_src
+
+*** 各文件系统的实现
+
+*ext4*:
+
+- 扩展 jbd2 (journal block device)，增加用户可见的 change log
+- 在 journal 中记录文件操作，分配 USN
+- 提供 =EXT4_IOC_CHANGE_JOURNAL_READ= ioctl
+
+*btrfs*:
+
+- 利用 COW tree 的 generation number 作为 USN
+- 在 extent tree 中记录文件变更
+- 提供 =BTRFS_IOC_CHANGE_JOURNAL_READ= ioctl
+
+*xfs*:
+
+- 扩展 xlog (XFS log)
+- 类似 ext4 的方案
+
+*f2fs*:
+
+- 基于 checkpoint 机制实现
+
+这样，应用可以用统一的 =change_journal_open()= API，内核根据文件系统类型调用对应实现。
+
+*挑战*:
+
+- 每个文件系统维护者都要实现一遍
+- 网络文件系统 (nfs, cifs) 怎么办？
+- 旧版本内核没有这个 API
+
+* 总结
+
+Linux 的持久化变更日志缺失是一个 *十年未解的老大难问题*。
+
+** 根本原因
+
+- *架构差异*: Linux 与具体文件系统不绑定，VFS 层实现困难
+- *复杂度*: 需要 hook 所有写操作，性能开销大
+- *维护成本*: 内核开发者不愿意承担长期维护负担
+
+** 现实影响
+
+- *云同步软件*: Dropbox, Syncthing 等必须重启后扫盘
+- *桌面搜索*: recoll, tracker 无法像 Everything/Spotlight 那样实时更新
+- *备份系统*: 增量备份效率低
+
+** 权宜之计
+
+- 用 =inotify= / =fanotify= + 数据库
+- 定期扫描 + 智能缓存
+- eBPF hook (仍是内存队列)
+- btrfs/zfs 快照 (仅特定文件系统)
+
+** 未来希望
+
+- io_uring 或许提供新思路
+- 文件系统级实现 + VFS 统一接口
+- 但短期内 (2026-2027) 不太可能进入主线
+
+*最后的吐槽*:
+
+#+begin_quote
+顺带一提，*Everything* 是依赖 NTFS 的特性实现的，*Spotlight/Time Machine* 是依赖 APFS 的特性实现的。我看那些说 "Linux 不如 Windows/macOS" 的人大多都是在说 FS 啊，但根本不知道 Linux 实现 FS 级操作根本不是一回事。那还有什么好说的呢，*Linux 牛逼*！
+#+end_quote
+
+Linux 的设计哲学是 *灵活性* 和 *模块化*，代价是某些功能实现起来比单体系统更困难。这不是 "Linux 不行"，而是设计取舍的结果。
+
+如果你需要持久化变更日志，短期内的建议是:
+
+1. *能用 btrfs/zfs？* 用快照 + send/receive
+2. *不能？* 用 =inotify= + 数据库 + 定期扫描
+3. *极端性能需求？* 考虑 eBPF 或自己的内核模块 (风险自负)
+
+长期来看，等内核社区达成共识吧。十年都等了，再等几年又何妨？ (笑)

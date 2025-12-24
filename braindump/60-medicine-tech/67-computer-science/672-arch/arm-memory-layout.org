@@ -1,0 +1,772 @@
+#+title: ARM Vector Table Architecture: Memory Layout and Exception Handling
+#+author: SOV710
+#+date: 2025-12-19
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 向量表: 异常处理的起点
+
+*向量表* (Vector Table) 是 ARM 处理器异常处理机制的核心数据结构。它定义了当系统发生 *复位*、*中断*、*异常* 时，CPU 应该跳转到哪段代码执行。
+
+在 ARM 架构中，所有的异常 (包括中断) 都通过向量表统一管理。当异常发生时，CPU 硬件会:
+
+1. *保存现场*: 将当前 PC、CPSR (Cortex-A) 或部分寄存器 (Cortex-M) 入栈
+2. *切换模式*: 进入对应的异常模式 (Cortex-A) 或使用 MSP (Cortex-M)
+3. *查表跳转*: 根据异常类型，从向量表中取出对应的地址 (Cortex-M) 或指令 (Cortex-A)，然后跳转执行
+
+向量表的布局和机制在 *Cortex-M* (面向微控制器) 和 *Cortex-A* (面向应用处理器) 两个系列中有显著差异，这反映了它们不同的设计目标。
+
+* Cortex-M 向量表: 地址数组
+
+** 基本布局
+
+Cortex-M 的向量表是一个 *32 位指针数组*，每个条目存储一个 *函数地址* (除了第 0 项)。
+
+向量表基地址由 *VTOR* (Vector Table Offset Register) 寄存器指定，默认为 =0x0000_0000= (Flash 起始地址)。
+
+| 偏移地址 (相对基址) | 向量索引 | 名称                      | 说明                                                                                            |
+|------------------+---------+---------------------------+-------------------------------------------------------------------------------------------------|
+| =0x00=             |       0 | 初始主栈指针值 (Initial MSP) | 上电/复位后装载到 MSP 的初始值，一般指向 SRAM 顶端。*不是函数地址*，而是栈顶地址。                            |
+| =0x04=             |       1 | =Reset_Handler=             | 复位异常入口，系统上电、外部复位、看门狗复位等都会跳到这里，通常在这里进行系统初始化、跳转到 =main()=。             |
+| =0x08=             |       2 | =NMI_Handler=               | NMI (不可屏蔽中断) 异常入口，优先级仅次于硬 Fault，一般用于严重错误或安全相关事件。                            |
+| =0x0C=             |       3 | =HardFault_Handler=         | 硬 Fault 异常入口，捕获严重错误 (如总线错误、执行非法指令且未被更细粒度 Fault 捕获等)。所有 Cortex-M 都有。      |
+| =0x10=             |       4 | =MemManage_Handler=         | 内存管理 Fault，用于保护区越界访问、权限错误等。仅在 Cortex-M3/M4/M7 等支持 MPU 的内核上存在，M0/M0+ 此项保留。 |
+| =0x14=             |       5 | =BusFault_Handler=          | 总线 Fault，例如访问不存在的外设/存储器或总线错误。M3/M4/M7 有，M0/M0+ 无此向量。                           |
+| =0x18=             |       6 | =UsageFault_Handler=        | 用法 Fault，如执行未定义指令、除以零、未对齐访问 (视配置而定)。M3/M4/M7 有，M0/M0+ 无此向量。                 |
+| =0x1C=             |       7 | Reserved                  | 保留，读作 0 或未使用 (部分实现可能重定义)。                                                            |
+| =0x20=             |       8 | Reserved                  | 保留。                                                                                           |
+| =0x24=             |       9 | Reserved                  | 保留。                                                                                           |
+| =0x28=             |      10 | Reserved                  | 保留。                                                                                           |
+| =0x2C=             |      11 | =SVC_Handler=               | SVC (系统调用，Supervisor Call) 异常入口，用于实现系统调用接口、RTOS 的系统服务等。                         |
+| =0x30=             |      12 | =DebugMon_Handler=          | Debug Monitor 异常入口，用于调试事件 (断点、监视点等)。部分低端内核可能不实现。                              |
+| =0x34=             |      13 | Reserved                  | 保留。                                                                                           |
+| =0x38=             |      14 | =PendSV_Handler=            | PendSV 异常入口，常用于 RTOS 中的上下文切换 (与 SysTick 配合)。                                         |
+| =0x3C=             |      15 | =SysTick_Handler=           | SysTick 系统定时器中断入口，一般用于 OS 时基、周期性任务等。                                              |
+
+*** 外部中断向量 (从偏移 =0x40= 开始)
+
+| 偏移地址 (相对基址) | 向量索引 | IRQ 号 | 名称 (示例)        | 说明                                                                    |
+|----------------+---------+-------+------------------+-------------------------------------------------------------------------|
+| =0x40=           |      16 |     0 | =IRQ0_Handler=     | 外部中断 0。实际名称会由芯片厂商在启动文件中定义，比如 =WWDG_IRQHandler= 等。          |
+| =0x44=           |      17 |     1 | =IRQ1_Handler=     | 外部中断 1。                                                              |
+| =0x48=           |      18 |     2 | =IRQ2_Handler=     | 外部中断 2。                                                              |
+| ...            | ...     | ...   | ...              | 依次每 4 字节一个向量。                                                     |
+| =0x40 + 4×N=     |  16 + N |     N | =IRQN_Handler=     | 一般映射到某个具体外设中断 (如 GPIO、UART、SPI 等)，具体查看芯片参考手册的 "Vector Table" 章节。 |
+
+最高支持 240 个外部 IRQ 中断，8 到 256 位的优先级 ($2^3$ ~ $2^8$)，优先级由板子厂商在出厂时决定
+
+** 第 0 项的特殊性: 初始栈指针
+
+*关键设计*: Cortex-M 向量表的第 0 项 (偏移 =0x00=) 存储的 *不是函数地址*​，而是 *初始主栈指针值* (Initial Main Stack Pointer, MSP)。
+
+*** 为什么需要这个？
+
+Cortex-M 在复位后，硬件会自动执行以下操作:
+
+1. 从向量表偏移 =0x00= 读取 32 位数据，装载到 *MSP* 寄存器
+2. 从向量表偏移 =0x04= 读取 32 位数据，装载到 *PC* (程序计数器)
+3. 开始执行 =Reset_Handler=
+
+这意味着 =Reset_Handler= *第一条指令执行时，栈指针已经初始化好了*，可以直接使用 =PUSH/POP= 指令，无需手动设置 SP。
+
+*** 典型值
+
+对于一个 SRAM 大小为 128 KB 的 STM32F4 芯片:
+
+- SRAM 起始地址: =0x2000_0000=
+- SRAM 结束地址: =0x2002_0000= (128 KB = 128 × 1024 = 131,072 = 0x20000)
+- 初始 MSP 值: =0x2002_0000= (栈顶，*栈向下增长*)
+
+向量表的第 0 项会被设置为:
+
+#+begin_src c
+.word  0x20020000  /* 初始栈顶地址 */
+#+end_src
+
+*** 为什么栈顶是 =0x2002_0000= 而不是 =0x2001_FFFF=？
+
+因为 ARM 的栈是 *Full Descending* (满递减):
+
+- =SP= 指向 *最后一个压入的数据*
+- =PUSH= 指令先 *递减 SP*，再写入数据
+
+所以初始 SP 指向 "第一个可用地址的下一位"，第一次 =PUSH= 会先减 4，写入 =0x2001_FFFC=。
+
+** VTOR: 向量表重定位
+
+Cortex-M3/M4/M7 支持 *向量表重定位*，通过 *VTOR* (Vector Table Offset Register) 寄存器控制。
+
+*** VTOR 寄存器地址
+
+#+begin_example
+地址: 0xE000ED08 (属于 SCB, System Control Block)
+#+end_example
+
+*** 重定位规则
+
+- VTOR 的低 7 位 (或 8 位) 必须为 0，即向量表基地址必须 *128 字节对齐* (或 256 字节对齐，视具体实现)
+- 允许的范围:
+  - Flash 区域: =0x0800_0000= ~ =0x0810_0000= (STM32F4 示例)
+  - SRAM 区域: =0x2000_0000= ~ =0x2002_0000=
+
+*** 应用场景
+
+*1. Bootloader + App 双程序*
+
+Bootloader 在 Flash 起始位置 (=0x0800_0000=)，App 在 =0x0801_0000= (64 KB 偏移)。
+
+Bootloader 跳转到 App 前，需要重定向向量表:
+
+#+begin_src c
+#define APP_BASE_ADDR  0x08010000
+
+void jump_to_app(void) {
+    // 1. 重定向向量表
+    SCB->VTOR = APP_BASE_ADDR;
+
+    // 2. 读取 App 的初始 SP 和 PC
+    uint32_t app_sp = *((uint32_t *)APP_BASE_ADDR);
+    uint32_t app_pc = *((uint32_t *)(APP_BASE_ADDR + 4));
+
+    // 3. 设置 MSP
+    __set_MSP(app_sp);
+
+    // 4. 跳转到 App 的 Reset_Handler
+    void (*reset_handler)(void) = (void (*)(void))app_pc;
+    reset_handler();
+}
+#+end_src
+
+*2. SRAM 执行 (调试或性能优化)*
+
+将向量表和代码拷贝到 SRAM，提高执行速度:
+
+#+begin_src c
+extern uint32_t _vector_table_ram[];  // SRAM 中的向量表副本
+
+void relocate_vector_table_to_sram(void) {
+    // 拷贝向量表到 SRAM (假设 0x20000000)
+    memcpy(_vector_table_ram, (void *)0x08000000, 0x200);
+
+    // 重定向 VTOR
+    SCB->VTOR = (uint32_t)_vector_table_ram;
+}
+#+end_src
+
+** 异常优先级和嵌套
+
+Cortex-M 的异常优先级分为两部分:
+
+*** 1. 固定优先级 (不可配置)
+
+| 异常               | 优先级值 | 说明                  |
+|------------------+----------+-----------------------|
+| Reset            |       -3 | 最高，不可被任何异常打断 |
+| NMI              |       -2 | 不可屏蔽                |
+| HardFault        |       -1 | 严重错误                |
+
+*** 2. 可配置优先级
+
+所有其他异常 (包括外部中断) 的优先级通过 *NVIC* (Nested Vectored Interrupt Controller) 配置。
+
+*优先级寄存器*:
+
+- 地址: =0xE000E400= ~ =0xE000E4EF= (IPR0 ~ IPR59)
+- 每个 IRQ 占 8 位，但实际有效位数取决于芯片 (通常 4 位)
+
+STM32F4 示例 (4 位优先级):
+
+#+begin_src c
+// 设置 EXTI0 中断优先级为 5 (抢占) + 0 (子优先级)
+// 分组方式: 4 位抢占, 0 位子优先级
+NVIC_SetPriority(EXTI0_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 5, 0));
+#+end_src
+
+*** 优先级分组 (Priority Grouping)
+
+通过 *AIRCR* (Application Interrupt and Reset Control Register) 配置:
+
+#+begin_src c
+// 设置分组为 4 位抢占 + 0 位子优先级
+NVIC_SetPriorityGrouping(3);  // 3 = 0b011 = 4:0 分组
+#+end_src
+
+| =PRIGROUP= | 抢占位 | 子优先级位 | 示例                |
+|----------+--------+------------+---------------------|
+|        0 |      0 |          4 | 不支持嵌套           |
+|        3 |      4 |          0 | 16 级嵌套，无子优先级 |
+|        4 |      3 |          1 | 8 级嵌套，2 级子优先级 |
+
+** 启动流程详解
+
+Cortex-M 的启动流程 (以 STM32F4 为例):
+
+#+begin_example
+1. 上电复位
+   ↓
+2. 硬件从 0x0000_0000 读取初始 SP → 装载到 MSP
+   (实际物理地址是 Flash 起始 0x0800_0000，通过 Boot Pin 映射)
+   ↓
+3. 硬件从 0x0000_0004 读取 Reset_Handler 地址 → 装载到 PC
+   ↓
+4. 执行 Reset_Handler (汇编启动文件中)
+   ├─ 拷贝 .data 段到 SRAM
+   ├─ 清零 .bss 段
+   ├─ 调用 SystemInit() (时钟配置)
+   └─ 跳转到 C 运行时入口 __main (或 main)
+   ↓
+5. __main (ARM C 运行时库)
+   ├─ 初始化 C++ 全局对象 (如果有)
+   ├─ 初始化标准库
+   └─ 调用 main()
+   ↓
+6. main() 执行用户代码
+#+end_example
+
+*** 典型的启动文件 (startup_stm32f407xx.s)
+
+#+begin_src asm
+; 向量表定义
+        AREA    RESET, DATA, READONLY
+        EXPORT  __Vectors
+        EXPORT  __Vectors_End
+        EXPORT  __Vectors_Size
+
+__Vectors
+        DCD     __initial_sp               ; Top of Stack (初始 SP)
+        DCD     Reset_Handler              ; Reset Handler
+        DCD     NMI_Handler                ; NMI Handler
+        DCD     HardFault_Handler          ; Hard Fault Handler
+        DCD     MemManage_Handler          ; MPU Fault Handler
+        DCD     BusFault_Handler           ; Bus Fault Handler
+        DCD     UsageFault_Handler         ; Usage Fault Handler
+        ; ... 省略其他向量
+
+; Reset_Handler 实现
+        AREA    |.text|, CODE, READONLY
+
+Reset_Handler   PROC
+        EXPORT  Reset_Handler             [WEAK]
+        IMPORT  SystemInit
+        IMPORT  __main
+
+        LDR     R0, =SystemInit
+        BLX     R0              ; 调用 SystemInit (时钟配置)
+        LDR     R0, =__main
+        BX      R0              ; 跳转到 C 运行时
+        ENDP
+#+end_src
+
+** 中断服务程序 (ISR) 的编写
+
+*** C 语言中的 ISR
+
+#+begin_src c
+// STM32 HAL 库风格
+void EXTI0_IRQHandler(void) {
+    if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_0) != RESET) {
+        __HAL_GPIO_EXTI_CLEAR_IT(GPIO_PIN_0);
+        // 处理 GPIO Pin 0 中断
+        HAL_GPIO_EXTI_Callback(GPIO_PIN_0);
+    }
+}
+
+// 弱定义的默认 ISR (启动文件中)
+__weak void EXTI0_IRQHandler(void) {
+    while (1);  // 默认死循环，用户需要重写
+}
+#+end_src
+
+*** 汇编中的 ISR (裸函数)
+
+如果需要极致性能，可以手写汇编 ISR:
+
+#+begin_src asm
+; 快速 GPIO 翻转 ISR (用于高频脉冲输出)
+EXTI0_IRQHandler PROC
+        PUSH    {R0-R1, LR}
+
+        ; 清除中断标志
+        LDR     R0, =0x40013C14  ; EXTI->PR
+        LDR     R1, [R0]
+        ORR     R1, R1, #0x01
+        STR     R1, [R0]
+
+        ; 翻转 GPIO
+        LDR     R0, =0x40020014  ; GPIOA->ODR
+        LDR     R1, [R0]
+        EOR     R1, R1, #0x01    ; 异或翻转 Pin 0
+        STR     R1, [R0]
+
+        POP     {R0-R1, PC}      ; 返回
+        ENDP
+#+end_src
+
+** 常见陷阱
+
+*** 1. 忘记对齐向量表
+
+错误示例:
+
+#+begin_src c
+__attribute__((aligned(128)))
+uint32_t my_vector_table[48];  // 只对齐了 128，但某些芯片要求 256
+#+end_src
+
+正确做法:
+
+#+begin_src c
+__attribute__((aligned(256)))
+uint32_t my_vector_table[48];  // 安全的对齐值
+#+end_src
+
+*** 2. Bootloader 跳转后未重定向向量表
+
+#+begin_src c
+// 错误: 直接跳转，向量表还在 Bootloader 位置
+void (*app_reset)(void) = (void (*)(void))0x08010004;
+app_reset();  // App 中断会跳回 Bootloader 的 ISR！
+#+end_src
+
+正确:
+
+#+begin_src c
+SCB->VTOR = 0x08010000;  // 必须先重定向
+__set_MSP(*((uint32_t *)0x08010000));
+void (*app_reset)(void) = (void (*)(void))0x08010004;
+app_reset();
+#+end_src
+
+*** 3. 在 ISR 中调用阻塞函数
+
+#+begin_src c
+void UART1_IRQHandler(void) {
+    HAL_Delay(100);  // 致命错误！SysTick 可能被禁用或优先级冲突
+    // ...
+}
+#+end_src
+
+ISR 中只能:
+
+- 读写外设寄存器
+- 设置标志位
+- 触发 PendSV (RTOS 场景)
+- 绝不能阻塞！
+
+* Cortex-A 向量表: 指令序列
+
+** 基本布局
+
+Cortex-A 的向量表与 Cortex-M *完全不同*: 每个条目存储的是 *一条 32 位 ARM 指令*，而非地址。
+
+向量表基地址可以通过以下方式配置:
+
+- *VBAR* (Vector Base Address Register): 软件可配置，支持重定位
+- *SCTLR.V* 位: 选择高地址 (=0xFFFF_0000=) 或低地址 (=0x0000_0000=)
+
+** ARMv7-A / AArch32 向量表布局
+
+| 偏移地址 (相对基址) | 名称                         | 说明                                                                                     |
+|------------------+------------------------------+------------------------------------------------------------------------------------------|
+| =0x00=             | Reset Vector                 | 复位向量，一般是一条跳转到启动代码的指令，比如 =B Reset_Handler=​。系统上电后从这里开始执行。            |
+| =0x04=             | Undefined Instruction Vector | 未定义指令异常向量。当 CPU 执行到未实现或未定义指令时进入此向量，可用于软件仿真、非法指令检测等。           |
+| =0x08=             | SWI / SVC Vector             | 软件中断 (SWI，在 ARMv7 里常叫 SVC) 向量，用于实现系统调用、用户态到内核态的接口。                    |
+| =0x0C=             | Prefetch Abort Vector        | 预取中止异常向量 (指令取指阶段发生的异常，例如从无效地址取指)。                                      |
+| =0x10=             | Data Abort Vector            | 数据中止异常向量 (数据访问阶段发生的异常，例如访问无效地址、权限错误等)。                               |
+| =0x14=             | Reserved / Not used          | 保留向量，一般未使用，部分实现可以用作扩展。                                                      |
+| =0x18=             | IRQ Vector                   | 普通中断请求 (IRQ) 向量。大部分外设中断最终都会以 IRQ 形式进入此向量，通常在这里再分发到具体的中断服务函数。 |
+| =0x1C=             | FIQ Vector                   | 快速中断请求 (FIQ) 向量，优先级高于 IRQ，寄存器影子更多，适合时间敏感的中断 (如高速数据采集)。            |
+
+** 为什么是指令而非地址？
+
+*** 历史原因
+
+ARM 最早的设计 (ARM7TDMI 时代) 并没有流水线预取优化，向量表需要 *立即执行* 某个操作。如果存储地址，还需要:
+
+1. 从向量表读取地址
+2. 加载到 PC
+3. 再跳转
+
+这会浪费 2~3 个周期。而直接存储指令，可以 *一步到位*:
+
+#+begin_src asm
+0x00:  B   Reset_Handler   ; 相对跳转，1 条指令完成
+#+end_src
+
+*** 典型的指令形式
+
+*1. 分支指令 (最常见)*
+
+#+begin_src asm
+    B   Reset_Handler       ; 0xEA000000 + offset
+    B   Undef_Handler
+    B   SWI_Handler
+    ; ...
+#+end_src
+
+ARM 的 =B= 指令可以跳转 ±32 MB (24 位偏移 × 4 字节)，足够覆盖大部分系统。
+
+*2. 加载 PC (间接跳转)*
+
+如果需要跳转到更远的地址，或者地址是动态计算的:
+
+#+begin_src asm
+    LDR PC, Reset_Addr      ; 从 Reset_Addr 加载绝对地址到 PC
+    LDR PC, Undef_Addr
+    ; ...
+
+Reset_Addr:  .word  0x80008000  ; 实际处理函数地址
+Undef_Addr:  .word  0x80009000
+#+end_src
+
+*3. 混合模式 (Linux 内核常用)*
+
+#+begin_src asm
+; arch/arm/kernel/entry-armv.S (简化版)
+    .section .vectors, "ax"
+    .align 5
+
+__vectors_start:
+    W(b)    vector_rst      ; Reset
+    W(b)    vector_und      ; Undefined
+    W(ldr)  pc, .LCvswi     ; SWI (加载地址跳转)
+    W(b)    vector_pabt     ; Prefetch Abort
+    W(b)    vector_dabt     ; Data Abort
+    W(b)    vector_addrexcptn  ; Reserved
+    W(b)    vector_irq      ; IRQ
+    W(b)    vector_fiq      ; FIQ
+
+.LCvswi:  .word   vector_swi  ; SWI 的实际地址
+#+end_src
+
+** VBAR: 向量表重定位
+
+ARMv7-A 引入 *VBAR* (Vector Base Address Register)，支持向量表动态重定位。
+
+*** 读写 VBAR
+
+#+begin_src asm
+; 设置向量表到 0x80000000
+LDR     R0, =0x80000000
+MCR     p15, 0, R0, c12, c0, 0  ; 写入 VBAR
+#+end_src
+
+C 语言封装 (通过内联汇编):
+
+#+begin_src c
+static inline void set_vbar(uint32_t addr) {
+    asm volatile("mcr p15, 0, %0, c12, c0, 0" :: "r"(addr));
+}
+#+end_src
+
+*** 应用场景
+
+*1. Bootloader 跳转到 Linux 内核*
+
+#+begin_src c
+// U-Boot 跳转到 Linux 内核 (简化版)
+void jump_to_kernel(uint32_t kernel_addr) {
+    void (*kernel_entry)(uint32_t, uint32_t, uint32_t) =
+        (void (*)(uint32_t, uint32_t, uint32_t))kernel_addr;
+
+    // 设置向量表到内核地址
+    set_vbar(kernel_addr);
+
+    // 跳转 (传递 DTB 地址等参数)
+    kernel_entry(0, machine_id, dtb_addr);
+}
+#+end_src
+
+*2. Hypervisor / TrustZone*
+
+在虚拟化或安全分区切换时，需要动态重定向向量表:
+
+#+begin_src c
+// 切换到 Secure World
+set_vbar(SECURE_VECTOR_BASE);
+
+// 切换回 Normal World
+set_vbar(NORMAL_VECTOR_BASE);
+#+end_src
+
+** 异常模式与寄存器组
+
+Cortex-A 进入异常时，会 *切换到特定模式*，并使用 *独立的寄存器组*。
+
+*** 处理器模式
+
+| 模式       | 缩写 | 说明                        | 可用寄存器                                            |
+|------------+------+-----------------------------+-----------------------------------------------------|
+| User       | usr  | 用户模式，应用程序运行          | R0-R12, SP, LR, PC, CPSR                            |
+| FIQ        | fiq  | 快速中断模式                  | R0-R7, R8_fiq-R12_fiq, SP_fiq, LR_fiq, PC, SPSR_fiq |
+| IRQ        | irq  | 普通中断模式                  | R0-R12, SP_irq, LR_irq, PC, SPSR_irq                |
+| Supervisor | svc  | 管理模式，SWI/SVC 进入         | R0-R12, SP_svc, LR_svc, PC, SPSR_svc                |
+| Abort      | abt  | 中止模式，Data/Prefetch Abort | R0-R12, SP_abt, LR_abt, PC, SPSR_abt                |
+| Undefined  | und  | 未定义指令模式                 | R0-R12, SP_und, LR_und, PC, SPSR_und                |
+| System     | sys  | 系统模式 (特权用户模式)         | R0-R12, SP, LR, PC, CPSR                            |
+
+*** 寄存器影子 (Banked Registers)
+
+每个异常模式都有独立的:
+
+- *SP* (栈指针)
+- *LR* (返回地址)
+- *SPSR* (Saved Program Status Register，保存进入异常前的 CPSR)
+
+*FIQ 模式特殊*: 额外有 R8-R12 的影子寄存器，共 7 个独立寄存器，减少上下文切换开销。
+
+*** 异常进入流程
+
+#+begin_example
+1. 硬件自动执行:
+   ├─ SPSR_<mode> = CPSR        (保存当前状态)
+   ├─ CPSR.mode = <异常模式>     (切换模式)
+   ├─ CPSR.I = 1                (禁用 IRQ，FIQ 除外)
+   ├─ LR_<mode> = 返回地址       (PC + 4 或 PC + 8，视异常类型)
+   └─ PC = <向量表地址>          (跳转到向量表)
+2. 软件需要:
+   ├─ 保存 R0-R3 等通用寄存器 (PUSH)
+   ├─ 执行 ISR 主体
+   ├─ 恢复寄存器 (POP)
+   └─ 返回 (SUBS PC, LR, #offset 或 MOVS PC, LR)
+#+end_example
+
+*** 典型的 IRQ Handler (汇编)
+
+#+begin_src asm
+IRQ_Handler:
+    ; 1. 保存上下文
+    STMFD   SP!, {R0-R3, R12, LR}   ; 保存通用寄存器
+
+    ; 2. 调用 C 函数 (GIC 分发)
+    BL      gic_handle_irq          ; 读取 GIC，调用对应 ISR
+
+    ; 3. 恢复上下文并返回
+    LDMFD   SP!, {R0-R3, R12, LR}
+    SUBS    PC, LR, #4              ; 返回中断点 (LR - 4)
+#+end_src
+
+注意: =SUBS= 指令同时:
+
+- 将 LR - 4 的值写入 PC (返回中断点)
+- 将 SPSR 拷贝回 CPSR (恢复中断前的状态)
+
+** FIQ 与 IRQ 的区别
+
+| 特性     | FIQ                        | IRQ           |
+|----------+----------------------------+---------------|
+| 优先级    | 更高                       | 较低          |
+| 向量位置  | =0x1C= (最后)                | =0x18=          |
+| 影子寄存器 | R8-R12, SP, LR (7 个)      | SP, LR (2 个) |
+| 嵌套     | 可以被 FIQ 本身嵌套 (如果开启) | 可以被 FIQ 打断 |
+| 用途     | 高优先级外设 (如 DMA 完成)    | 普通外设中断    |
+
+*** FIQ 的性能优势
+
+由于 FIQ 有独立的 R8-R12，ISR 可以 *不保存这些寄存器*:
+
+#+begin_src asm
+FIQ_Handler:
+    ; 直接使用 R8-R12，无需 PUSH/POP
+    LDR     R8, =GPIO_BASE
+    LDR     R9, [R8, #GPIO_IDR]
+    STR     R9, [R8, #GPIO_ODR]
+
+    SUBS    PC, LR, #4  ; 快速返回，延迟极低
+#+end_src
+
+这使 FIQ 的 ISR 延迟可以低至 *20~30 个周期* (对比 IRQ 的 50~80 个周期)。
+
+* Cortex-M vs. Cortex-A: 设计哲学的差异
+
+| 特性       | Cortex-M                   | Cortex-A                              |
+|------------+----------------------------+---------------------------------------|
+| *目标应用*    | 微控制器 (MCU)，实时控制      | 应用处理器 (MPU)，运行 OS                |
+| *向量表内容*   | *地址* (32 位指针数组)          | *指令* (ARM/Thumb 指令序列)               |
+| *栈初始化*    | 硬件自动 (向量表第 0 项)      | 软件手动 (启动代码中设置)                 |
+| *中断控制器*   | NVIC (内置)                | GIC (外部)                            |
+| *异常模式*    | 无 (仅 Handler/Thread 模式) | 7 种模式 (usr/svc/irq/fiq/abt/und/sys) |
+| *寄存器影子*   | 无                         | FIQ 有 7 个，其他 2 个                  |
+| *向量表重定位* | VTOR (内置寄存器)            | VBAR (CP15 协处理器寄存器)               |
+| *中断嵌套*    | 硬件自动 (基于优先级)         | 软件控制 (需手动开 CPSR.I)               |
+| *返回机制*    | 硬件自动 (BX LR，EXC_RETURN) | 软件手动 (SUBS PC, LR, #offset)        |
+
+** 为什么 Cortex-M 更简单？
+
+Cortex-M 的设计目标是 *低成本*​、​*低功耗*​、​*易用*:
+
+- *向量表用地址*: 编译器直接生成，无需手写汇编
+- *硬件自动压栈*: 进入 ISR 时自动保存 R0-R3, R12, LR, PC, xPSR (8 个寄存器)
+- *无模式切换*: 简化硬件逻辑，降低功耗
+
+Cortex-A 的设计目标是 *高性能*​、​*灵活性*:
+
+- *向量表用指令*: 支持动态跳转、间接调用等复杂场景
+- *多种异常模式*: 支持 MMU、虚拟化、安全扩展 (TrustZone)
+- *软件可控*: 允许 OS 精细控制异常处理流程
+
+* 实战: 调试向量表问题
+
+** 问题 1: HardFault 后系统重启
+
+*症状*: STM32 程序运行一段时间后突然重启，无任何日志。
+
+*调试步骤*:
+
+1. 在 HardFault_Handler 中加断点:
+
+#+begin_src c
+void HardFault_Handler(void) {
+    __asm volatile("BKPT #01");  // 触发断点
+    while (1);
+}
+#+end_src
+
+2. 查看 *CFSR* (Configurable Fault Status Register) 判断 Fault 类型:
+
+#+begin_src c
+uint32_t cfsr = SCB->CFSR;
+if (cfsr & (1 << 0)) {
+    // IACCVIOL: 指令访问违例
+}
+if (cfsr & (1 << 1)) {
+    // DACCVIOL: 数据访问违例
+}
+// ...
+#+end_src
+
+3. 查看 *栈帧* 找到出错 PC:
+
+#+begin_src c
+void HardFault_Handler(void) {
+    uint32_t *stack_ptr;
+    asm volatile("MRS %0, MSP" : "=r"(stack_ptr));
+
+    uint32_t r0 = stack_ptr[0];
+    uint32_t r1 = stack_ptr[1];
+    uint32_t r2 = stack_ptr[2];
+    uint32_t r3 = stack_ptr[3];
+    uint32_t r12 = stack_ptr[4];
+    uint32_t lr = stack_ptr[5];
+    uint32_t pc = stack_ptr[6];   // 出错的 PC
+    uint32_t psr = stack_ptr[7];
+
+    printf("HardFault at PC=0x%08X\n", pc);
+    while (1);
+}
+#+end_src
+
+*常见原因*:
+
+- 访问未映射的地址 (如 =0x0000_0000=)
+- 栈溢出 (SP 指向无效区域)
+- 除以零 (需开启 UsageFault)
+
+** 问题 2: 中断不触发
+
+*症状*: 配置了 EXTI0 中断，但 ISR 从不执行。
+
+*检查清单*:
+
+1. *向量表是否正确*:
+
+#+begin_src c
+printf("VTOR = 0x%08X\n", SCB->VTOR);
+uint32_t *vtor = (uint32_t *)SCB->VTOR;
+printf("EXTI0_IRQHandler = 0x%08X\n", vtor[16 + EXTI0_IRQn]);
+#+end_src
+
+2. *NVIC 是否使能*:
+
+#+begin_src c
+if (NVIC->ISER[EXTI0_IRQn / 32] & (1 << (EXTI0_IRQn % 32))) {
+    printf("EXTI0 enabled in NVIC\n");
+} else {
+    printf("ERROR: EXTI0 disabled!\n");
+}
+#+end_src
+
+3. *中断优先级是否被屏蔽*:
+
+#+begin_src c
+uint32_t basepri;
+asm volatile("MRS %0, BASEPRI" : "=r"(basepri));
+printf("BASEPRI = %d\n", basepri >> 4);  // 右移 4 位得实际优先级
+#+end_src
+
+4. *外设是否正确触发*:
+
+#+begin_src c
+if (EXTI->PR & EXTI_PR_PR0) {
+    printf("EXTI0 pending flag is set\n");
+}
+#+end_src
+
+** 问题 3: Bootloader 跳转后死机
+
+*症状*: Bootloader 调用跳转函数后，程序卡死。
+
+*正确的跳转代码*:
+
+#+begin_src c
+#define APP_BASE  0x08010000
+
+void jump_to_app(void) {
+    // 1. 检查 App 是否有效 (检查栈顶是否在 SRAM 范围)
+    uint32_t app_sp = *((uint32_t *)APP_BASE);
+    if ((app_sp & 0xFFFF0000) != 0x20000000) {
+        printf("Invalid App: SP=0x%08X\n", app_sp);
+        return;
+    }
+
+    // 2. 禁用所有中断
+    __disable_irq();
+
+    // 3. 关闭 SysTick
+    SysTick->CTRL = 0;
+    SysTick->LOAD = 0;
+    SysTick->VAL = 0;
+
+    // 4. 清除所有中断使能
+    for (int i = 0; i < 8; i++) {
+        NVIC->ICER[i] = 0xFFFFFFFF;
+    }
+
+    // 5. 清除所有中断挂起
+    for (int i = 0; i < 8; i++) {
+        NVIC->ICPR[i] = 0xFFFFFFFF;
+    }
+
+    // 6. 重定向向量表
+    SCB->VTOR = APP_BASE;
+
+    // 7. 设置 MSP
+    __set_MSP(app_sp);
+
+    // 8. 跳转到 App 的 Reset_Handler
+    uint32_t app_pc = *((uint32_t *)(APP_BASE + 4));
+    void (*reset_handler)(void) = (void (*)(void))(app_pc);
+    reset_handler();
+
+    // 不应该执行到这里
+    while (1);
+}
+#+end_src
+
+* 总结
+
+向量表是 ARM 异常处理机制的核心，Cortex-M 和 Cortex-A 的设计反映了它们不同的应用场景:
+
+- *Cortex-M*: 简化硬件，地址数组，硬件自动化，适合实时控制
+- *Cortex-A*: 灵活强大，指令序列，软件可控，适合复杂 OS
+
+在实际开发中，理解向量表的布局和工作机制，是调试启动问题、中断问题、HardFault 等疑难杂症的关键。
+
+*关键要点*:
+
+1. Cortex-M 的向量表第 0 项是 *初始 SP*，第 1 项是 =Reset_Handler=
+2. 向量表必须对齐 (128 或 256 字节)
+3. Bootloader 跳转必须重定向 VTOR
+4. HardFault 时检查 CFSR 和栈帧
+5. Cortex-A 的向量表是指令，支持 =B= 或 =LDR PC=
+6. FIQ 有独立的 R8-R12，适合极低延迟中断

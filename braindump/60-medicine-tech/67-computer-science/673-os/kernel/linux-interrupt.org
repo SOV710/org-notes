@@ -1,0 +1,932 @@
+#+title: Linux Interrupt Handling: From Hardware Signal to Process Context Switch
+#+author: SOV710
+#+date: 2025-12-23
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 引入: CPU 怎么知道该切换进程了？
+
+在学操作系统进程调度的时候，有 "进程时间片耗尽，就由进程调度算法切换到下一个进程" 这种论述。但我转念一想，在 CPU 的视角，一切程序都是 *一整串指令数组*，那么 CPU 怎么知道自己什么时候应该切换进程？
+
+难道进程调度程序在执行进程的时候往里面塞了挂起指令？还是有什么魔法机制？
+
+经过深入研究后发现: 是由内置在 CPU 芯片中的一个叫 *APIC* 的结构，通过定时向 CPU 传送 *硬件信号*，来达到计算时间片的效果，让 CPU 知道 "哦，这个时候应该挂起当前进程了"。
+
+** 问题的本质
+
+从 CPU 的视角看，它只是在 *取指令 (Fetch) → 解码 (Decode) → 执行 (Execute)* 的无限循环中运行。它没有 "进程" 的概念，只有:
+
+- 当前的指令指针 (RIP/EIP)
+- 当前的栈指针 (RSP/ESP)
+- 当前的各种寄存器状态
+
+那么是什么机制让 CPU "停下来"，去执行内核的调度代码？答案是 *异步硬件中断*。
+
+* 核心模型
+
+** CPU: 指令执行引擎
+
+处理器本质上是一个 *状态机*，一切指令都要在这里运算。整个电脑在 CPU 的视角就是:
+
+#+begin_example
+loop forever:
+    instruction = memory[RIP]
+    execute(instruction)
+    RIP += instruction_length
+#+end_example
+
+但这个循环可以被 *中断* 打断。
+
+** 多层存储系统
+
+| 层级     | 延迟           | 容量        | CPU 访问方式            |
+|----------+----------------+-------------+------------------------|
+| 寄存器    | 1 cycle        | ~100 B      | 直接访问 (=mov rax, rbx=) |
+| L1 Cache | 4-5 cycles     | 32-64 KB    | 间接 (通过地址)          |
+| L2 Cache | 12-20 cycles   | 256 KB-1 MB | 间接                   |
+| L3 Cache | 40-80 cycles   | 4-64 MB     | 间接                   |
+| 内存     | 200-300 cycles | 8-128 GB    | 通过 MMU 寻址           |
+| 硬盘     | 10⁵-10⁷ cycles | TB 级       | 通过 DMA 寻址           |
+
+CPU 只能 *直接* 操作寄存器，但可以通过 =mov= 指令间接访问内存:
+
+#+begin_src asm
+mov rax, [0x12345678]  ; 从内存 0x12345678 加载数据到 RAX
+#+end_src
+
+** 中断 (Interrupt): 异步事件通知
+
+中断是 CPU 响应 *外部事件* 的机制，分为两大类:
+
+*** 硬中断 (Hardware Interrupt)
+
+由 *硬件设备* 发出的物理信号:
+
+- 定时器中断 (Timer IRQ): APIC 定时器每隔固定周期 (如 1 ms) 触发
+- 键盘中断 (Keyboard IRQ): 按下按键时触发
+- 网卡中断 (NIC IRQ): 收到网络包时触发
+- 硬盘中断 (Disk IRQ): I/O 完成时触发
+
+硬中断通过 *IRQ (Interrupt Request) 编号* 查找 IDT，找到对应的中断处理函数 (ISR)。
+
+*** 软中断 (Software Interrupt)
+
+由 *软件指令* 主动触发:
+
+#+begin_src asm
+int 0x80  ; x86 传统系统调用 (Linux)
+int 0x21  ; DOS 系统调用
+syscall   ; x86-64 快速系统调用
+#+end_src
+
+软中断通过指令参数 (如 =0x80=) 直接查找 IDT，不经过 IRQ。
+
+*** 硬中断 vs 软中断对比
+
+| 特性     | 硬中断 (Hardware IRQ) | 软中断 (Software INT) |
+|----------+----------------------+----------------------|
+| 触发源    | 外部硬件              | CPU 指令             |
+| 可预测性  | 异步 (不可预测)        | 同步 (指令触发)        |
+| IDT 查找 | 通过 IRQ 号映射        | 通过指令立即数          |
+| 优先级    | 可被高优先级中断抢占     | 一般不可抢占           |
+| 用途     | I/O 通知, 定时器       | 系统调用, 异常处理      |
+
+* 中断硬件: 从 8259 PIC 到 APIC
+
+** 古老的 8259 PIC (1976-1990s)
+
+早期 x86 (8086/80286) 使用 Intel 8259 *可编程中断控制器* (PIC):
+
+- *8 个 IRQ 输入* (IRQ0~IRQ7)
+- 通过级联可扩展到 15 个 (主 PIC + 从 PIC)
+- *固定优先级*: IRQ0 > IRQ1 > ... > IRQ7
+- 只支持 *单 CPU*
+
+#+begin_example
+           +-------+
+IRQ0 ------| 8259  |
+IRQ1 ------|  PIC  |----> CPU INTR
+...        +-------+
+IRQ7 ------|       |
+           +-------+
+#+end_example
+
+*** 8259 的局限性
+
+1. *单核瓶颈*: 所有中断由一个 CPU 处理，多核无法负载均衡
+2. *固定优先级*: 无法动态调整
+3. *低 IRQ 数量*: 最多 15 个，现代设备远超这个数量
+4. *慢速 I/O*: 通过 I/O 端口 (=in=, =out= 指令) 访问，延迟高
+
+** 现代 APIC (1997-至今)
+
+Intel 在 Pentium 处理器引入 *APIC* (Advanced Programmable Interrupt Controller):
+
+*** APIC 架构
+
+#+begin_example
+             +--------+
+             | I/O    |
+设备 IRQ -->  | APIC   |
+             +--------+
+                 |
+         (系统总线 / APIC Bus)
+                 |
+        +--------+---------+
+        |                  |
+    +-------+          +-------+
+    | Local |          | Local |
+    | APIC  |          | APIC  |
+    +-------+          +-------+
+        |                  |
+      CPU 0              CPU 1
+#+end_example
+
+*组件:*
+
+1. *LAPIC* (Local APIC): 每个 CPU 核心一个，接收中断并管理本地定时器
+2. *I/O APIC*: 外部设备中断控制器，负责分发中断到不同 CPU
+3. *APIC Bus*: LAPIC 和 I/O APIC 之间的通信总线
+
+*** APIC 的优势
+
+| 特性         | 8259 PIC       | APIC               |
+|--------------+----------------+--------------------|
+| 支持 CPU 数量 | 1              | 理论上无限 (实际 255) |
+| IRQ 数量     | 15             | 24+ (I/O APIC)     |
+| 优先级        | 固定           | 可编程 (16 级)      |
+| 中断分发      | 不支持          | 支持多种模式         |
+| 访问方式      | I/O 端口       | 内存映射 (MMIO)     |
+| 定时器        | 外部芯片 (8254) | 集成 LAPIC Timer   |
+
+*** x2APIC: 下一代 (2010s)
+
+x2APIC 是 APIC 的扩展，使用 *MSR (Model Specific Register)* 而非 MMIO:
+
+- 支持 *更多 CPU* (最多 2³² 个逻辑 CPU)
+- *更快的访问*: MSR 用 =rdmsr/wrmsr= 指令，比 MMIO 快
+- *更高效的 IPI* (Inter-Processor Interrupt)
+
+#+begin_src c
+// 读取 x2APIC ID
+uint64_t apic_id;
+asm volatile("rdmsr" : "=A"(apic_id) : "c"(0x802)); // MSR 0x802 = x2APIC ID
+#+end_src
+
+** LAPIC Timer: 时间片的心跳
+
+每个 CPU 核心的 LAPIC 内置一个 *可编程定时器*，这是实现抢占式调度的关键。
+
+*** 工作原理
+
+1. 内核启动时，设置 LAPIC Timer 的 *初始计数值* (Initial Count):
+
+#+begin_src c
+// 伪代码
+LAPIC_TIMER_INITIAL_COUNT = ticks_per_slice; // 如 1000 (1ms)
+LAPIC_TIMER_MODE = PERIODIC; // 周期性触发
+LAPIC_TIMER_VECTOR = 0x20;   // IDT 第 32 号 (IRQ0)
+#+end_src
+
+2. LAPIC 每个 *CPU 时钟周期* 递减计数器
+3. 计数器归零时，触发 *Timer IRQ*
+4. CPU 跳转到 IDT[0x20] 的中断处理函数
+
+*** 实际频率
+
+假设 CPU 3 GHz，内核想要 1 ms (1000 Hz) 的时间片:
+
+#+begin_example
+ticks_per_slice = 3,000,000,000 Hz / 1,000 Hz = 3,000,000 ticks
+#+end_example
+
+每 300 万个 CPU 周期，触发一次 Timer IRQ。
+
+* 中断描述符表 (IDT): 中断的路由表
+
+** IDT 结构
+
+IDT 是一个 *数组*，存储在内存中，每个条目 (Gate Descriptor) 16 字节 (x86-64):
+
+#+begin_example
++--------+--------+--------+--------+
+| Offset | Segment| Flags  | Reserved
+| 15:0   | Selector| Type  |
++--------+--------+--------+--------+
+| Offset |        |        |
+| 31:16  |        |        |
++--------+--------+--------+--------+
+| Offset |        |        |
+| 63:32  |        |        |
++--------+--------+--------+--------+
+#+end_example
+
+关键字段:
+
+- *Offset*: ISR (Interrupt Service Routine) 的 64 位虚拟地址
+- *Segment Selector*: 代码段选择子 (通常是内核代码段)
+- *Type*: 中断门类型 (Interrupt Gate, Trap Gate)
+- *DPL* (Descriptor Privilege Level): 特权级 (0=内核, 3=用户态)
+
+** IDT 的加载
+
+内核启动时，通过 =lidt= 指令加载 IDT 基地址:
+
+#+begin_src asm
+lidt [idt_descriptor]  ; IDT 描述符包含 IDT 基地址和大小
+#+end_src
+
+#+begin_src c
+struct idt_descriptor {
+    uint16_t limit;   // IDT 大小 - 1 (如 256 * 16 - 1)
+    uint64_t base;    // IDT 基地址
+} __attribute__((packed));
+#+end_src
+
+** Linux 中的 IDT 分配
+
+| IDT 向量   | 用途             | 示例                   |
+|------------+------------------+------------------------|
+| 0~31       | CPU 异常         | 0=除零, 14=缺页, 13=GPF |
+| 32~127     | 外部硬件中断 (IRQ) | 32=定时器, 33=键盘       |
+| 128 (0x80) | 系统调用 (传统)    | =int 0x80=               |
+| 129~255    | 其他中断/IPI      | 如 253=reschedule IPI  |
+
+*** 示例: 定时器中断 (IRQ0)
+
+#+begin_src c
+// Linux 内核代码 (arch/x86/kernel/irq.c 简化版)
+void __init init_IRQ(void) {
+    // 设置 IDT[32] = timer_interrupt
+    set_intr_gate(IRQ0_VECTOR, asm_timer_interrupt);
+}
+
+// 汇编入口 (arch/x86/entry/entry_64.S)
+ENTRY(asm_timer_interrupt)
+    push $~(IRQ0_VECTOR)  // 保存中断号
+    jmp common_interrupt  // 跳转到通用处理
+END(asm_timer_interrupt)
+#+end_src
+
+* 完整的中断处理流程
+
+** 阶段 0: 进程正常执行
+
+假设当前进程 A 在用户态执行:
+
+#+begin_example
+用户态代码:
+0x400000: mov rax, 42
+0x400007: add rax, 1
+0x40000a: ...
+#+end_example
+
+寄存器状态:
+
+#+begin_example
+RIP = 0x400007  (当前指令)
+RSP = 0x7fffffffe000  (用户栈)
+CS = 0x33  (用户代码段)
+SS = 0x2b  (用户数据段)
+RFLAGS = 0x246  (IF=1, 中断开启)
+#+end_example
+
+** 阶段 1: LAPIC Timer 触发中断
+
+- LAPIC Timer 计数器归零
+- LAPIC 通过 *APIC Bus* 向 CPU 核心发送物理信号
+- CPU 在 *指令边界* (如 =add= 执行完毕) 检测到 =INTR= 信号线拉高
+
+** 阶段 2: CPU 响应中断
+
+*** 2.1 中断优先级仲裁
+
+CPU 检查:
+
+1. *RFLAGS.IF* (Interrupt Flag) 是否为 1？
+   - 若为 0，忽略 (除了 NMI 不可屏蔽中断)
+2. 当前是否在处理更高优先级中断？
+   - 若是，延后处理
+3. LAPIC 的 *TPR* (Task Priority Register) 是否允许？
+   - 若中断优先级 <= TPR，延后
+
+假设检查通过，CPU 决定响应中断。
+
+*** 2.2 硬件自动保存上下文
+
+CPU *自动* 完成以下操作 (不需要软件干预):
+
+1. 将用户态寄存器压入 *内核栈*:
+
+#+begin_example
+内核栈 (低地址 → 高地址):
++------------------+
+| SS (用户栈段)     |
+| RSP (用户栈指针)  |
+| RFLAGS           |
+| CS (用户代码段)   |
+| RIP (返回地址)    |
+| Error Code (可选) |
++------------------+ <-- 当前 RSP
+#+end_example
+
+2. 切换到 *内核态*:
+   - CS = 内核代码段 (CPL=0)
+   - SS = 内核数据段
+   - RSP = 内核栈指针 (从 TSS 或 IST 获取)
+   - RFLAGS.IF = 0 (关闭中断，防止嵌套)
+
+3. 跳转到 IDT[32] 的 ISR 地址
+
+** 阶段 3: 执行中断处理程序 (ISR)
+
+*** 3.1 汇编入口 (保存额外寄存器)
+
+CPU 只保存了 5-6 个寄存器，ISR 需要保存其余寄存器:
+
+#+begin_src asm
+ENTRY(asm_timer_interrupt)
+    push %rax
+    push %rbx
+    push %rcx
+    push %rdx
+    push %rsi
+    push %rdi
+    push %rbp
+    push %r8
+    push %r9
+    push %r10
+    push %r11
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+
+    mov $IRQ0_VECTOR, %rdi  # 第一个参数: 中断号
+    call do_IRQ             # 调用 C 函数
+
+    pop %r15
+    pop %r14
+    ...
+    pop %rax
+    iretq  # 中断返回
+END(asm_timer_interrupt)
+#+end_src
+
+*** 3.2 C 语言中断处理 (do_IRQ)
+
+#+begin_src c
+// arch/x86/kernel/irq.c (简化)
+void do_IRQ(struct pt_regs *regs, int irq) {
+    // 确认中断 (发送 EOI 到 LAPIC)
+    ack_APIC_irq();
+
+    // 调用注册的中断处理函数
+    generic_handle_irq(irq);
+}
+#+end_src
+
+*** 3.3 定时器中断处理 (timer_interrupt)
+
+#+begin_src c
+// kernel/time/timer.c (简化)
+void timer_interrupt(void) {
+    // 更新系统时间 (jiffies++)
+    update_times();
+
+    // 调度相关处理
+    scheduler_tick();
+}
+#+end_src
+
+** 阶段 4: 调度器介入 (scheduler_tick)
+
+#+begin_src c
+// kernel/sched/core.c (简化)
+void scheduler_tick(void) {
+    struct task_struct *curr = current;  // 当前进程
+    struct rq *rq = this_rq();           // 当前 CPU 运行队列
+
+    // 更新进程的运行时间统计
+    update_rq_clock(rq);
+    curr->sched_class->task_tick(rq, curr, 0);
+
+    // 检查是否需要抢占
+    if (need_resched()) {
+        set_tsk_need_resched(curr);  // 设置 TIF_NEED_RESCHED 标志
+    }
+}
+#+end_src
+
+*** CFS 调度器的 task_tick
+
+#+begin_src c
+// kernel/sched/fair.c (简化)
+static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued) {
+    struct sched_entity *se = &curr->se;
+
+    // 更新虚拟运行时间
+    update_curr(cfs_rq);
+
+    // 增加 vruntime (与进程优先级反相关)
+    se->vruntime += calc_delta_fair(delta_exec, se);
+
+    // 重新平衡红黑树
+    if (se->vruntime > leftmost_se->vruntime + threshold) {
+        resched_curr(rq);  // 标记需要调度
+    }
+}
+#+end_src
+
+** 阶段 5: 中断返回前检查 (need_resched)
+
+中断处理完毕，执行 =iretq= 前，CPU 检查 *TIF_NEED_RESCHED* 标志:
+
+#+begin_src asm
+    call do_IRQ
+    # 中断处理完毕
+
+    # 检查是否需要调度
+    testl $_TIF_NEED_RESCHED, TI_flags(%rcx)
+    jz restore_regs  # 不需要调度，直接返回
+
+    # 需要调度，调用 schedule()
+    call schedule
+
+restore_regs:
+    pop %r15
+    ...
+    iretq
+#+end_src
+
+** 阶段 6: 上下文切换 (schedule → context_switch)
+
+#+begin_src c
+// kernel/sched/core.c (简化)
+asmlinkage __visible void __sched schedule(void) {
+    struct task_struct *prev, *next;
+    struct rq *rq;
+
+    rq = this_rq();
+    prev = rq->curr;
+
+    // 选择下一个进程 (CFS 从红黑树最左节点选择)
+    next = pick_next_task(rq, prev);
+
+    if (prev != next) {
+        // 执行上下文切换
+        context_switch(rq, prev, next);
+    }
+}
+#+end_src
+
+*** 上下文切换的核心 (switch_to)
+
+#+begin_src c
+// 保存当前进程状态到 task_struct
+prev->thread.sp = current_stack_pointer;  // 保存栈指针
+prev->thread.ip = __builtin_return_address(0);  // 保存返回地址
+
+// 切换页表 (若跨进程)
+if (prev->mm != next->mm) {
+    load_cr3(next->mm->pgd);  // 切换 CR3 寄存器
+}
+
+// 恢复下一个进程状态
+current_stack_pointer = next->thread.sp;
+jmp *next->thread.ip;  // 跳转到下一个进程的恢复点
+#+end_src
+
+*** 实际汇编实现 (arch/x86/entry/entry_64.S)
+
+#+begin_src asm
+ENTRY(__switch_to_asm)
+    # 保存 prev 的寄存器
+    pushq %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+    movq %rsp, TASK_threadsp(%rdi)  # 保存栈指针到 prev->thread.sp
+
+    # 恢复 next 的寄存器
+    movq TASK_threadsp(%rsi), %rsp  # 加载 next->thread.sp
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    jmp __switch_to  # 跳转到 C 函数完成剩余工作
+END(__switch_to_asm)
+#+end_src
+
+** 阶段 7: 返回用户态
+
+经过上下文切换，现在 CPU 执行的是进程 B。假设 B 之前也是被定时器中断打断的，它会从 =iretq= 返回:
+
+#+begin_src asm
+iretq  # 从内核栈弹出: RIP, CS, RFLAGS, RSP, SS
+       # CPU 自动恢复用户态
+#+end_example
+
+进程 B 继续执行，就像什么都没发生过。
+
+* 关键数据结构
+
+** task_struct (进程控制块)
+
+#+begin_src c
+// include/linux/sched.h (极简版)
+struct task_struct {
+    // 进程状态
+    volatile long state;  // TASK_RUNNING, TASK_INTERRUPTIBLE, ...
+
+    // 调度相关
+    int prio;             // 静态优先级
+    int static_prio;      // nice 值映射的优先级
+    struct sched_entity se;  // CFS 调度实体
+
+    // 上下文保存
+    struct thread_struct thread;  // CPU 寄存器状态
+    void *stack;          // 内核栈指针
+
+    // 内存管理
+    struct mm_struct *mm; // 虚拟内存描述符 (包含页表)
+
+    // ...
+};
+#+end_src
+
+** thread_struct (寄存器保存区)
+
+#+begin_src c
+// arch/x86/include/asm/processor.h (简化)
+struct thread_struct {
+    unsigned long sp;     // 栈指针 (RSP)
+    unsigned long ip;     // 指令指针 (RIP)
+    unsigned long flags;  // RFLAGS
+
+    // FPU/SSE/AVX 寄存器 (延迟保存)
+    struct fpu fpu;
+
+    // 调试寄存器
+    unsigned long debugreg[8];
+};
+#+end_src
+
+** sched_entity (CFS 调度实体)
+
+#+begin_src c
+// kernel/sched/sched.h (简化)
+struct sched_entity {
+    u64 vruntime;         // 虚拟运行时间 (调度关键)
+    u64 exec_start;       // 上次开始执行的时间
+    u64 sum_exec_runtime; // 累计运行时间
+
+    struct rb_node run_node;  // 红黑树节点
+    struct list_head group_node;
+
+    unsigned int on_rq;   // 是否在运行队列中
+};
+#+end_src
+
+** pt_regs (中断现场保存)
+
+#+begin_src c
+// arch/x86/include/asm/ptrace.h
+struct pt_regs {
+    unsigned long r15, r14, r13, r12, rbp, rbx;
+    unsigned long r11, r10, r9, r8;
+    unsigned long rax, rcx, rdx, rsi, rdi;
+    unsigned long orig_rax;  // 系统调用号
+    unsigned long rip;       // 用户态 RIP
+    unsigned long cs;
+    unsigned long eflags;
+    unsigned long rsp;       // 用户态 RSP
+    unsigned long ss;
+};
+#+end_src
+
+* 中断延迟和实时性
+
+** 中断延迟的来源
+
+*** 1. 硬件延迟 (Interrupt Latency)
+
+从 IRQ 信号到 CPU 响应:
+
+- APIC 总线传输: ~10-50 cycles
+- CPU 指令边界检测: 0-20 cycles (取决于当前指令)
+- 优先级仲裁: ~10 cycles
+
+*总计*: ~20-100 cycles (5-30 ns @ 3 GHz)
+
+*** 2. 中断关闭窗口 (Interrupt Disabled Window)
+
+内核某些临界区会关闭中断 (=cli= 指令):
+
+#+begin_src c
+local_irq_disable();  // cli
+// 临界区代码
+local_irq_enable();   // sti
+#+end_src
+
+如果 Timer IRQ 在 =cli= 期间到达，会被 *延迟* 到 =sti= 后才响应。
+
+*问题*: 若临界区过长 (如 1 ms)，定时器中断延迟 1 ms，导致进程调度不准时！
+
+*** 3. 中断处理时间 (ISR Execution Time)
+
+从进入 ISR 到返回用户态的时间:
+
+- 保存寄存器: ~50 cycles
+- =do_IRQ= 逻辑: ~200-500 cycles
+- =scheduler_tick=: ~500-1000 cycles
+- 上下文切换 (如果需要): ~3000-15000 cycles
+- 恢复寄存器: ~50 cycles
+
+*总计*: 1000-20000 cycles (0.3-6 µs)
+
+*** 4. 缓存失效 (Cache Miss)
+
+上下文切换后，新进程的代码/数据不在缓存中:
+
+- L1 Miss → L3 Hit: +40-80 cycles
+- L3 Miss → Memory: +200-300 cycles
+
+大量 cache miss 会导致 *性能陡降*。
+
+** 实时系统的要求
+
+实时操作系统 (RTOS) 要求 *确定性延迟*:
+
+| 系统类型 | 最大延迟要求 | 示例应用         |
+|--------+------------+------------------|
+| 软实时  | 1-10 ms    | 音视频播放       |
+| 硬实时  | 10-100 µs  | 工业控制, 汽车   |
+| 超硬实时| <10 µs     | 军事, 航天       |
+
+*Linux 默认不是实时系统*，但可以通过 PREEMPT_RT 补丁接近硬实时。
+
+*** PREEMPT_RT 的优化
+
+1. *可抢占内核*: 几乎所有内核代码可被抢占
+2. *实时优先级*: =SCHED_FIFO=, =SCHED_RR= 调度类
+3. *中断线程化*: 将 ISR 变成内核线程，可被调度
+4. *减少 IRQ 关闭*: 用 per-CPU 自旋锁替代全局 =cli=
+
+#+begin_src c
+// 设置进程为实时优先级
+struct sched_param param;
+param.sched_priority = 99;  // 最高优先级
+sched_setscheduler(getpid(), SCHED_FIFO, &param);
+#+end_src
+
+* 多核环境下的中断分发
+
+** IRQ 亲和性 (IRQ Affinity)
+
+现代系统有多个 CPU 核心，中断可以被分发到任意核心。IRQ 亲和性决定哪些核心可以处理哪些中断。
+
+*** 查看 IRQ 亲和性
+
+#+begin_src bash
+$ cat /proc/irq/32/smp_affinity  # IRQ 32 (定时器)
+ff  # 十六进制掩码, 0xff = 所有 8 个核心
+#+end_src
+
+*** 设置 IRQ 亲和性
+
+#+begin_src bash
+# 将 IRQ 32 绑定到核心 0
+echo 1 > /proc/irq/32/smp_affinity  # 0x1 = 核心 0
+
+# 绑定到核心 0 和 1
+echo 3 > /proc/irq/32/smp_affinity  # 0x3 = 0b11
+#+end_src
+
+** IPI (Inter-Processor Interrupt)
+
+核心间通信通过 *IPI* 实现，常见用途:
+
+*** 1. 调度 IPI (Reschedule IPI)
+
+核心 A 发现进程 B 在核心 1 上运行，但应该被抢占:
+
+#+begin_src c
+// 发送 IPI 到核心 1
+apic->send_IPI_mask(cpumask_of(1), RESCHEDULE_VECTOR);
+#+end_src
+
+核心 1 收到 IPI 后，在下一次中断返回时调用 =schedule()=。
+
+*** 2. TLB Shootdown
+
+核心 A 修改页表，需要通知其他核心刷新 TLB:
+
+#+begin_src c
+// 广播 IPI
+on_each_cpu(flush_tlb_func, NULL, 1);
+#+end_src
+
+*** 3. 函数调用 IPI
+
+在所有核心上执行某个函数:
+
+#+begin_src c
+smp_call_function(func, info, wait);
+#+end_src
+
+** NUMA 和中断延迟
+
+在 NUMA 系统中，中断应优先分发到 *本地节点* 的 CPU:
+
+#+begin_example
+Node 0: CPU 0-7, Memory 64 GB
+Node 1: CPU 8-15, Memory 64 GB
+
+网卡在 Node 0 的 PCIe 插槽
+→ 中断应分发到 CPU 0-7
+→ 数据也应分配在 Node 0 内存
+#+end_example
+
+否则会导致 *远端内存访问*，延迟 +100-200 ns！
+
+* 调试和性能分析
+
+** perf 统计中断
+
+#+begin_src bash
+# 统计中断次数
+perf stat -e irq:irq_handler_entry,irq:irq_handler_exit ./program
+
+# 记录中断调用栈
+perf record -e irq:irq_handler_entry -ag
+perf report
+#+end_src
+
+** /proc/interrupts
+
+#+begin_src bash
+$ cat /proc/interrupts
+           CPU0       CPU1       CPU2       CPU3
+  0:         24          0          0          0   IO-APIC   2-edge      timer
+  1:          9          0          0          0   IO-APIC   1-edge      i8042
+ 32:   12345678    9876543    8765432    7654321   Local APIC  timer
+#+end_src
+
+- *timer* (IRQ 0): 传统 8254 定时器 (已废弃)
+- *Local APIC timer* (Vector 32): 现代 LAPIC 定时器
+
+** ftrace 追踪中断
+
+#+begin_src bash
+# 启用中断追踪
+echo 1 > /sys/kernel/debug/tracing/events/irq/enable
+cat /sys/kernel/debug/tracing/trace
+
+# 示例输出
+<idle>-0     [000] d.h.  1234.567890: irq_handler_entry: irq=32 name=timer
+<idle>-0     [000] d.h.  1234.567900: sched_switch: prev=swapper/0 next=firefox
+#+end_src
+
+* 术语表
+
+** APIC (Advanced Programmable Interrupt Controller)
+
+Intel 研发的高级可编程中断控制器，替代古老的 8259 PIC。由 *LAPIC* (每核一个) 和 *I/O APIC* (外部设备) 组成。
+
+** IDT (Interrupt Descriptor Table)
+
+中断描述符表，特别适用于 x86 体系结构。类似 "中断路由表"，将中断号映射到处理函数地址。
+
+** ISR (Interrupt Service Routine)
+
+中断服务例程，即中断处理函数。执行在 *内核态*，需要尽快完成以避免阻塞其他中断。
+
+** IRQ (Interrupt Request)
+
+中断请求，硬件设备通过 IRQ 线通知 CPU。在 x86 上，IRQ 号经过 I/O APIC 映射到 IDT 向量。
+
+** IPI (Inter-Processor Interrupt)
+
+处理器间中断，用于多核系统中核心间通信。如调度通知、TLB 刷新等。
+
+** NMI (Non-Maskable Interrupt)
+
+不可屏蔽中断，即使 RFLAGS.IF=0 也会响应。用于硬件错误 (如内存错误) 和 watchdog。
+
+** EOI (End of Interrupt)
+
+中断结束信号，ISR 完成后需向 APIC 发送 EOI，通知 "可以接受下一个中断"。
+
+#+begin_src c
+// 发送 EOI
+apic_write(APIC_EOI, 0);
+#+end_src
+
+** TSS (Task State Segment)
+
+任务状态段，x86 特有的结构。存储内核栈指针，用于中断时切换到内核栈。
+
+** CPL (Current Privilege Level)
+
+当前特权级，0=内核态，3=用户态。由 CS 寄存器的低 2 位指示。
+
+* 发现 & 吐槽
+
+** 已经进入 CPU 微架构的深水区
+
+感觉已经进入不属于 OS 的深水区了，再看下去就得翻 *Intel Software Developer's Manual* (5000 页的巨著) 了。
+
+原来的 "机器码 = 汇编码" 的观念被推翻了，CPU 中还有很多微架构数据传输是通过 *除了寄存器以外的 bus* 实现的，比如:
+
+- *APIC 总线协议* (LAPIC ↔ I/O APIC)
+- *系统总线* (CPU ↔ 内存/I/O)
+- *QPI/UPI* (Intel 多核互联)
+- *PCIe* (CPU ↔ 外设)
+
+这些 bus 有自己的协议、仲裁机制、延迟模型，完全不是 =mov= 指令能描述的。
+
+** 中断是个 "漏桶" 抽象
+
+中断机制是硬件和软件之间的 *漏桶抽象* (Leaky Abstraction):
+
+- 软件以为中断是 "瞬时的"，实际上有 20-100 cycles 的硬件延迟
+- 软件以为中断是 "精确的"，实际上可能被 =cli= 延迟数千 cycles
+- 软件以为中断是 "免费的"，实际上上下文切换成本高达数万 cycles
+
+这就是为什么高性能系统 (如 DPDK, SPDK) 要 *绕过中断*，用轮询 (polling) 代替。
+
+** Linux 中断处理是个艺术品
+
+Linux 内核的中断处理经过 30 年演进，是工程和理论的完美平衡:
+
+- *快速路径* (Fast Path): 硬件自动保存, 汇编入口, C 处理, 恢复返回
+- *慢速路径* (Slow Path): Softirq, Tasklet, Workqueue 延迟处理
+- *实时优化* (PREEMPT_RT): 中断线程化, 可抢占内核
+
+但同时也是个 *复杂巨兽*，涉及:
+
+- 8 种调度类 (CFS, RT, Deadline, Idle, ...)
+- 3 种中断上下文 (Hardirq, Softirq, Process)
+- N 种锁 (spinlock, mutex, semaphore, RCU, ...)
+
+不愧是 3000 万行代码的操作系统。
+
+** 现代 CPU 是个黑盒
+
+x86 的 =PAUSE=, =MWAIT=, =HLT= 指令到底干了什么？Intel 手册只说 "implementation-specific"。
+
+ARM 的 =WFE= (Wait For Event) 和 =SEV= (Send Event) 更神秘，跨核事件传递的延迟是多少？文档没写。
+
+RISC-V 的中断模型 (Machine Mode, Supervisor Mode) 看起来更清晰，但实际硬件实现还是黑盒。
+
+*只能用 benchmark 反向工程了。*
+
+* 扩展阅读
+
+** 必读书籍
+
+1. *"Understanding the Linux Kernel"* (3rd Edition, Daniel P. Bovet)
+   - 第 4 章: 中断和异常
+2. *"Linux Kernel Development"* (3rd Edition, Robert Love)
+   - 第 7 章: 中断和中断处理
+3. *"Intel 64 and IA-32 Architectures Software Developer's Manual"*
+   - Volume 3A: 系统编程指南 (APIC, IDT, 特权级)
+
+** Linux 内核源码
+
+- =arch/x86/kernel/irq.c=: 中断处理主逻辑
+- =arch/x86/entry/entry_64.S=: 汇编入口和上下文切换
+- =kernel/sched/core.c=: 调度器核心
+- =kernel/sched/fair.c=: CFS 调度算法
+- =kernel/time/timer.c=: 定时器中断
+
+** 在线资源
+
+- [[https://www.kernel.org/doc/html/latest/core-api/irq/index.html][Linux Interrupt Handling Documentation]]
+- [[https://wiki.osdev.org/Interrupts][OSDev Wiki: Interrupts]]
+- [[https://lwn.net/Kernel/Index/#Interrupts][LWN.net: Interrupt Articles]]
+
+* 总结
+
+中断机制是操作系统的 *心跳*:
+
+- *APIC Timer* 每隔 1 ms (可配置) 触发一次 IRQ
+- *CPU* 响应中断，保存用户态上下文，切换到内核态
+- *ISR* 执行 =scheduler_tick()=, 更新 =vruntime=, 标记 =TIF_NEED_RESCHED=
+- *schedule()* 从红黑树选择下一个进程，执行 *上下文切换*
+- *新进程* 从中断返回点恢复执行
+
+整个过程涉及:
+
+- *硬件*: APIC, IDT, CPU 特权级切换
+- *内核*: 中断向量, ISR, 调度器, 上下文切换
+- *性能*: 缓存一致性, NUMA, 中断延迟
+
+理解中断，就理解了操作系统如何 "欺骗" 用户态进程，让它们以为自己在 "独占" CPU。
+
+*一切都是假象，只有中断是真实的。*
