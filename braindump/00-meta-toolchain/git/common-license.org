@@ -1,0 +1,28 @@
+#+title: Common License
+#+author: SOV710
+#+date: <2025-12-25 Thu>
+
+* MIT
+
+#+begin_src
+curl -o LICENSE https://raw.githubusercontent.com/spdx/license-list-data/master/text/MIT.txt
+#+end_src
+
+
+* Apache 2.0
+
+#+begin_src
+curl -o LICENSE https://www.apache.org/licenses/LICENSE-2.0.txt
+#+end_src
+
+* GPL v3
+
+#+begin_src
+curl -o LICENSE https://raw.githubusercontent.com/spdx/license-list-data/master/text/GPL-3.0-only.txt
+#+end_src
+
+* LGPL v3
+
+#+begin_src
+curl -o LICENSE https://raw.githubusercontent.com/spdx/license-list-data/master/text/LGPL-3.0-only.txt
+#+end_src
