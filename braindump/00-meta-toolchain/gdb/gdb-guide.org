@@ -1,0 +1,933 @@
+#+title: GDB Deep Dive: From ptrace to Python Extensions
+#+author: SOV710
+#+date: 2025-12-29
+#+startup: showall
+#+options: toc:2 num:nil
+
+* GDB: 程序员的手术刀
+
+GDB (GNU Debugger) 是 Unix/Linux 上的 *事实标准* 调试器，也是理解程序运行时行为的终极工具。
+
+但 GDB 不是魔法 — 它依赖于操作系统提供的 *进程跟踪机制* (=ptrace= 系统调用) 和编译器生成的 *调试符号* (DWARF 格式)。理解这些底层机制，才能真正用好 GDB。
+
+本文从 =ptrace= 原理讲起，覆盖断点实现、内存检查、远程调试、Python 扩展等高级技巧，最后总结实战中的常见陷阱。
+
+* GDB 的工作原理: ptrace 系统调用
+
+** ptrace: 进程间的 "寄生" 接口
+
+=ptrace= (process trace) 是 Linux/Unix 提供的系统调用，允许一个进程 (tracer) *完全控制* 另一个进程 (tracee):
+
+#+begin_src c
+#include <sys/ptrace.h>
+
+long ptrace(enum __ptrace_request request,
+            pid_t pid,
+            void *addr,
+            void *data);
+#+end_src
+
+*** 核心操作
+
+| Request              | 功能                    | 说明                      |
+|----------------------+-----------------------+---------------------------|
+| =PTRACE_TRACEME=       | 子进程声明 "我要被调试"        | 通常在 =fork= 后调用             |
+| =PTRACE_ATTACH=        | 附加到运行中的进程             | =gdb -p <pid>= 的底层实现         |
+| =PTRACE_PEEKTEXT=      | 读取目标进程内存 (代码段)       | 读取指令                    |
+| =PTRACE_PEEKDATA=      | 读取目标进程内存 (数据段)       | 读取变量                    |
+| =PTRACE_POKETEXT=      | 写入目标进程内存 (代码段)       | 插入断点指令                  |
+| =PTRACE_POKEDATA=      | 写入目标进程内存 (数据段)       | 修改变量值                   |
+| =PTRACE_GETREGS=       | 获取寄存器状态               | 读取 =rip=, =rsp=, =rax= 等        |
+| =PTRACE_SETREGS=       | 设置寄存器状态               | 修改程序计数器 (跳转到任意地址)       |
+| =PTRACE_SINGLESTEP=    | 单步执行                  | 执行一条指令后停止               |
+| =PTRACE_CONT=          | 继续执行                  | 恢复运行直到下一个断点/信号          |
+
+** GDB 启动流程
+
+当你运行 =gdb ./program= 时:
+
+#+begin_example
+1. GDB fork 一个子进程
+2. 子进程调用 ptrace(PTRACE_TRACEME, ...)
+3. 子进程 exec("./program")
+4. 内核检测到 PTRACE_TRACEME，在 exec 后立刻暂停子进程
+5. 发送 SIGTRAP 信号给父进程 (GDB)
+6. GDB 接管控制权，等待用户输入命令
+#+end_example
+
+此时程序停在 *动态链接器的入口点* (=ld.so=)，还没有执行 =main= 函数。
+
+** 附加到运行中的进程
+
+=gdb -p <pid>= 的流程:
+
+#+begin_example
+1. GDB 调用 ptrace(PTRACE_ATTACH, pid, ...)
+2. 内核暂停目标进程，发送 SIGSTOP
+3. GDB 读取进程的内存映射 (/proc/<pid>/maps)
+4. 加载对应的符号文件 (/usr/lib/debug/...)
+5. 用户可以开始调试
+#+end_example
+
+*限制*: 只能附加到同用户的进程 (或 root 可以附加任意进程)。内核参数 =/proc/sys/kernel/yama/ptrace_scope= 控制附加权限:
+
+- =0=: 无限制 (默认)
+- =1=: 只能附加到子进程或设置了 =PR_SET_PTRACER= 的进程
+- =2=: 只有 root 可以附加
+- =3=: 完全禁止 =ptrace=
+
+#+begin_src bash
+# 临时允许附加
+echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+
+# 永久修改
+sudo sysctl -w kernel.yama.ptrace_scope=0
+#+end_src
+
+* 断点的实现: INT3 指令
+
+** 软件断点原理
+
+GDB 的断点是通过 *替换目标地址的指令* 实现的:
+
+#+begin_example
+原指令:  mov $0x42, %eax    (机器码: B8 42 00 00 00)
+断点后:  int3               (机器码: CC)
+#+end_example
+
+流程:
+
+1. 用户设置断点: =break main=
+2. GDB 找到 =main= 的地址 (通过符号表)
+3. GDB 读取该地址的原始指令 (=ptrace(PTRACE_PEEKTEXT)=)
+4. GDB 保存原指令，写入 =0xCC= (=ptrace(PTRACE_POKETEXT)=)
+5. 程序运行到断点时，执行 =int3= 指令
+6. CPU 触发 *调试异常*，内核发送 =SIGTRAP= 给 GDB
+7. GDB 恢复原指令，将 =rip= 寄存器减 1 (因为 =int3= 已经执行)
+8. 用户选择继续 (=continue=) 或单步 (=step=)
+
+** 硬件断点
+
+x86-64 CPU 提供 *4 个硬件断点寄存器* (=DR0~DR3=)，可以设置:
+
+- *指令断点*: 当执行到某地址时触发
+- *数据断点* (watchpoint): 当某内存地址被读/写时触发
+
+优势:
+
+- 不修改代码段，对只读内存也有效
+- 可以监控变量的读/写
+
+劣势:
+
+- 只有 4 个寄存器 (x86-64 限制)
+- 需要 CPU 支持
+
+GDB 命令:
+
+#+begin_src gdb
+# 软件断点
+break main
+
+# 硬件断点
+hbreak main
+
+# 数据断点 (监控变量)
+watch my_variable
+
+# 只读断点 (变量被读取时触发)
+rwatch my_variable
+
+# 读写断点
+awatch my_variable
+#+end_src
+
+** 条件断点
+
+条件断点在每次触发时，GDB 会 *在目标进程中* 执行条件表达式:
+
+#+begin_src gdb
+break main if argc > 1
+#+end_src
+
+实现:
+
+1. 程序停在断点
+2. GDB 读取 =argc= 的值 (通过 =ptrace= 读取栈或寄存器)
+3. 计算 =argc > 1=
+4. 如果为假，自动 =continue=
+
+*性能陷阱*: 条件断点会导致频繁停止/恢复，循环中慎用！
+
+#+begin_src gdb
+# 这会让程序卡死 (每次循环都停下来检查)
+break loop_body if i == 1000000
+#+end_src
+
+更好的方法:
+
+#+begin_src gdb
+# 使用命令自动化
+break loop_body
+commands
+  silent
+  if i == 1000000
+    print "Found!"
+  end
+  continue
+end
+#+end_src
+
+* GDB 基础命令速查
+
+** 启动与控制
+
+#+begin_src gdb
+gdb ./program          # 启动 GDB
+gdb -p <pid>           # 附加到进程
+gdb ./program core     # 分析 core dump
+
+run [args]             # 启动程序 (简写 r)
+start                  # 启动并停在 main
+attach <pid>           # 附加到进程
+detach                 # 分离 (目标进程继续运行)
+quit                   # 退出 GDB (简写 q)
+#+end_src
+
+** 断点与执行
+
+#+begin_src gdb
+break main             # 在函数设置断点 (简写 b)
+break file.c:42        # 在文件行号设置断点
+break *0x400500        # 在地址设置断点
+delete 1               # 删除断点 1 (简写 d)
+disable 1              # 禁用断点 1
+enable 1               # 启用断点 1
+info breakpoints       # 列出所有断点 (简写 i b)
+
+continue               # 继续执行 (简写 c)
+step                   # 单步进入 (进入函数, 简写 s)
+next                   # 单步跳过 (不进入函数, 简写 n)
+finish                 # 执行到当前函数返回 (简写 fin)
+until 100              # 执行到第 100 行
+stepi                  # 单步执行一条 *汇编指令* (简写 si)
+nexti                  # 跳过一条汇编指令 (简写 ni)
+#+end_src
+
+** 查看状态
+
+#+begin_src gdb
+backtrace              # 查看调用栈 (简写 bt)
+frame 3                # 切换到栈帧 3 (简写 f)
+info frame             # 查看当前栈帧详细信息
+info registers         # 查看寄存器 (简写 i r)
+info locals            # 查看局部变量
+info args              # 查看函数参数
+
+print var              # 打印变量 (简写 p)
+print/x ptr            # 十六进制打印 (还有 /d /o /t /c /s)
+display var            # 每次停止时自动打印
+x/10wx 0x400000        # 检查内存 (10 个字, 十六进制)
+x/s $rdi               # 打印字符串 (常用于查看第一个参数)
+#+end_src
+
+** 源代码导航
+
+#+begin_src gdb
+list                   # 显示当前代码 (简写 l)
+list main              # 显示 main 函数
+list file.c:42         # 显示特定行
+disassemble main       # 反汇编函数 (简写 disas)
+disassemble /m main    # 混合显示源码和汇编
+set disassembly-flavor intel  # 切换到 Intel 汇编语法
+#+end_src
+
+* 内存检查: x 命令的威力
+
+=x= (examine) 命令是 GDB 最强大的内存查看工具:
+
+#+begin_example
+x/[count][format][size] address
+
+count:  检查多少个单元
+format: 显示格式
+  x - 十六进制
+  d - 十进制
+  u - 无符号十进制
+  o - 八进制
+  t - 二进制
+  a - 地址
+  c - 字符
+  s - 字符串
+  i - 指令 (反汇编)
+size:   单元大小
+  b - 字节 (8 bit)
+  h - 半字 (16 bit)
+  w - 字 (32 bit)
+  g - 巨字 (64 bit)
+#+end_example
+
+** 实用示例
+
+#+begin_src gdb
+# 查看 10 个字 (32 位) 的十六进制内容
+x/10wx 0x400000
+
+# 查看 rsp 指向的栈内容 (8 个 64 位值)
+x/8gx $rsp
+
+# 查看字符串
+x/s 0x400500
+
+# 查看指令 (反汇编 20 条)
+x/20i $rip
+
+# 查看二进制位
+x/t $rax
+
+# 查看 C 结构体
+p *(struct my_struct *)0x7fffffffdc00
+x/10gx 0x7fffffffdc00
+#+end_src
+
+** 示例: 分析栈帧
+
+#+begin_src gdb
+(gdb) break main
+(gdb) run
+(gdb) info frame
+Stack level 0, frame at 0x7fffffffdc50:
+ rip = 0x401136 in main; saved rip = 0x7ffff7a05b97
+ Arglist at 0x7fffffffdc40, args: argc=1, argv=0x7fffffffdd18
+ Locals at 0x7fffffffdc40, Previous frame's sp is 0x7fffffffdc50
+
+# 查看返回地址
+(gdb) x/gx 0x7fffffffdc48
+0x7fffffffdc48: 0x00007ffff7a05b97  # __libc_start_main 的返回地址
+
+# 查看栈上的参数
+(gdb) x/2gx 0x7fffffffdc40
+0x7fffffffdc40: 0x0000000000000001  # argc = 1
+0x7fffffffdc48: 0x00007fffffffdd18  # argv
+#+end_src
+
+* TUI 模式: 告别 =list= 命令
+
+GDB 的 TUI (Text User Interface) 模式提供分屏显示:
+
+#+begin_src bash
+gdb -tui ./program
+#+end_src
+
+或在 GDB 中:
+
+#+begin_src gdb
+Ctrl-X A         # 切换 TUI 模式
+Ctrl-X 2         # 分割窗口
+Ctrl-X 1         # 单窗口
+Ctrl-X O         # 切换焦点窗口
+#+end_src
+
+布局:
+
+#+begin_src gdb
+layout src       # 源代码窗口
+layout asm       # 汇编窗口
+layout split     # 源码 + 汇编
+layout regs      # 寄存器窗口
+focus cmd        # 焦点到命令窗口
+focus src        # 焦点到源码窗口
+#+end_src
+
+** TUI 的问题
+
+TUI 在某些终端下会乱码 (如 tmux 中)，解决方法:
+
+#+begin_src bash
+# 设置终端类型
+export TERM=xterm-256color
+
+# 或使用 cgdb (更好的 TUI 替代品)
+sudo pacman -S cgdb
+cgdb ./program
+#+end_src
+
+* 调试优化代码: -O2 的噩梦
+
+编译器优化 (=-O2=, =-O3=) 会导致:
+
+1. *内联函数*: 函数调用被展开，无法设置断点
+2. *寄存器分配*: 变量不在内存中，无法打印
+3. *指令重排*: 单步执行时代码乱跳
+4. *尾调用优化*: 栈帧被移除，=backtrace= 不完整
+
+** 示例: 变量被优化掉
+
+#+begin_src c
+// test.c
+#include <stdio.h>
+
+int main() {
+    int x = 42;
+    printf("%d\n", x);
+    return 0;
+}
+#+end_src
+
+编译:
+
+#+begin_src bash
+gcc -O2 -g test.c -o test
+gdb ./test
+#+end_src
+
+调试:
+
+#+begin_src gdb
+(gdb) break main
+(gdb) run
+(gdb) print x
+$1 = <optimized out>   # 变量被优化到寄存器，无法打印
+#+end_src
+
+** 解决方法
+
+*** 1. 使用 =-Og= (推荐)
+
+=-Og= 是 "调试友好的优化":
+
+#+begin_src bash
+gcc -Og -g test.c -o test
+#+end_src
+
+效果:
+
+- 保留调试信息
+- 不内联小函数
+- 不激进地优化变量
+
+*** 2. 禁用特定函数的优化
+
+#+begin_src c
+__attribute__((optimize("O0")))
+int my_function() {
+    // 这个函数不优化
+}
+#+end_src
+
+*** 3. 用 =volatile= 防止优化
+
+#+begin_src c
+volatile int x = 42;  // 强制从内存读取
+#+end_src
+
+*** 4. 从汇编推导变量值
+
+#+begin_src gdb
+(gdb) disas main
+...
+0x401136 <+6>:  mov    $0x2a,%edi   # x = 42 在 edi 寄存器
+...
+(gdb) print/d $edi
+$1 = 42
+#+end_src
+
+* 远程调试: gdbserver
+
+=gdbserver= 允许在远程机器 (如嵌入式设备) 上运行被调试程序，本地 GDB 通过网络连接。
+
+** 嵌入式设备端
+
+#+begin_src bash
+# 在目标设备 (如 ARM 开发板) 上
+gdbserver :1234 ./my_program arg1 arg2
+
+# 或附加到已运行进程
+gdbserver :1234 --attach <pid>
+#+end_src
+
+** 本地端
+
+#+begin_src bash
+# 启动交叉编译工具链的 GDB (如 ARM)
+arm-linux-gnueabihf-gdb ./my_program
+
+# 在 GDB 中连接
+(gdb) target remote 192.168.1.100:1234
+(gdb) break main
+(gdb) continue
+#+end_src
+
+** SSH 隧道调试
+
+如果设备没有公网 IP:
+
+#+begin_src bash
+# 本地端建立隧道
+ssh -L 1234:localhost:1234 user@remote-device
+
+# 设备端启动 gdbserver
+gdbserver :1234 ./program
+
+# 本地 GDB 连接本地端口
+(gdb) target remote localhost:1234
+#+end_src
+
+* Core Dump 分析: 事后诸葛亮
+
+Core dump 是程序崩溃时的内存快照，包含:
+
+- 所有内存区域 (栈、堆、代码段、共享库)
+- 寄存器状态
+- 线程信息
+
+** 启用 Core Dump
+
+Linux 默认禁用 core dump:
+
+#+begin_src bash
+# 查看限制
+ulimit -c
+0  # 表示禁用
+
+# 启用 (无限制大小)
+ulimit -c unlimited
+
+# 永久生效 (写入 ~/.bashrc)
+echo "ulimit -c unlimited" >> ~/.bashrc
+#+end_src
+
+设置 core dump 路径:
+
+#+begin_src bash
+# 临时设置
+sudo sysctl -w kernel.core_pattern=/tmp/core.%e.%p
+
+# 永久设置 (写入 /etc/sysctl.conf)
+sudo bash -c "echo 'kernel.core_pattern=/tmp/core.%e.%p' >> /etc/sysctl.conf"
+#+end_src
+
+格式说明:
+
+- =%e=: 程序名
+- =%p=: 进程 PID
+- =%t=: 时间戳
+- =%s=: 信号编号
+
+** 分析 Core Dump
+
+#+begin_src bash
+# 让程序崩溃
+gcc -g crash.c -o crash
+./crash
+Segmentation fault (core dumped)
+
+# 用 GDB 打开
+gdb ./crash /tmp/core.crash.12345
+#+end_src
+
+#+begin_src gdb
+(gdb) bt
+#0  0x0000000000401136 in crash_function () at crash.c:10
+#1  0x0000000000401150 in main () at crash.c:15
+
+(gdb) frame 0
+(gdb) list
+10      int *p = NULL;
+11      *p = 42;  # 崩溃点
+
+(gdb) info registers
+rip            0x401136
+rax            0x0        # NULL 指针
+#+end_src
+
+** 常见崩溃模式
+
+*** 空指针解引用
+
+#+begin_src gdb
+(gdb) bt
+#0  0x401136 in func () at test.c:10
+(gdb) info registers
+rax            0x0        # 解引用了 NULL
+
+(gdb) x/i $rip
+=> 0x401136 <func+6>:  mov  %eax,(%rax)  # 写入 0x0 地址
+#+end_src
+
+*** 栈溢出
+
+#+begin_src gdb
+(gdb) bt
+#0  0x401200 in recursive ()
+#1  0x401210 in recursive ()
+#2  0x401210 in recursive ()
+...
+#9999 0x401210 in recursive ()  # 无限递归
+
+(gdb) info frame
+Stack level 9999, frame at 0x7fffff000000:  # 栈地址异常
+#+end_src
+
+*** Use-After-Free
+
+#+begin_src gdb
+(gdb) bt
+#0  0x401300 in access_freed_memory ()
+
+(gdb) x/10gx 0x555555758260  # 访问的地址
+0x555555758260: 0x0000000000000000  0x0000000000000000
+# 全是 0 或垃圾值，可能是 free 后的堆块
+#+end_src
+
+* 多线程调试
+
+** 线程切换
+
+#+begin_src gdb
+info threads           # 列出所有线程
+thread 3               # 切换到线程 3
+thread apply all bt    # 所有线程的调用栈
+thread apply all print errno  # 所有线程的变量值
+#+end_src
+
+** 线程锁定
+
+默认情况下，=continue= 会恢复所有线程:
+
+#+begin_src gdb
+set scheduler-locking on   # 只运行当前线程
+set scheduler-locking off  # 恢复所有线程
+set scheduler-locking step # 单步时只运行当前线程
+#+end_src
+
+** 死锁检测
+
+#+begin_src gdb
+(gdb) info threads
+  Id   Target Id         Frame
+* 1    Thread 0x7ffff7fc0740 (LWP 12345) pthread_mutex_lock () at mutex.c:80
+  2    Thread 0x7ffff6fbf700 (LWP 12346) pthread_mutex_lock () at mutex.c:80
+
+# 两个线程都在等待锁
+(gdb) thread 1
+(gdb) bt
+#0  pthread_mutex_lock () at mutex.c:80
+#1  0x401200 in func_a ()  # 持有锁 A, 等待锁 B
+
+(gdb) thread 2
+(gdb) bt
+#0  pthread_mutex_lock () at mutex.c:80
+#1  0x401300 in func_b ()  # 持有锁 B, 等待锁 A
+
+# 经典死锁
+#+end_src
+
+* Python 扩展: 让 GDB 更强大
+
+GDB 内嵌 Python 解释器，可以编写脚本自动化调试。
+
+** 自定义命令
+
+#+begin_src python
+# my_gdb.py
+import gdb
+
+class HelloCommand(gdb.Command):
+    """打印 Hello from GDB"""
+
+    def __init__(self):
+        super(HelloCommand, self).__init__("hello", gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        print("Hello from GDB! Arg: " + arg)
+
+HelloCommand()
+#+end_src
+
+加载:
+
+#+begin_src gdb
+(gdb) source my_gdb.py
+(gdb) hello world
+Hello from GDB! Arg: world
+#+end_src
+
+** 自动化内存检查
+
+#+begin_src python
+# check_heap.py
+import gdb
+
+class CheckHeap(gdb.Command):
+    """检查堆块是否合法"""
+
+    def __init__(self):
+        super(CheckHeap, self).__init__("check-heap", gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        addr = int(arg, 16)
+        # 读取堆块头部 (假设 glibc malloc)
+        size = gdb.parse_and_eval(f"*(unsigned long *)({addr} - 8)")
+        print(f"Heap chunk at {hex(addr)}, size: {size & ~7}")
+
+CheckHeap()
+#+end_src
+
+使用:
+
+#+begin_src gdb
+(gdb) source check_heap.py
+(gdb) check-heap 0x555555758260
+Heap chunk at 0x555555758260, size: 32
+#+end_src
+
+** Pretty Printer (美化输出)
+
+STL 容器的默认输出很丑:
+
+#+begin_src gdb
+(gdb) print my_vector
+$1 = {<std::_Vector_base<int, std::allocator<int> >> = {...}, ...}
+#+end_src
+
+使用 Python Pretty Printer:
+
+#+begin_src bash
+# 安装 GDB 的 STL printer (一般系统自带)
+ls /usr/share/gdb/auto-load/usr/lib/libstdc++.so.*-gdb.py
+
+# 如果没有, 手动加载
+wget https://github.com/gcc-mirror/gcc/raw/master/libstdc++-v3/python/libstdcxx/v6/printers.py
+#+end_src
+
+在 =~/.gdbinit= 中:
+
+#+begin_src gdb
+python
+import sys
+sys.path.insert(0, '/usr/share/gdb/auto-load')
+from libstdcxx.v6.printers import register_libstdcxx_printers
+register_libstdcxx_printers(None)
+end
+#+end_src
+
+效果:
+
+#+begin_src gdb
+(gdb) print my_vector
+$1 = std::vector of length 3, capacity 4 = {1, 2, 3}
+#+end_src
+
+* 常见陷阱与解决方案
+
+** 陷阱 1: 符号文件缺失
+
+#+begin_src gdb
+(gdb) bt
+#0  0x00007ffff7a05b97 in ?? ()
+#1  0x0000000000000000 in ?? ()
+#+end_src
+
+原因: 没有调试符号 (编译时未加 =-g=)。
+
+解决:
+
+#+begin_src bash
+# 重新编译
+gcc -g test.c -o test
+
+# 或单独生成符号文件
+objcopy --only-keep-debug test test.debug
+objcopy --strip-debug test
+objcopy --add-gnu-debuglink=test.debug test
+
+# GDB 自动加载 test.debug
+gdb ./test
+#+end_src
+
+** 陷阱 2: 源代码路径不匹配
+
+程序在 =/home/user/project/= 编译，但调试时在 =/tmp/=:
+
+#+begin_src gdb
+(gdb) list
+1   test.c: No such file or directory.
+#+end_src
+
+解决:
+
+#+begin_src gdb
+# 方法 1: 手动指定源码路径
+directory /home/user/project
+
+# 方法 2: 替换路径前缀
+set substitute-path /home/user/project /tmp/project
+#+end_src
+
+** 陷阱 3: 优化导致单步乱跳
+
+=-O2= 优化后，=next= 会跳到看似无关的行:
+
+#+begin_src gdb
+(gdb) next
+10      int x = foo();
+(gdb) next
+15      return bar();   # 跳过了 11-14 行？
+#+end_src
+
+原因: 编译器重排了指令顺序。
+
+解决: 用 =nexti= 单步执行汇编，或用 =-Og= 编译。
+
+** 陷阱 4: ASLR 导致地址变化
+
+地址空间随机化 (ASLR) 使得每次运行地址不同:
+
+#+begin_src bash
+$ ./program
+Stack at: 0x7ffd12345000
+
+$ ./program
+Stack at: 0x7ffe87654000  # 地址变了
+#+end_src
+
+调试时禁用 ASLR:
+
+#+begin_src gdb
+(gdb) set disable-randomization on
+#+end_src
+
+或系统级禁用:
+
+#+begin_src bash
+echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
+#+end_src
+
+** 陷阱 5: 监控大数组导致性能暴跌
+
+#+begin_src gdb
+watch big_array
+#+end_src
+
+GDB 会监控整个数组 (可能几 MB)，每次访问都触发断点 → *程序慢几百倍*。
+
+解决: 只监控特定元素:
+
+#+begin_src gdb
+watch big_array[100]
+#+end_src
+
+** 陷阱 6: 在信号处理函数中调试
+
+信号处理函数中设置断点会导致死锁:
+
+#+begin_src c
+void signal_handler(int sig) {
+    printf("Caught signal\n");  # 断点在这里
+}
+#+end_src
+
+原因: =printf= 可能调用 =malloc=，而 =malloc= 不可重入 (non-reentrant)。
+
+解决: 用 =handle= 命令忽略信号:
+
+#+begin_src gdb
+handle SIGSEGV nostop noprint
+#+end_src
+
+* 实战技巧总结
+
+** 快速定位 Segfault
+
+#+begin_src bash
+# 1. 启用 core dump
+ulimit -c unlimited
+
+# 2. 运行程序直到崩溃
+./program
+Segmentation fault (core dumped)
+
+# 3. 用 GDB 打开 core
+gdb ./program core
+
+# 4. 查看崩溃点
+(gdb) bt
+(gdb) info registers
+(gdb) x/i $rip
+#+end_src
+
+** 逆向工程闭源程序
+
+#+begin_src gdb
+# 即使没有源码, 也能分析
+gdb /bin/ls
+
+(gdb) break main
+(gdb) run
+(gdb) disas
+(gdb) x/20i $rip
+#+end_src
+
+** 调试 Rust 程序
+
+Rust 默认优化很激进:
+
+#+begin_src bash
+# 调试构建
+cargo build
+
+# 运行 GDB (Rust 自带 pretty printer)
+rust-gdb ./target/debug/my_program
+
+(gdb) break main
+(gdb) run
+(gdb) print my_vec
+$1 = Vec(size=3) = {1, 2, 3}  # 自动美化
+#+end_src
+
+** 嵌入式设备调试 (OpenOCD + GDB)
+
+#+begin_src bash
+# 启动 OpenOCD (连接 JTAG/SWD)
+openocd -f interface/stlink.cfg -f target/stm32f4x.cfg
+
+# 另一个终端启动 GDB
+arm-none-eabi-gdb firmware.elf
+
+(gdb) target extended-remote :3333
+(gdb) monitor reset halt
+(gdb) load  # 烧录固件
+(gdb) break main
+(gdb) continue
+#+end_src
+
+* 总结: GDB 不是魔法, 是工具
+
+GDB 的强大来自:
+
+1. *操作系统支持*: =ptrace= 系统调用
+2. *编译器配合*: DWARF 调试符号
+3. *硬件特性*: CPU 的调试寄存器 (=DR0~DR7=)
+4. *可扩展性*: Python 脚本
+
+学会 GDB 的本质是学会:
+
+- 理解程序的 *运行时状态* (寄存器、栈、堆)
+- 掌握 *内存布局* (ELF 格式、虚拟地址空间)
+- 熟悉 *汇编语言* (x86-64/ARM/RISC-V)
+
+不要只会 =print= 和 =backtrace=​，那只是 GDB 1% 的功能。
+
+真正的调试高手会:
+
+- 用 =x/i= 反汇编分析优化后的代码
+- 用 =watch= 定位内存踩踏
+- 用 Python 脚本自动化重复性任务
+- 在没有符号的情况下逆向分析二进制
+
+最后，记住这句话:
+
+*"如果你不知道 GDB 怎么实现的，你就不知道它的局限在哪里。"*
+
+去读一读 GDB 的源码吧 → [[https://sourceware.org/git/gitweb.cgi?p=binutils-gdb.git]]
