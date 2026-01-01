@@ -1,0 +1,657 @@
+#+title: Fourier and Laplace Transform
+#+author: SOV710
+#+date: <2025-12-28 Sun>
+
+* Fourier 变换
+
+** Fourier 级数回顾
+
+*** 周期函数的 Fourier 级数
+
+设 $f(t)$ 是周期为 $T$ 的函数, 在一个周期内满足 Dirichlet 条件, 则:
+
+$$f(t) = \frac{a_0}{2} + \sum_{n=1}^\infty \left(a_n \cos\frac{2\pi n t}{T} + b_n \sin\frac{2\pi n t}{T}\right)$$
+
+其中:
+$$a_n = \frac{2}{T} \int_{-T/2}^{T/2} f(t) \cos\frac{2\pi n t}{T} \, dt$$
+
+$$b_n = \frac{2}{T} \int_{-T/2}^{T/2} f(t) \sin\frac{2\pi n t}{T} \, dt$$
+
+*** 复数形式的 Fourier 级数
+
+设 $\omega_0 = \frac{2\pi}{T}$ (基频), 则:
+
+$$f(t) = \sum_{n=-\infty}^{+\infty} c_n e^{i n \omega_0 t}$$
+
+其中:
+$$c_n = \frac{1}{T} \int_{-T/2}^{T/2} f(t) e^{-i n \omega_0 t} \, dt$$
+
+*物理意义*: 将周期信号分解为不同频率的谐波分量
+
+** Fourier 变换的定义
+
+*** 从 Fourier 级数到 Fourier 变换
+
+当周期 $T \to \infty$ 时, 周期函数退化为非周期函数, Fourier 级数退化为 Fourier 积分
+
+*Fourier 变换* (正变换):
+
+$$F(\omega) = \mathcal{F}[f(t)] = \int_{-\infty}^{+\infty} f(t) e^{-i\omega t} \, dt$$
+
+*Fourier 逆变换*:
+
+$$f(t) = \mathcal{F}^{-1}[F(\omega)] = \frac{1}{2\pi} \int_{-\infty}^{+\infty} F(\omega) e^{i\omega t} \, d\omega$$
+
+*记号*:
+- $f(t)$: 时域函数
+- $F(\omega)$: 频域函数 (频谱)
+- $\omega$: 角频率 (单位: rad/s)
+
+*** 另一种形式 (使用频率 f)
+
+$$F(f) = \int_{-\infty}^{+\infty} f(t) e^{-i 2\pi f t} \, dt$$
+
+$$f(t) = \int_{-\infty}^{+\infty} F(f) e^{i 2\pi f t} \, df$$
+
+这种形式正逆变换对称, $\frac{1}{2\pi}$ 因子消失
+
+*** 存在条件
+
+Fourier 变换存在的充分条件:
+
+1. *绝对可积*: $\int_{-\infty}^{+\infty} |f(t)| \, dt < \infty$
+
+2. *Dirichlet 条件*:
+   - 在任何有限区间内, $f(t)$ 只有有限个间断点
+   - 在任何有限区间内, $f(t)$ 只有有限个极值点
+
+*注意*: 某些不满足绝对可积的函数 (如 $\sin t$, 常数) 可以用广义 Fourier 变换处理 (引入 Dirac delta 函数)
+
+** Fourier 变换的性质
+
+*** 线性性质
+
+$$\mathcal{F}[a f_1(t) + b f_2(t)] = a F_1(\omega) + b F_2(\omega)$$
+
+*** 时移性质
+
+$$\mathcal{F}[f(t - t_0)] = e^{-i\omega t_0} F(\omega)$$
+
+时域平移 $\Rightarrow$ 频域相位变化
+
+*** 频移性质
+
+$$\mathcal{F}[e^{i\omega_0 t} f(t)] = F(\omega - \omega_0)$$
+
+时域调制 $\Rightarrow$ 频域平移
+
+*** 尺度变换
+
+$$\mathcal{F}[f(at)] = \frac{1}{|a|} F\left(\frac{\omega}{a}\right)$$
+
+时域压缩 $\Rightarrow$ 频域展宽 (不确定性原理)
+
+*** 对称性
+
+若 $\mathcal{F}[f(t)] = F(\omega)$, 则:
+
+$$\mathcal{F}[F(t)] = 2\pi f(-\omega)$$
+
+*特殊情况*:
+- 若 $f(t)$ 为实偶函数, 则 $F(\omega)$ 也为实偶函数
+- 若 $f(t)$ 为实奇函数, 则 $F(\omega)$ 为纯虚奇函数
+
+*** 微分性质
+
+*时域微分*:
+
+$$\mathcal{F}[f^{(n)}(t)] = (i\omega)^n F(\omega)$$
+
+前提: $\lim_{t \to \pm\infty} f^{(k)}(t) = 0$ ($k = 0, 1, \ldots, n-1$)
+
+*频域微分*:
+
+$$\mathcal{F}[t^n f(t)] = i^n F^{(n)}(\omega)$$
+
+*** 积分性质
+
+$$\mathcal{F}\left[\int_{-\infty}^t f(\tau) \, d\tau\right] = \frac{F(\omega)}{i\omega} + \pi F(0) \delta(\omega)$$
+
+若 $F(0) = 0$ (即 $\int_{-\infty}^{+\infty} f(t) \, dt = 0$), 则:
+
+$$\mathcal{F}\left[\int_{-\infty}^t f(\tau) \, d\tau\right] = \frac{F(\omega)}{i\omega}$$
+
+*** 卷积定理
+
+*时域卷积*:
+
+$$(f_1 * f_2)(t) = \int_{-\infty}^{+\infty} f_1(\tau) f_2(t - \tau) \, d\tau$$
+
+$$\mathcal{F}[f_1 * f_2] = F_1(\omega) \cdot F_2(\omega)$$
+
+时域卷积 $\Leftrightarrow$ 频域乘积
+
+*频域卷积*:
+
+$$\mathcal{F}[f_1(t) \cdot f_2(t)] = \frac{1}{2\pi} F_1(\omega) * F_2(\omega)$$
+
+时域乘积 $\Leftrightarrow$ 频域卷积
+
+*** Parseval 定理 (能量守恒)
+
+$$\int_{-\infty}^{+\infty} |f(t)|^2 \, dt = \frac{1}{2\pi} \int_{-\infty}^{+\infty} |F(\omega)|^2 \, d\omega$$
+
+时域能量 = 频域能量
+
+** 常用 Fourier 变换对
+
+*** 基本函数
+
+1. *矩形脉冲*:
+   $$\text{rect}(t) = \begin{cases} 1 & |t| \leq \frac{1}{2} \\ 0 & |t| > \frac{1}{2} \end{cases}$$
+
+   $$\mathcal{F}[\text{rect}(t)] = \text{sinc}(\omega) = \frac{\sin(\omega/2)}{\omega/2}$$
+
+2. *三角脉冲*:
+   $$\Lambda(t) = \begin{cases} 1 - |t| & |t| \leq 1 \\ 0 & |t| > 1 \end{cases}$$
+
+   $$\mathcal{F}[\Lambda(t)] = \text{sinc}^2(\omega/2)$$
+
+3. *指数衰减*:
+   $$f(t) = e^{-a|t|} \quad (a > 0)$$
+
+   $$F(\omega) = \frac{2a}{a^2 + \omega^2}$$
+
+4. *单边指数*:
+   $$f(t) = \begin{cases} e^{-at} & t \geq 0 \\ 0 & t < 0 \end{cases} \quad (a > 0)$$
+
+   $$F(\omega) = \frac{1}{a + i\omega}$$
+
+5. *Gaussian 函数*:
+   $$f(t) = e^{-\frac{t^2}{2\sigma^2}}$$
+
+   $$F(\omega) = \sigma\sqrt{2\pi} e^{-\frac{\sigma^2 \omega^2}{2}}$$
+
+   Gaussian 的 Fourier 变换仍是 Gaussian!
+
+*** 广义函数
+
+6. *Dirac delta 函数*:
+   $$\mathcal{F}[\delta(t)] = 1$$
+
+   $$\mathcal{F}[1] = 2\pi \delta(\omega)$$
+
+7. *单位阶跃函数*:
+   $$u(t) = \begin{cases} 1 & t > 0 \\ 0 & t < 0 \end{cases}$$
+
+   $$\mathcal{F}[u(t)] = \pi\delta(\omega) + \frac{1}{i\omega}$$
+
+8. *符号函数*:
+   $$\text{sgn}(t) = \begin{cases} 1 & t > 0 \\ -1 & t < 0 \end{cases}$$
+
+   $$\mathcal{F}[\text{sgn}(t)] = \frac{2}{i\omega}$$
+
+9. *正弦/余弦*:
+   $$\mathcal{F}[\cos(\omega_0 t)] = \pi[\delta(\omega - \omega_0) + \delta(\omega + \omega_0)]$$
+
+   $$\mathcal{F}[\sin(\omega_0 t)] = i\pi[\delta(\omega + \omega_0) - \delta(\omega - \omega_0)]$$
+
+** Fourier 逆变换的计算
+
+*** 直接积分法
+
+$$f(t) = \frac{1}{2\pi} \int_{-\infty}^{+\infty} F(\omega) e^{i\omega t} \, d\omega$$
+
+*例*: 已知 $F(\omega) = \frac{1}{a + i\omega}$ ($a > 0$), 求 $f(t)$
+
+/解/: 利用留数定理
+
+- 当 $t > 0$: 在上半平面闭合, 极点 $\omega = ia$
+  $$f(t) = \frac{1}{2\pi} \cdot 2\pi i \cdot \text{Res}[F(\omega)e^{i\omega t}, ia] = e^{-at}$$
+
+- 当 $t < 0$: 在下半平面闭合, 无极点
+  $$f(t) = 0$$
+
+因此: $f(t) = e^{-at} u(t)$
+
+*** 查表法
+
+利用已知的 Fourier 变换对和性质
+
+*例*: 已知 $F(\omega) = \frac{2a}{a^2 + \omega^2}$, 求 $f(t)$
+
+/解/: 查表得 $\mathcal{F}[e^{-a|t|}] = \frac{2a}{a^2 + \omega^2}$
+
+因此: $f(t) = e^{-a|t|}$
+
+*** 部分分式分解 + 查表
+
+对有理函数 $F(\omega) = \frac{P(\omega)}{Q(\omega)}$, 先分解为部分分式, 再逐项查表
+
+** Fourier 变换的应用
+
+*** 微分方程求解
+
+*例*: 求解 $y'' + 4y = f(t)$, 其中 $f(t) = e^{-|t|}$
+
+/解/:
+
+1. 对方程两边取 Fourier 变换:
+   $$(i\omega)^2 Y(\omega) + 4Y(\omega) = F(\omega)$$
+
+   $$(-\omega^2 + 4)Y(\omega) = \frac{2}{1 + \omega^2}$$
+
+2. 解得:
+   $$Y(\omega) = \frac{2}{(4 - \omega^2)(1 + \omega^2)} = \frac{2}{(2-\omega)(2+\omega)(1+\omega^2)}$$
+
+3. 部分分式分解:
+   $$Y(\omega) = \frac{A}{2-\omega} + \frac{B}{2+\omega} + \frac{C\omega + D}{1+\omega^2}$$
+
+4. 逆变换得 $y(t)$
+
+*** 信号分析
+
+*频谱分析*: 通过 $|F(\omega)|$ 分析信号的频率成分
+
+*滤波*: 通过频域乘以滤波器传递函数 $H(\omega)$, 实现信号处理
+
+*能量/功率计算*: 利用 Parseval 定理
+
+*** 卷积快速计算
+
+时域卷积计算复杂度 $O(N^2)$, 通过 FFT (Fast Fourier Transform) 可降至 $O(N\log N)$:
+
+1. $F_1(\omega) = \mathcal{F}[f_1(t)]$
+2. $F_2(\omega) = \mathcal{F}[f_2(t)]$
+3. $Y(\omega) = F_1(\omega) \cdot F_2(\omega)$
+4. $y(t) = \mathcal{F}^{-1}[Y(\omega)]$
+
+* Laplace 变换
+
+** Laplace 变换的定义
+
+*** 单边 Laplace 变换
+
+*Laplace 变换* (正变换):
+
+$$F(s) = \mathcal{L}[f(t)] = \int_0^{\infty} f(t) e^{-st} \, dt$$
+
+其中 $s = \sigma + i\omega$ 为复变量
+
+*Laplace 逆变换*:
+
+$$f(t) = \mathcal{L}^{-1}[F(s)] = \frac{1}{2\pi i} \int_{\gamma - i\infty}^{\gamma + i\infty} F(s) e^{st} \, ds$$
+
+其中 $\gamma$ 为收敛横坐标
+
+*记号*:
+- $f(t)$: 时域函数 ($t \geq 0$)
+- $F(s)$: 复频域函数
+- $s$: 复频率
+
+*** 与 Fourier 变换的关系
+
+Laplace 变换可以看作是 Fourier 变换的推广:
+
+若令 $f(t) = 0$ ($t < 0$), 则:
+
+$$F(s) = \int_0^{\infty} f(t) e^{-(\sigma + i\omega)t} \, dt = \mathcal{F}[f(t) e^{-\sigma t}]\Big|_{\omega}$$
+
+当 $\sigma = 0$ 时, Laplace 变换退化为单边 Fourier 变换
+
+*** 存在条件与收敛域
+
+*收敛条件*: 存在 $\sigma_0$ 使得 $\int_0^{\infty} |f(t)| e^{-\sigma_0 t} \, dt < \infty$
+
+*收敛域* (ROC, Region of Convergence): $\text{Re}(s) > \sigma_c$
+
+- $\sigma_c$: 收敛横坐标
+- 对于因果信号 (仅在 $t \geq 0$ 时非零), 收敛域为右半平面
+
+*例*:
+- $f(t) = e^{at}$: 收敛域为 $\text{Re}(s) > a$
+- $f(t) = e^{-at}$ ($a > 0$): 收敛域为 $\text{Re}(s) > -a$
+
+** Laplace 变换的性质
+
+*** 线性性质
+
+$$\mathcal{L}[a f_1(t) + b f_2(t)] = a F_1(s) + b F_2(s)$$
+
+*** 时移性质
+
+$$\mathcal{L}[f(t - t_0) u(t - t_0)] = e^{-st_0} F(s)$$
+
+其中 $u(t)$ 为单位阶跃函数
+
+*** 频移性质
+
+$$\mathcal{L}[e^{at} f(t)] = F(s - a)$$
+
+复频域平移
+
+*** 尺度变换
+
+$$\mathcal{L}[f(at)] = \frac{1}{a} F\left(\frac{s}{a}\right) \quad (a > 0)$$
+
+*** 微分性质
+
+*时域微分*:
+
+$$\mathcal{L}[f'(t)] = sF(s) - f(0^-)$$
+
+$$\mathcal{L}[f''(t)] = s^2 F(s) - sf(0^-) - f'(0^-)$$
+
+一般地:
+$$\mathcal{L}[f^{(n)}(t)] = s^n F(s) - s^{n-1}f(0^-) - s^{n-2}f'(0^-) - \cdots - f^{(n-1)}(0^-)$$
+
+*频域微分*:
+
+$$\mathcal{L}[t f(t)] = -F'(s)$$
+
+$$\mathcal{L}[t^n f(t)] = (-1)^n F^{(n)}(s)$$
+
+*** 积分性质
+
+$$\mathcal{L}\left[\int_0^t f(\tau) \, d\tau\right] = \frac{F(s)}{s}$$
+
+*** 卷积定理
+
+*时域卷积*:
+
+$$(f_1 * f_2)(t) = \int_0^t f_1(\tau) f_2(t - \tau) \, d\tau$$
+
+$$\mathcal{L}[f_1 * f_2] = F_1(s) \cdot F_2(s)$$
+
+*注意*: 这里的卷积积分下限是 $0$, 不是 $-\infty$
+
+*** 初值定理
+
+若 $\lim_{t \to 0^+} f(t)$ 存在, 则:
+
+$$\lim_{t \to 0^+} f(t) = \lim_{s \to \infty} sF(s)$$
+
+*** 终值定理
+
+若 $\lim_{t \to \infty} f(t)$ 存在, 且 $sF(s)$ 的所有极点都在左半平面, 则:
+
+$$\lim_{t \to \infty} f(t) = \lim_{s \to 0} sF(s)$$
+
+*应用*: 快速求稳态值, 无需求逆变换
+
+** 常用 Laplace 变换对
+
+*** 基本函数
+
+1. *单位阶跃*:
+   $$\mathcal{L}[u(t)] = \frac{1}{s} \quad (\text{Re}(s) > 0)$$
+
+2. *单位冲激*:
+   $$\mathcal{L}[\delta(t)] = 1$$
+
+3. *幂函数*:
+   $$\mathcal{L}[t^n] = \frac{n!}{s^{n+1}} \quad (\text{Re}(s) > 0)$$
+
+4. *指数函数*:
+   $$\mathcal{L}[e^{at}] = \frac{1}{s - a} \quad (\text{Re}(s) > a)$$
+
+5. *正弦/余弦*:
+   $$\mathcal{L}[\sin(\omega t)] = \frac{\omega}{s^2 + \omega^2} \quad (\text{Re}(s) > 0)$$
+
+   $$\mathcal{L}[\cos(\omega t)] = \frac{s}{s^2 + \omega^2} \quad (\text{Re}(s) > 0)$$
+
+6. *衰减正弦/余弦*:
+   $$\mathcal{L}[e^{-at} \sin(\omega t)] = \frac{\omega}{(s + a)^2 + \omega^2}$$
+
+   $$\mathcal{L}[e^{-at} \cos(\omega t)] = \frac{s + a}{(s + a)^2 + \omega^2}$$
+
+7. *双曲函数*:
+   $$\mathcal{L}[\sinh(at)] = \frac{a}{s^2 - a^2} \quad (\text{Re}(s) > |a|)$$
+
+   $$\mathcal{L}[\cosh(at)] = \frac{s}{s^2 - a^2} \quad (\text{Re}(s) > |a|)$$
+
+*** 复合函数
+
+8. *延时指数*:
+   $$\mathcal{L}[e^{at} t^n] = \frac{n!}{(s - a)^{n+1}}$$
+
+9. *t 乘以正弦*:
+   $$\mathcal{L}[t \sin(\omega t)] = \frac{2\omega s}{(s^2 + \omega^2)^2}$$
+
+10. *t 乘以余弦*:
+    $$\mathcal{L}[t \cos(\omega t)] = \frac{s^2 - \omega^2}{(s^2 + \omega^2)^2}$$
+
+** Laplace 逆变换的计算
+
+*** 查表法
+
+最简单直接, 适用于简单函数
+
+*** 部分分式分解法
+
+*步骤*:
+
+1. 将 $F(s) = \frac{P(s)}{Q(s)}$ 分解为部分分式 (假设 $\deg P < \deg Q$)
+
+2. 对每一项查表或利用已知变换对
+
+*不同类型的极点*:
+
+*情况 1*: 单实极点 $s = a$
+
+$$\frac{A}{s - a} \overset{\mathcal{L}^{-1}}{\longrightarrow} A e^{at}$$
+
+其中 $A = \lim_{s \to a} (s - a)F(s)$
+
+*情况 2*: 重实极点 $s = a$ (重数 $m$)
+
+$$\frac{A_k}{(s - a)^k} \overset{\mathcal{L}^{-1}}{\longrightarrow} A_k \frac{t^{k-1}}{(k-1)!} e^{at}$$
+
+*情况 3*: 共轭复极点 $s = \alpha \pm i\beta$
+
+$$\frac{As + B}{(s - \alpha)^2 + \beta^2} \overset{\mathcal{L}^{-1}}{\longrightarrow} e^{\alpha t}[C\cos(\beta t) + D\sin(\beta t)]$$
+
+*例*: 求 $F(s) = \frac{s + 2}{s^2 + 3s + 2}$ 的逆变换
+
+/解/:
+
+1. 因式分解: $s^2 + 3s + 2 = (s + 1)(s + 2)$
+
+2. 部分分式:
+   $$F(s) = \frac{s + 2}{(s + 1)(s + 2)} = \frac{A}{s + 1} + \frac{B}{s + 2}$$
+
+3. 求系数:
+   - $A = \lim_{s \to -1} (s + 1)F(s) = \lim_{s \to -1} \frac{s + 2}{s + 2} = 1$
+   - $B = \lim_{s \to -2} (s + 2)F(s) = \lim_{s \to -2} \frac{s + 2}{s + 1} = 0$
+
+4. 逆变换:
+   $$f(t) = e^{-t}$$
+
+*** 留数法 (复变函数法)
+
+利用 Cauchy 留数定理计算逆变换积分:
+
+$$f(t) = \frac{1}{2\pi i} \int_{\gamma - i\infty}^{\gamma + i\infty} F(s) e^{st} \, ds = \sum_k \text{Res}[F(s)e^{st}, s_k]$$
+
+其中 $s_k$ 为 $F(s)$ 在左半平面的所有极点
+
+*步骤*:
+
+1. 找出 $F(s)$ 的所有极点
+2. 计算每个极点的留数
+3. 求和得到 $f(t)$
+
+*例*: 求 $F(s) = \frac{1}{s(s+1)}$ 的逆变换
+
+/解/:
+
+极点: $s_1 = 0$, $s_2 = -1$ (均为一阶极点)
+
+$$\text{Res}[F(s)e^{st}, 0] = \lim_{s \to 0} s \cdot \frac{e^{st}}{s(s+1)} = \frac{1}{1} = 1$$
+
+$$\text{Res}[F(s)e^{st}, -1] = \lim_{s \to -1} (s+1) \cdot \frac{e^{st}}{s(s+1)} = \frac{e^{-t}}{-1} = -e^{-t}$$
+
+$$f(t) = 1 - e^{-t} = (1 - e^{-t})u(t)$$
+
+*** 卷积法
+
+若 $F(s) = F_1(s) \cdot F_2(s)$, 且已知 $\mathcal{L}^{-1}[F_1] = f_1(t)$, $\mathcal{L}^{-1}[F_2] = f_2(t)$, 则:
+
+$$f(t) = (f_1 * f_2)(t) = \int_0^t f_1(\tau) f_2(t - \tau) \, d\tau$$
+
+** Laplace 变换的应用
+
+*** 微分方程求解
+
+*优势*: 将微分方程转化为代数方程, 自动处理初始条件
+
+*例*: 求解 $y'' + 3y' + 2y = e^{-t}$, $y(0) = 1$, $y'(0) = 0$
+
+/解/:
+
+1. 对方程两边取 Laplace 变换:
+   $$[s^2 Y(s) - sy(0) - y'(0)] + 3[sY(s) - y(0)] + 2Y(s) = \frac{1}{s + 1}$$
+
+2. 代入初值:
+   $$s^2 Y(s) - s + 3sY(s) - 3 + 2Y(s) = \frac{1}{s + 1}$$
+
+3. 整理:
+   $$(s^2 + 3s + 2)Y(s) = \frac{1}{s + 1} + s + 3$$
+
+4. 解得:
+   $$Y(s) = \frac{1}{(s+1)(s+1)(s+2)} + \frac{s + 3}{(s+1)(s+2)}$$
+
+5. 部分分式分解后逆变换得 $y(t)$
+
+*** 线性系统分析
+
+*传递函数*: $H(s) = \frac{Y(s)}{X(s)}$ (输出与输入的比值)
+
+*系统响应*:
+- *零状态响应*: 初始条件为零, 仅由输入引起
+- *零输入响应*: 输入为零, 仅由初始条件引起
+- *完全响应* = 零状态响应 + 零输入响应
+
+*稳定性判断*:
+- 系统稳定 $\iff$ 传递函数 $H(s)$ 的所有极点都在左半平面
+
+*脉冲响应*:
+$$h(t) = \mathcal{L}^{-1}[H(s)]$$
+
+*卷积关系*:
+$$y(t) = h(t) * x(t)$$
+
+*** 控制系统设计
+
+*PID 控制器*:
+
+$$u(t) = K_P e(t) + K_I \int_0^t e(\tau) d\tau + K_D \frac{de(t)}{dt}$$
+
+Laplace 变换:
+$$U(s) = \left(K_P + \frac{K_I}{s} + K_D s\right) E(s)$$
+
+传递函数:
+$$G_c(s) = K_P + \frac{K_I}{s} + K_D s$$
+
+*** 电路分析
+
+*阻抗*:
+- 电阻: $Z_R(s) = R$
+- 电感: $Z_L(s) = sL$
+- 电容: $Z_C(s) = \frac{1}{sC}$
+
+*例*: RLC 串联电路, 求电压响应
+
+电路方程: $L\frac{di}{dt} + Ri + \frac{1}{C}\int i \, dt = v(t)$
+
+Laplace 变换:
+$$LsI(s) + RI(s) + \frac{1}{Cs}I(s) = V(s)$$
+
+传递函数:
+$$H(s) = \frac{I(s)}{V(s)} = \frac{1}{Ls + R + \frac{1}{Cs}} = \frac{s}{Ls^2 + Rs + \frac{1}{C}}$$
+
+** Fourier 变换与 Laplace 变换的对比
+
+*** 相同点
+
+1. 都是积分变换, 将时域转换到频域
+2. 都有线性、时移、微分、积分、卷积等类似性质
+3. 都可用于求解微分方程和系统分析
+
+*** 不同点
+
+*定义域*:
+- Fourier: $t \in (-\infty, +\infty)$ (双边)
+- Laplace: $t \in [0, +\infty)$ (单边, 适合因果系统)
+
+*变换核*:
+- Fourier: $e^{-i\omega t}$ (纯虚指数)
+- Laplace: $e^{-st}$ (复指数, $s = \sigma + i\omega$)
+
+*适用范围*:
+- Fourier: 绝对可积函数
+- Laplace: 指数阶函数 (更广)
+
+*物理意义*:
+- Fourier: 频率分析, 稳态响应
+- Laplace: 瞬态分析, 包含初始条件
+
+*收敛性*:
+- Fourier: 对不收敛函数需要广义化 (如常数)
+- Laplace: 通过 $e^{-\sigma t}$ 衰减因子, 更易收敛
+
+*应用场景*:
+- Fourier: 信号处理、频谱分析、通信系统
+- Laplace: 控制系统、电路分析、瞬态响应
+
+*** 相互转换
+
+在收敛域 $\text{Re}(s) = 0$ (即虚轴上), 若 Laplace 变换存在:
+
+$$F(i\omega) = F(s)\Big|_{s = i\omega} = \mathcal{F}[f(t)u(t)]$$
+
+** 双边 Laplace 变换
+
+*** 定义
+
+$$F(s) = \int_{-\infty}^{+\infty} f(t) e^{-st} \, dt$$
+
+积分范围扩展到 $(-\infty, +\infty)$
+
+*** 收敛域
+
+双边 Laplace 变换的收敛域为竖直带状区域: $\sigma_1 < \text{Re}(s) < \sigma_2$
+
+*例*:
+$$f(t) = \begin{cases} e^{2t} & t < 0 \\ e^{-3t} & t \geq 0 \end{cases}$$
+
+收敛域: $-2 < \text{Re}(s) < 3$
+
+*** 与 Fourier 变换的关系
+
+当收敛域包含虚轴时, 双边 Laplace 变换在 $s = i\omega$ 处退化为 Fourier 变换
+
+** 计算技巧总结
+
+*** Laplace 变换计算
+
+1. *直接积分*: 适用于简单函数, 利用分部积分或换元
+2. *查表*: 最常用方法
+3. *性质法*: 利用时移、频移、微分、积分等性质
+4. *卷积定理*: 将复杂函数分解为简单函数的卷积
+
+*** Laplace 逆变换计算
+
+1. *查表*: 第一选择
+2. *部分分式*: 处理有理函数, 最重要方法
+3. *留数法*: 适用于复杂极点
+4. *卷积法*: 分解为已知变换的乘积
+
+*** 常见陷阱
+
+1. ✗ 忘记初始条件 (微分性质)
+2. ✗ 收敛域判断错误
+3. ✗ 部分分式分解系数计算错误
+4. ✗ 终值定理使用条件不满足
+5. ✗ Fourier 与 Laplace 混淆
+

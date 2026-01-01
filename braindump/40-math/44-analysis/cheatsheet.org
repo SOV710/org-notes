@@ -1,0 +1,387 @@
+#+title: Calculus and Complex Analysis Quick Reference
+#+author: SOV710
+#+date: 2025-12-27
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 基本导数公式
+
+** 幂函数与指数
+
+- $(x^n)' = n x^{n-1}$
+- $(e^x)' = e^x$
+- $(a^x)' = a^x \ln a$
+- $(e^{kx})' = k e^{kx}$
+
+** 对数函数
+
+- $(\ln x)' = \frac{1}{x}$
+- $(\log_a x)' = \frac{1}{x \ln a}$
+- $(\ln |x|)' = \frac{1}{x}$
+
+** 三角函数
+
+- $(\sin x)' = \cos x$
+- $(\cos x)' = -\sin x$
+- $(\tan x)' = \sec^2 x = \frac{1}{\cos^2 x}$
+- $(\cot x)' = -\csc^2 x = -\frac{1}{\sin^2 x}$
+- $(\sec x)' = \sec x \tan x$
+- $(\csc x)' = -\csc x \cot x$
+
+** 反三角函数
+
+- $(\arcsin x)' = \frac{1}{\sqrt{1-x^2}}$, 定义域: $|x| < 1$
+- $(\arccos x)' = -\frac{1}{\sqrt{1-x^2}}$, 定义域: $|x| < 1$
+- $(\arctan x)' = \frac{1}{1+x^2}$
+- $(\text{arccot}\, x)' = -\frac{1}{1+x^2}$
+
+** 双曲函数
+
+- $(\sinh x)' = \cosh x$
+- $(\cosh x)' = \sinh x$
+- $(\tanh x)' = \text{sech}^2 x = \frac{1}{\cosh^2 x}$
+- $(\coth x)' = -\text{csch}^2 x$
+
+** 反双曲函数
+
+- $(\text{arsinh}\, x)' = \frac{1}{\sqrt{x^2+1}}$
+- $(\text{arcosh}\, x)' = \frac{1}{\sqrt{x^2-1}}$, $x > 1$
+- $(\text{artanh}\, x)' = \frac{1}{1-x^2}$, $|x| < 1$
+
+** 复合函数链式法则
+
+- $(f(g(x)))' = f'(g(x)) \cdot g'(x)$
+- $\frac{d}{dx} f(u) = \frac{df}{du} \cdot \frac{du}{dx}$
+
+** 乘积与商法则
+
+- $(uv)' = u'v + uv'$
+- $\left(\frac{u}{v}\right)' = \frac{u'v - uv'}{v^2}$
+
+* 基本积分公式
+
+** 幂函数
+
+- $\int x^n \, dx = \frac{x^{n+1}}{n+1} + C$, $n \neq -1$
+- $\int \frac{1}{x} \, dx = \ln |x| + C$
+- $\int \frac{1}{x^2} \, dx = -\frac{1}{x} + C$
+- $\int \sqrt{x} \, dx = \frac{2}{3} x^{3/2} + C$
+
+** 指数函数
+
+- $\int e^x \, dx = e^x + C$
+- $\int a^x \, dx = \frac{a^x}{\ln a} + C$
+- $\int e^{kx} \, dx = \frac{1}{k} e^{kx} + C$
+
+** 三角函数
+
+- $\int \sin x \, dx = -\cos x + C$
+- $\int \cos x \, dx = \sin x + C$
+- $\int \tan x \, dx = -\ln |\cos x| + C = \ln |\sec x| + C$
+- $\int \cot x \, dx = \ln |\sin x| + C$
+- $\int \sec x \, dx = \ln |\sec x + \tan x| + C$
+- $\int \csc x \, dx = \ln |\csc x - \cot x| + C$
+- $\int \sec^2 x \, dx = \tan x + C$
+- $\int \csc^2 x \, dx = -\cot x + C$
+- $\int \sec x \tan x \, dx = \sec x + C$
+- $\int \csc x \cot x \, dx = -\csc x + C$
+
+** 反三角函数
+
+- $\int \frac{1}{\sqrt{1-x^2}} \, dx = \arcsin x + C$
+- $\int \frac{1}{1+x^2} \, dx = \arctan x + C$
+- $\int \frac{1}{x\sqrt{x^2-1}} \, dx = \text{arcsec}\, x + C$, $x > 1$
+
+** 双曲函数
+
+- $\int \sinh x \, dx = \cosh x + C$
+- $\int \cosh x \, dx = \sinh x + C$
+- $\int \tanh x \, dx = \ln(\cosh x) + C$
+- $\int \text{sech}^2 x \, dx = \tanh x + C$
+
+** 有理函数
+
+- $\int \frac{1}{x^2 + a^2} \, dx = \frac{1}{a} \arctan \frac{x}{a} + C$
+- $\int \frac{1}{x^2 - a^2} \, dx = \frac{1}{2a} \ln \left|\frac{x-a}{x+a}\right| + C$
+- $\int \frac{1}{\sqrt{a^2 - x^2}} \, dx = \arcsin \frac{x}{a} + C$
+- $\int \frac{1}{\sqrt{x^2 + a^2}} \, dx = \ln \left|x + \sqrt{x^2 + a^2}\right| + C = \text{arsinh}\, \frac{x}{a} + C$
+- $\int \frac{1}{\sqrt{x^2 - a^2}} \, dx = \ln \left|x + \sqrt{x^2 - a^2}\right| + C$, $x > a > 0$
+
+** 分部积分
+
+$$\int u \, dv = uv - \int v \, du$$
+
+常用顺序 (LIATE):
+1. Logarithmic (对数)
+2. Inverse trig (反三角)
+3. Algebraic (代数)
+4. Trigonometric (三角)
+5. Exponential (指数)
+
+** 常用分部积分结果
+
+- $\int x e^x \, dx = (x-1) e^x + C$
+- $\int x^2 e^x \, dx = (x^2 - 2x + 2) e^x + C$
+- $\int x \sin x \, dx = -x \cos x + \sin x + C$
+- $\int x \cos x \, dx = x \sin x + \cos x + C$
+- $\int \ln x \, dx = x \ln x - x + C$
+- $\int \arctan x \, dx = x \arctan x - \frac{1}{2} \ln(1+x^2) + C$
+
+* 常见函数的泰勒级数展开
+
+所有展开在 $x = 0$ 处 (Maclaurin series), 收敛半径标注在后。
+
+** 指数与对数
+
+*指数函数*
+
+$$e^x = \sum_{n=0}^{\infty} \frac{x^n}{n!} = 1 + x + \frac{x^2}{2!} + \frac{x^3}{3!} + \cdots$$
+
+收敛半径: $R = \infty$
+
+*自然对数*
+
+$$\ln(1+x) = \sum_{n=1}^{\infty} \frac{(-1)^{n+1}}{n} x^n = x - \frac{x^2}{2} + \frac{x^3}{3} - \frac{x^4}{4} + \cdots$$
+
+收敛半径: $R = 1$, 对 $|x| \leq 1$ 且 $x \neq -1$ 收敛
+
+$$\ln(1-x) = -\sum_{n=1}^{\infty} \frac{x^n}{n} = -x - \frac{x^2}{2} - \frac{x^3}{3} - \cdots$$
+
+收敛半径: $R = 1$
+
+** 三角函数
+
+*正弦*
+
+$$\sin x = \sum_{n=0}^{\infty} \frac{(-1)^n}{(2n+1)!} x^{2n+1} = x - \frac{x^3}{3!} + \frac{x^5}{5!} - \frac{x^7}{7!} + \cdots$$
+
+收敛半径: $R = \infty$
+
+*余弦*
+
+$$\cos x = \sum_{n=0}^{\infty} \frac{(-1)^n}{(2n)!} x^{2n} = 1 - \frac{x^2}{2!} + \frac{x^4}{4!} - \frac{x^6}{6!} + \cdots$$
+
+收敛半径: $R = \infty$
+
+*正切*
+
+$$\tan x = x + \frac{x^3}{3} + \frac{2x^5}{15} + \frac{17x^7}{315} + \cdots$$
+
+收敛半径: $R = \frac{\pi}{2}$
+
+** 反三角函数
+
+*反正弦*
+
+$$\arcsin x = \sum_{n=0}^{\infty} \frac{(2n)!}{4^n (n!)^2 (2n+1)} x^{2n+1} = x + \frac{x^3}{6} + \frac{3x^5}{40} + \frac{5x^7}{112} + \cdots$$
+
+收敛半径: $R = 1$
+
+*反正切*
+
+$$\arctan x = \sum_{n=0}^{\infty} \frac{(-1)^n}{2n+1} x^{2n+1} = x - \frac{x^3}{3} + \frac{x^5}{5} - \frac{x^7}{7} + \cdots$$
+
+收敛半径: $R = 1$, 对 $|x| \leq 1$ 收敛
+
+** 双曲函数
+
+*双曲正弦*
+
+$$\sinh x = \sum_{n=0}^{\infty} \frac{x^{2n+1}}{(2n+1)!} = x + \frac{x^3}{3!} + \frac{x^5}{5!} + \cdots$$
+
+收敛半径: $R = \infty$
+
+*双曲余弦*
+
+$$\cosh x = \sum_{n=0}^{\infty} \frac{x^{2n}}{(2n)!} = 1 + \frac{x^2}{2!} + \frac{x^4}{4!} + \cdots$$
+
+收敛半径: $R = \infty$
+
+** 二项式级数
+
+$$(1+x)^{\alpha} = \sum_{n=0}^{\infty} \binom{\alpha}{n} x^n = 1 + \alpha x + \frac{\alpha(\alpha-1)}{2!} x^2 + \cdots$$
+
+其中 $\binom{\alpha}{n} = \frac{\alpha(\alpha-1)\cdots(\alpha-n+1)}{n!}$
+
+收敛半径: $R = 1$ (对 $\alpha \notin \mathbb{N}$)
+
+特例:
+
+- $(1+x)^{-1} = 1 - x + x^2 - x^3 + \cdots$, $|x| < 1$
+- $(1-x)^{-1} = 1 + x + x^2 + x^3 + \cdots$, $|x| < 1$
+- $(1+x)^{-2} = 1 - 2x + 3x^2 - 4x^3 + \cdots$, $|x| < 1$
+- $\frac{1}{\sqrt{1-x^2}} = 1 + \frac{x^2}{2} + \frac{3x^4}{8} + \frac{5x^6}{16} + \cdots$, $|x| < 1$
+
+** 其他常用展开
+
+*误差函数相关*
+
+$$\text{erf}(x) = \frac{2}{\sqrt{\pi}} \sum_{n=0}^{\infty} \frac{(-1)^n x^{2n+1}}{n!(2n+1)}$$
+
+*Bessel 函数 (第一类零阶)*
+
+$$J_0(x) = \sum_{n=0}^{\infty} \frac{(-1)^n}{(n!)^2} \left(\frac{x}{2}\right)^{2n}$$
+
+* Cauchy 积分公式
+
+设 $f(z)$ 在简单闭曲线 $C$ 内部及 $C$ 上解析, $z_0$ 是 $C$ 内部一点, 则:
+
+** 基本形式
+
+$$f(z_0) = \frac{1}{2\pi i} \oint_C \frac{f(z)}{z - z_0} \, dz$$
+
+这里 $C$ 为正向 (逆时针) 闭曲线。
+
+** 几何意义
+
+函数在区域内一点的值完全由边界上的值决定——这是解析函数的刚性 (rigidity)。
+
+** 推广: 平均值性质
+
+若 $f$ 在 $|z - z_0| \leq r$ 上解析, 则:
+
+$$f(z_0) = \frac{1}{2\pi} \int_0^{2\pi} f(z_0 + r e^{i\theta}) \, d\theta$$
+
+即: 解析函数在圆心的值等于圆周上的平均值。
+
+** 应用: 计算复围道积分
+
+如果 $f(z)$ 在 $C$ 内只有一个奇点 $z_0$, 且在 $z_0$ 附近可写为:
+
+$$f(z) = \frac{g(z)}{z - z_0}$$
+
+其中 $g(z)$ 在 $C$ 内解析, 则:
+
+$$\oint_C f(z) \, dz = 2\pi i \, g(z_0)$$
+
+* Cauchy 导数公式 (高阶导数公式)
+
+设 $f(z)$ 在 $C$ 内部及 $C$ 上解析, $z_0$ 在 $C$ 内部, 则 $f$ 的 $n$ 阶导数为:
+
+** 公式
+
+$$f^{(n)}(z_0) = \frac{n!}{2\pi i} \oint_C \frac{f(z)}{(z-z_0)^{n+1}} \, dz$$
+
+** 特例
+
+- $n=1$: $f'(z_0) = \frac{1}{2\pi i} \oint_C \frac{f(z)}{(z-z_0)^2} \, dz$
+- $n=2$: $f''(z_0) = \frac{2!}{2\pi i} \oint_C \frac{f(z)}{(z-z_0)^3} \, dz$
+
+** 重要推论
+
+*** Liouville 定理
+
+若 $f(z)$ 在全平面解析且有界, 则 $f(z)$ 为常数。
+
+*证明思路*: 用 Cauchy 导数公式, 对任意大的圆 $|z| = R$, 有:
+
+$$|f'(z_0)| \leq \frac{M}{R} \to 0 \quad (R \to \infty)$$
+
+其中 $M$ 是 $|f(z)|$ 的上界。因此 $f'(z) \equiv 0$, 故 $f$ 为常数。
+
+*** 代数基本定理
+
+每个非常数多项式在 $\mathbb{C}$ 上至少有一个根。
+
+*证明*: 反证法, 若 $p(z) \neq 0$ 恒成立, 则 $1/p(z)$ 有界且全纯, 由 Liouville 定理知 $1/p(z)$ 为常数, 矛盾。
+
+** 解析函数的无穷可微性
+
+Cauchy 导数公式表明: *解析函数在其解析域内具有任意阶导数*, 这与实函数不同 (实可微不保证高阶可微)。
+
+* 留数定理 (Residue Theorem)
+
+设 $f(z)$ 在简单闭曲线 $C$ 内除有限个孤立奇点 $z_1, z_2, \ldots, z_n$ 外处处解析, 则:
+
+$$\oint_C f(z) \, dz = 2\pi i \sum_{k=1}^{n} \text{Res}(f, z_k)$$
+
+其中 $\text{Res}(f, z_k)$ 是 $f$ 在 $z_k$ 处的留数 (residue)。
+
+** 留数的计算
+
+*** 简单极点 (一阶极点)
+
+若 $z_0$ 是 $f(z)$ 的简单极点, 即:
+
+$$f(z) = \frac{g(z)}{z - z_0}$$
+
+其中 $g(z)$ 在 $z_0$ 解析且 $g(z_0) \neq 0$, 则:
+
+$$\text{Res}(f, z_0) = \lim_{z \to z_0} (z - z_0) f(z) = g(z_0)$$
+
+*** $m$ 阶极点
+
+若 $z_0$ 是 $m$ 阶极点, 则:
+
+$$\text{Res}(f, z_0) = \frac{1}{(m-1)!} \lim_{z \to z_0} \frac{d^{m-1}}{dz^{m-1}} \left[ (z-z_0)^m f(z) \right]$$
+
+*** Laurent 级数方法
+
+将 $f(z)$ 在 $z_0$ 附近展开为 Laurent 级数:
+
+$$f(z) = \sum_{n=-\infty}^{\infty} a_n (z - z_0)^n$$
+
+则 $\text{Res}(f, z_0) = a_{-1}$ (即 $(z-z_0)^{-1}$ 的系数)。
+
+** 应用: 计算实积分
+
+*** 三角函数有理式积分
+
+对于 $\int_0^{2\pi} R(\cos\theta, \sin\theta) \, d\theta$, 令 $z = e^{i\theta}$, 则:
+
+$$\cos\theta = \frac{z + z^{-1}}{2}, \quad \sin\theta = \frac{z - z^{-1}}{2i}, \quad d\theta = \frac{dz}{iz}$$
+
+原积分化为:
+
+$$\oint_{|z|=1} R\left(\frac{z+z^{-1}}{2}, \frac{z-z^{-1}}{2i}\right) \frac{dz}{iz}$$
+
+用留数定理计算。
+
+*** 实轴积分 (improper integrals)
+
+对于 $\int_{-\infty}^{\infty} f(x) \, dx$, 可选择上半平面的半圆围道, 利用:
+
+$$\int_{-R}^{R} f(x) \, dx + \int_{C_R} f(z) \, dz = 2\pi i \sum \text{Res}(f, z_k)$$
+
+当 $R \to \infty$ 时, 若 $\int_{C_R} f(z) \, dz \to 0$ (Jordan 引理), 则:
+
+$$\int_{-\infty}^{\infty} f(x) \, dx = 2\pi i \sum_{z_k \in \text{upper half-plane}} \text{Res}(f, z_k)$$
+
+* 常用技巧与注意事项
+
+** 泰勒级数的唯一性
+
+若 $f(z)$ 在 $z_0$ 处解析, 则其泰勒级数展开是唯一的。因此可以通过已知级数的变换来求新级数。
+
+例: 已知 $e^x = \sum \frac{x^n}{n!}$, 则:
+
+$$e^{-x^2} = \sum_{n=0}^{\infty} \frac{(-1)^n x^{2n}}{n!}$$
+
+** 解析延拓
+
+某些函数的泰勒级数在收敛半径外仍能定义函数值 (解析延拓)。
+
+例: $\frac{1}{1-x}$ 的级数 $\sum x^n$ 只在 $|x| < 1$ 收敛, 但函数本身在 $x \neq 1$ 处都有定义。
+
+** Cauchy 不等式
+
+由 Cauchy 导数公式可得:
+
+$$|f^{(n)}(z_0)| \leq \frac{n! M}{r^n}$$
+
+其中 $M = \max_{|z-z_0|=r} |f(z)|$。
+
+这对估计导数上界很有用。
+
+** 留数计算的陷阱
+
+- 确保围道内只有孤立奇点 (不能有支点或本质奇点的积累点)
+- 注意围道方向 (逆时针为正向)
+- 计算高阶极点留数时注意求导运算
+
+** 实际应用中的选择
+
+- *求导*: 直接用导数公式
+- *求积分*: 优先查表, 无法查表时用分部积分或换元
+- *级数展开*: 先查已知展开, 再通过代数运算、求导、积分得到新展开
+- *复积分*: 能用 Cauchy 公式直接算就用, 否则用留数定理

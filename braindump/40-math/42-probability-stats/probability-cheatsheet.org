@@ -1,0 +1,784 @@
+#+title: Probability Theory Cheatsheet: Core Concepts and Common Pitfalls
+#+author: SOV710
+#+date: <2025-12-27 Sat>
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 概率论的三层认知
+
+概率论不是 "算概率"，而是 *用数学语言描述不确定性* 的工具。
+
+** 第一层: 频率主义 (Frequentist)
+
+"概率是长期频率的极限"。
+
+抛硬币，正面朝上的概率是 0.5，意思是:
+
+$$\lim_{n \to \infty} \frac{\text{正面次数}}{n} = 0.5$$
+
+这是 *经验定义*，适合可重复的随机实验。
+
+** 第二层: 公理化 (Axiomatic)
+
+Kolmogorov 在 1933 年把概率论建立在 *测度论* 基础上，概率不再依赖 "频率" 解释，而是满足三条公理的 *集合函数*​。
+
+这让概率论成为严格的数学分支，可以处理 "不可重复" 的事件 (如 "明天下雨的概率")。
+
+** 第三层: 贝叶斯主义 (Bayesian)
+
+"概率是信念的度量"。
+
+$P(\text{明天下雨}) = 0.7$ 意思是: *根据我现在的信息*，我对 "明天下雨" 这件事的确信程度是 70%。
+
+新信息出现后，用 *贝叶斯公式* 更新信念。
+
+*本 cheatsheet 主要基于公理化框架，但会指出贝叶斯观点的应用。*
+
+* 样本空间与事件
+
+** 样本空间 $\Omega$ (Sample Space)
+
+*所有可能结果的集合*。
+
+- 抛一次硬币: $\Omega = \{\text{正}, \text{反}\}$
+- 抛两次硬币: $\Omega = \{\text{正正}, \text{正反}, \text{反正}, \text{反反}\}$
+- 抛无限次硬币: $\Omega = \{0,1\}^\infty$ (无限序列)
+- 等公交车的时间: $\Omega = [0, \infty)$
+
+*关键*: $\Omega$ 必须 *互斥且完备* (mutually exclusive and collectively exhaustive):
+
+- *互斥*: 每次实验只发生一个结果
+- *完备*: 所有可能结果都在里面
+
+** 事件 $A$ (Event)
+
+*样本空间的子集*。
+
+- $A = \{\text{正正}, \text{正反}\}$ = "第一次是正面"
+- $B = \{\text{正正}\}$ = "两次都是正面"
+- $\Omega$ 本身 = *必然事件*
+- $\emptyset$ = *不可能事件*
+
+*** 事件的运算
+
+- *并* $A \cup B$: $A$ 或 $B$ 发生
+- *交* $A \cap B$ (也写作 $AB$): $A$ 和 $B$ 都发生
+- *补* $A^c$ 或 $\overline{A}$: $A$ 不发生
+- *差* $A \setminus B = A \cap B^c$: $A$ 发生但 $B$ 不发生
+
+*** De Morgan 律 (必须记住)
+
+$$\overline{A \cup B} = \overline{A} \cap \overline{B}$$
+$$\overline{A \cap B} = \overline{A} \cup \overline{B}$$
+
+大白话: "非 (A 或 B)" = "非 A 且非 B"
+
+** 事件域 $\mathcal{F}$ (Sigma-algebra)
+
+*并非所有子集都是 "合法事件"*！
+
+在测度论框架下，事件必须属于一个 *$\sigma$-代数* $\mathcal{F}$，满足:
+
+1. $\Omega \in \mathcal{F}$
+2. 若 $A \in \mathcal{F}$，则 $A^c \in \mathcal{F}$
+3. 若 $A_1, A_2, \ldots \in \mathcal{F}$，则 $\bigcup_{i=1}^\infty A_i \in \mathcal{F}$
+
+*为什么要这么麻烦？*
+
+因为连续样本空间 (如 $[0,1]$) 的某些子集 *无法定义概率*！
+
+例如: Vitali 集 (不可测集) 无法赋予一致的概率值。
+
+*实际应用*: 大多数时候用 *Borel $\sigma$-代数* $\mathcal{B}(\mathbb{R})$ (所有开区间的 $\sigma$-代数)，不用担心不可测集。
+
+* 概率的公理化定义
+
+** Kolmogorov 三公理
+
+给定 $(\Omega, \mathcal{F})$，概率是函数 $P: \mathcal{F} \to [0,1]$，满足:
+
+*公理 1 (非负性)*: $P(A) \geq 0$ 对所有 $A \in \mathcal{F}$
+
+*公理 2 (规范性)*: $P(\Omega) = 1$
+
+*公理 3 (可列可加性)*: 若 $A_1, A_2, \ldots$ *两两不交* (即 $A_i \cap A_j = \emptyset$ 当 $i \neq j$)，则
+
+$$P\left(\bigcup_{i=1}^\infty A_i\right) = \sum_{i=1}^\infty P(A_i)$$
+
+*就这三条！* 所有概率性质都从这里推导。
+
+** 推论 (必须熟练)
+
+*** 补集概率
+
+$$P(A^c) = 1 - P(A)$$
+
+*** 单调性
+
+若 $A \subseteq B$，则 $P(A) \leq P(B)$
+
+*** 容斥原理 (Inclusion-Exclusion)
+
+$$P(A \cup B) = P(A) + P(B) - P(A \cap B)$$
+
+三个事件:
+
+$$P(A \cup B \cup C) = P(A) + P(B) + P(C) - P(AB) - P(AC) - P(BC) + P(ABC)$$
+
+*常见错误*: 忘记减去交集！
+
+*** 次可加性 (Subadditivity)
+
+即使 $A_1, A_2, \ldots$ *不*不交:
+
+$$P\left(\bigcup_{i=1}^\infty A_i\right) \leq \sum_{i=1}^\infty P(A_i)$$
+
+*应用*: Union Bound，用于估计 "至少一个事件发生" 的概率上界。
+
+* 条件概率
+
+** 定义
+
+给定 $P(B) > 0$，*在 $B$ 发生条件下 $A$ 发生的概率*:
+
+$$P(A \mid B) = \frac{P(A \cap B)}{P(B)}$$
+
+*直觉*: 已知 $B$ 发生，样本空间 *缩小* 到 $B$，$A$ 在新空间中占的比例。
+
+** 乘法公式
+
+$$P(A \cap B) = P(A \mid B) \cdot P(B) = P(B \mid A) \cdot P(A)$$
+
+推广:
+
+$$P(A_1 A_2 \cdots A_n) = P(A_1) \cdot P(A_2 \mid A_1) \cdot P(A_3 \mid A_1 A_2) \cdots P(A_n \mid A_1 \cdots A_{n-1})$$
+
+** 全概率公式 (Law of Total Probability)
+
+若 $B_1, B_2, \ldots, B_n$ *两两不交* 且 $\bigcup_{i=1}^n B_i = \Omega$ (即 *划分* 样本空间)，则:
+
+$$P(A) = \sum_{i=1}^n P(A \mid B_i) \cdot P(B_i)$$
+
+*直觉*: 把 $A$ 按照 "哪个 $B_i$ 发生" 分类讨论。
+
+*示例*:
+
+- $B_1$ = 袋子里有 3 红 2 白
+- $B_2$ = 袋子里有 2 红 3 白
+- $P(B_1) = P(B_2) = 0.5$
+- 问: 抽到红球的概率？
+
+$$P(\text{红}) = P(\text{红} \mid B_1) P(B_1) + P(\text{红} \mid B_2) P(B_2) = \frac{3}{5} \cdot 0.5 + \frac{2}{5} \cdot 0.5 = 0.5$$
+
+** 贝叶斯定理 (Bayes' Theorem)
+
+*概率论的核心公式*:
+
+$$P(B \mid A) = \frac{P(A \mid B) \cdot P(B)}{P(A)}$$
+
+结合全概率公式:
+
+$$P(B_i \mid A) = \frac{P(A \mid B_i) \cdot P(B_i)}{\sum_{j=1}^n P(A \mid B_j) \cdot P(B_j)}$$
+
+*术语*:
+
+- $P(B_i)$: *先验概率* (Prior) — 观测 $A$ 之前对 $B_i$ 的信念
+- $P(A \mid B_i)$: *似然* (Likelihood) — 在 $B_i$ 下观测到 $A$ 的概率
+- $P(B_i \mid A)$: *后验概率* (Posterior) — 观测 $A$ 之后对 $B_i$ 的更新信念
+
+*经典例子: 疾病检测*
+
+- 患病率 $P(D) = 0.001$ (千分之一)
+- 检测灵敏度 $P(+ \mid D) = 0.99$ (有病测出阳性)
+- 特异性 $P(- \mid D^c) = 0.95$ (没病测出阴性)
+- 问: 测出阳性，真的有病的概率？
+
+$$P(D \mid +) = \frac{P(+ \mid D) \cdot P(D)}{P(+ \mid D) \cdot P(D) + P(+ \mid D^c) \cdot P(D^c)}$$
+
+$$= \frac{0.99 \times 0.001}{0.99 \times 0.001 + 0.05 \times 0.999} = \frac{0.00099}{0.05094} \approx 0.019$$
+
+*只有 1.9%！* 因为先验概率太低，假阳性 (false positive) 占主导。
+
+*常见错误*: 把 $P(+ \mid D)$ 当成 $P(D \mid +)$，这叫 *检察官谬误* (Prosecutor's Fallacy)。
+
+* 独立性
+
+** 事件独立
+
+事件 $A$ 和 $B$ *独立* (independent)，记作 $A \perp B$，当且仅当:
+
+$$P(A \cap B) = P(A) \cdot P(B)$$
+
+*等价条件* (假设 $P(B) > 0$):
+
+$$P(A \mid B) = P(A)$$
+
+*直觉*: "$B$ 是否发生" 不改变 "$A$ 发生" 的概率。
+
+** 独立 vs. 不相交
+
+*这是两个完全不同的概念！*
+
+- *不相交* (disjoint): $A \cap B = \emptyset$ → $P(A \cap B) = 0$
+- *独立*: $P(A \cap B) = P(A) \cdot P(B)$
+
+*如果 $A$ 和 $B$ 不相交且 $P(A), P(B) > 0$，则它们一定 *不*独立！*
+
+因为: $P(A \cap B) = 0 \neq P(A) \cdot P(B)$
+
+*直觉*: 如果 $A$ 发生，$B$ 就不能发生，所以 $A$ 和 $B$ 强烈 *相关*。
+
+** 多个事件的独立性
+
+$A_1, A_2, \ldots, A_n$ *相互独立* (mutually independent)，当且仅当对 *所有* 子集 $\{i_1, \ldots, i_k\}$:
+
+$$P(A_{i_1} \cap \cdots \cap A_{i_k}) = P(A_{i_1}) \cdots P(A_{i_k})$$
+
+需要检验 $2^n - n - 1$ 个等式！
+
+*两两独立不等于相互独立*:
+
+例子: 抛两次硬币，$A_1$ = 第一次正面，$A_2$ = 第二次正面，$A_3$ = 恰好一次正面。
+
+- $P(A_1) = P(A_2) = P(A_3) = 0.5$
+- $P(A_1 A_2) = 0.25 = P(A_1) P(A_2)$ ✓
+- $P(A_1 A_3) = 0.25 = P(A_1) P(A_3)$ ✓
+- $P(A_2 A_3) = 0.25 = P(A_2) P(A_3)$ ✓
+- 但 $P(A_1 A_2 A_3) = 0 \neq P(A_1) P(A_2) P(A_3) = 0.125$ ✗
+
+所以两两独立，但 *不*相互独立。
+
+* 随机变量
+
+** 定义
+
+随机变量 (Random Variable, RV) 是从样本空间到实数的 *函数*:
+
+$$X: \Omega \to \mathbb{R}$$
+
+*不是 "变量"，是函数！*
+
+例子: 抛两次硬币，$X$ = 正面次数。
+
+$$X(\text{正正}) = 2, \quad X(\text{正反}) = X(\text{反正}) = 1, \quad X(\text{反反}) = 0$$
+
+** 离散 vs. 连续
+
+*** 离散随机变量 (Discrete RV)
+
+$X$ 的取值是 *可数* 的 (有限或可数无穷)。
+
+用 *概率质量函数* (PMF, Probability Mass Function) 描述:
+
+$$p_X(x) = P(X = x)$$
+
+满足:
+
+- $p_X(x) \geq 0$
+- $\sum_x p_X(x) = 1$
+
+*** 连续随机变量 (Continuous RV)
+
+$X$ 的取值是 *不可数* 的 (如 $\mathbb{R}$ 或 $[a,b]$)。
+
+*关键*: $P(X = x) = 0$ 对所有 $x$！
+
+用 *概率密度函数* (PDF, Probability Density Function) 描述:
+
+$$f_X(x) \geq 0, \quad \int_{-\infty}^\infty f_X(x) \, dx = 1$$
+
+$$P(a \leq X \leq b) = \int_a^b f_X(x) \, dx$$
+
+*常见误区*: $f_X(x)$ *不是*概率！可以 $> 1$！
+
+例如: $X \sim \text{Uniform}[0, 0.5]$，则 $f_X(x) = 2$ 在 $[0, 0.5]$ 上。
+
+** 累积分布函数 (CDF)
+
+*统一的描述方式* (离散和连续都适用):
+
+$$F_X(x) = P(X \leq x)$$
+
+性质:
+
+- *单调递增*: $x_1 < x_2 \Rightarrow F_X(x_1) \leq F_X(x_2)$
+- *右连续*: $\lim_{t \to x^+} F_X(t) = F_X(x)$
+- $\lim_{x \to -\infty} F_X(x) = 0$, $\lim_{x \to \infty} F_X(x) = 1$
+
+对连续 RV:
+
+$$F_X(x) = \int_{-\infty}^x f_X(t) \, dt, \quad f_X(x) = \frac{d F_X(x)}{dx}$$
+
+对离散 RV:
+
+$$F_X(x) = \sum_{t \leq x} p_X(t)$$
+
+** 期望 (Expectation)
+
+*随机变量的 "平均值"*:
+
+*** 离散
+
+$$E[X] = \sum_x x \cdot p_X(x)$$
+
+*** 连续
+
+$$E[X] = \int_{-\infty}^\infty x \cdot f_X(x) \, dx$$
+
+*** 期望的性质
+
+*线性性* (最重要):
+
+$$E[aX + bY + c] = a E[X] + b E[Y] + c$$
+
+*即使 $X$ 和 $Y$ 不独立！*
+
+*函数的期望*:
+
+$$E[g(X)] = \sum_x g(x) \cdot p_X(x) \quad \text{(离散)}$$
+$$E[g(X)] = \int_{-\infty}^\infty g(x) \cdot f_X(x) \, dx \quad \text{(连续)}$$
+
+*不是* $g(E[X])$！
+
+例如: $E[X^2] \neq (E[X])^2$
+
+** 方差 (Variance)
+
+*衡量随机变量的 "波动程度"*:
+
+$$\text{Var}(X) = E[(X - E[X])^2] = E[X^2] - (E[X])^2$$
+
+*第二个公式更常用！*
+
+*标准差* (Standard Deviation):
+
+$$\sigma_X = \sqrt{\text{Var}(X)}$$
+
+*** 方差的性质
+
+$$\text{Var}(aX + b) = a^2 \text{Var}(X)$$
+
+*加常数不改变方差，乘常数要平方！*
+
+如果 $X$ 和 $Y$ *独立*:
+
+$$\text{Var}(X + Y) = \text{Var}(X) + \text{Var}(Y)$$
+
+*如果不独立，这个公式不成立！*
+
+* 常见离散分布
+
+** 伯努利分布 (Bernoulli)
+
+*单次试验，成功或失败*:
+
+$$X \sim \text{Bern}(p)$$
+
+- $P(X = 1) = p$, $P(X = 0) = 1-p$
+- $E[X] = p$
+- $\text{Var}(X) = p(1-p)$
+
+** 二项分布 (Binomial)
+
+*$n$ 次独立伯努利试验，成功次数*:
+
+$$X \sim \text{Binom}(n, p)$$
+
+$$P(X = k) = \binom{n}{k} p^k (1-p)^{n-k}, \quad k = 0, 1, \ldots, n$$
+
+- $E[X] = np$
+- $\text{Var}(X) = np(1-p)$
+
+*记忆*: $X = X_1 + \cdots + X_n$，$X_i \sim \text{Bern}(p)$ 独立，所以 $E[X] = n \cdot p$，$\text{Var}(X) = n \cdot p(1-p)$。
+
+** 几何分布 (Geometric)
+
+*首次成功需要的试验次数*:
+
+$$X \sim \text{Geom}(p)$$
+
+$$P(X = k) = (1-p)^{k-1} p, \quad k = 1, 2, 3, \ldots$$
+
+- $E[X] = \frac{1}{p}$
+- $\text{Var}(X) = \frac{1-p}{p^2}$
+
+*无记忆性* (Memoryless):
+
+$$P(X > n+m \mid X > n) = P(X > m)$$
+
+*唯一具有无记忆性的离散分布。*
+
+** 泊松分布 (Poisson)
+
+*单位时间内事件发生次数*:
+
+$$X \sim \text{Pois}(\lambda)$$
+
+$$P(X = k) = \frac{\lambda^k e^{-\lambda}}{k!}, \quad k = 0, 1, 2, \ldots$$
+
+- $E[X] = \lambda$
+- $\text{Var}(X) = \lambda$
+
+*期望等于方差！*
+
+*应用*: 网站访问量、放射性衰变、客服呼叫中心等。
+
+*二项分布的极限*: 当 $n \to \infty$, $p \to 0$, $np = \lambda$ 固定时:
+
+$$\text{Binom}(n, p) \approx \text{Pois}(\lambda)$$
+
+* 常见连续分布
+
+** 均匀分布 (Uniform)
+
+$$X \sim \text{Uniform}[a, b]$$
+
+$$f_X(x) = \begin{cases} \frac{1}{b-a}, & a \leq x \leq b \\ 0, & \text{otherwise} \end{cases}$$
+
+- $E[X] = \frac{a+b}{2}$
+- $\text{Var}(X) = \frac{(b-a)^2}{12}$
+
+** 指数分布 (Exponential)
+
+*等待时间分布*:
+
+$$X \sim \text{Exp}(\lambda)$$
+
+$$f_X(x) = \lambda e^{-\lambda x}, \quad x \geq 0$$
+
+- $E[X] = \frac{1}{\lambda}$
+- $\text{Var}(X) = \frac{1}{\lambda^2}$
+
+*无记忆性*:
+
+$$P(X > s+t \mid X > s) = P(X > t)$$
+
+*唯一具有无记忆性的连续分布。*
+
+*与泊松分布的关系*: 若事件服从参数 $\lambda$ 的泊松过程，则相邻两次事件的时间间隔 $\sim \text{Exp}(\lambda)$。
+
+** 正态分布 (Normal / Gaussian)
+
+*最重要的连续分布*:
+
+$$X \sim N(\mu, \sigma^2)$$
+
+$$f_X(x) = \frac{1}{\sqrt{2\pi\sigma^2}} \exp\left(-\frac{(x-\mu)^2}{2\sigma^2}\right)$$
+
+- $E[X] = \mu$
+- $\text{Var}(X) = \sigma^2$
+
+*标准正态分布*: $\mu = 0$, $\sigma^2 = 1$，记作 $Z \sim N(0,1)$。
+
+$$f_Z(z) = \frac{1}{\sqrt{2\pi}} e^{-z^2/2}$$
+
+*标准化*:
+
+$$Z = \frac{X - \mu}{\sigma} \sim N(0,1)$$
+
+*68-95-99.7 规则*:
+
+- $P(\mu - \sigma \leq X \leq \mu + \sigma) \approx 0.68$
+- $P(\mu - 2\sigma \leq X \leq \mu + 2\sigma) \approx 0.95$
+- $P(\mu - 3\sigma \leq X \leq \mu + 3\sigma) \approx 0.997$
+
+*正态分布的性质*:
+
+- 若 $X \sim N(\mu_1, \sigma_1^2)$, $Y \sim N(\mu_2, \sigma_2^2)$ *独立*，则:
+
+$$X + Y \sim N(\mu_1 + \mu_2, \sigma_1^2 + \sigma_2^2)$$
+
+- 线性变换仍是正态: $aX + b \sim N(a\mu + b, a^2\sigma^2)$
+
+* 联合分布、边缘分布、条件分布
+
+** 联合 PMF / PDF
+
+*** 离散
+
+$$p_{X,Y}(x,y) = P(X=x, Y=y)$$
+
+满足: $\sum_x \sum_y p_{X,Y}(x,y) = 1$
+
+*** 连续
+
+$$\int_{-\infty}^\infty \int_{-\infty}^\infty f_{X,Y}(x,y) \, dx \, dy = 1$$
+
+$$P((X,Y) \in A) = \iint_A f_{X,Y}(x,y) \, dx \, dy$$
+
+** 边缘分布 (Marginal Distribution)
+
+*从联合分布得到单个变量的分布*:
+
+*** 离散
+
+$$p_X(x) = \sum_y p_{X,Y}(x,y)$$
+
+*** 连续
+
+$$f_X(x) = \int_{-\infty}^\infty f_{X,Y}(x,y) \, dy$$
+
+*直觉*: 把另一个变量 "积分掉"。
+
+** 条件分布 (Conditional Distribution)
+
+*** 离散
+
+$$p_{X \mid Y}(x \mid y) = \frac{p_{X,Y}(x,y)}{p_Y(y)}$$
+
+*** 连续
+
+$$f_{X \mid Y}(x \mid y) = \frac{f_{X,Y}(x,y)}{f_Y(y)}$$
+
+*就是贝叶斯公式的连续版本！*
+
+** 独立性
+
+$X$ 和 $Y$ 独立，当且仅当:
+
+$$p_{X,Y}(x,y) = p_X(x) \cdot p_Y(y) \quad \text{(离散)}$$
+$$f_{X,Y}(x,y) = f_X(x) \cdot f_Y(y) \quad \text{(连续)}$$
+
+*等价条件*: 联合分布可以 *因式分解*。
+
+*推论*: 若 $X$ 和 $Y$ 独立，则:
+
+$$E[XY] = E[X] \cdot E[Y]$$
+
+*逆命题不成立！* $E[XY] = E[X] E[Y]$ 不能推出独立 (反例: $Y = X^2$, $X \sim N(0,1)$)。
+
+** 条件期望 (Conditional Expectation)
+
+$$E[X \mid Y = y] = \sum_x x \cdot p_{X \mid Y}(x \mid y) \quad \text{(离散)}$$
+$$E[X \mid Y = y] = \int_{-\infty}^\infty x \cdot f_{X \mid Y}(x \mid y) \, dx \quad \text{(连续)}$$
+
+*全期望公式* (Law of Total Expectation):
+
+$$E[X] = E[E[X \mid Y]]$$
+
+*直觉*: 先算每个 $Y=y$ 下 $X$ 的期望，再对 $Y$ 求期望。
+
+* 协方差与相关系数
+
+** 协方差 (Covariance)
+
+*衡量两个随机变量的 "线性相关程度"*:
+
+$$\text{Cov}(X, Y) = E[(X - E[X])(Y - E[Y])] = E[XY] - E[X] E[Y]$$
+
+*性质*:
+
+- $\text{Cov}(X, X) = \text{Var}(X)$
+- $\text{Cov}(X, Y) = \text{Cov}(Y, X)$
+- $\text{Cov}(aX + b, cY + d) = ac \cdot \text{Cov}(X, Y)$
+- 若 $X$ 和 $Y$ 独立，则 $\text{Cov}(X, Y) = 0$ (逆不成立！)
+
+** 相关系数 (Correlation Coefficient)
+
+*标准化的协方差*:
+
+$$\rho_{X,Y} = \frac{\text{Cov}(X, Y)}{\sqrt{\text{Var}(X)} \sqrt{\text{Var}(Y)}}$$
+
+*取值范围*: $-1 \leq \rho \leq 1$
+
+- $\rho = 1$: 完全正相关 ($Y = aX + b$, $a > 0$)
+- $\rho = -1$: 完全负相关 ($Y = aX + b$, $a < 0$)
+- $\rho = 0$: 不相关 (uncorrelated)
+
+*不相关 ≠ 独立！*
+
+例子: $X \sim \text{Uniform}[-1, 1]$, $Y = X^2$。
+
+- $E[X] = 0$, $E[Y] = \frac{1}{3}$
+- $E[XY] = E[X^3] = 0$ (奇函数)
+- $\text{Cov}(X, Y) = 0 - 0 \cdot \frac{1}{3} = 0$
+
+所以 $\rho = 0$，但 $Y$ 完全由 $X$ 决定！
+
+*教训*: 相关系数只能检测 *线性关系*。
+
+** 方差的加法公式
+
+$$\text{Var}(X + Y) = \text{Var}(X) + \text{Var}(Y) + 2\text{Cov}(X, Y)$$
+
+推广:
+
+$$\text{Var}\left(\sum_{i=1}^n X_i\right) = \sum_{i=1}^n \text{Var}(X_i) + 2\sum_{i<j} \text{Cov}(X_i, X_j)$$
+
+*如果 $X_i$ 两两独立，协方差项全为 0。*
+
+* 大数定律
+
+*随机变量序列的 "平均值" 收敛到期望。*
+
+设 $X_1, X_2, \ldots$ 独立同分布 (i.i.d.)，$E[X_i] = \mu$, $\text{Var}(X_i) = \sigma^2$。
+
+定义样本均值:
+
+$$\overline{X}_n = \frac{1}{n} \sum_{i=1}^n X_i$$
+
+** 弱大数定律 (Weak LLN)
+
+$$\overline{X}_n \xrightarrow{P} \mu \quad \text{(依概率收敛)}$$
+
+即: 对任意 $\epsilon > 0$,
+
+$$\lim_{n \to \infty} P(|\overline{X}_n - \mu| > \epsilon) = 0$$
+
+** 强大数定律 (Strong LLN)
+
+$$P\left(\lim_{n \to \infty} \overline{X}_n = \mu\right) = 1 \quad \text{(几乎必然收敛)}$$
+
+*更强的结论！* 强 LLN 蕴含弱 LLN。
+
+*应用*: 频率主义概率的理论基础。
+
+* 中心极限定理 (CLT)
+
+*概率论的皇冠明珠！*
+
+设 $X_1, X_2, \ldots$ i.i.d., $E[X_i] = \mu$, $\text{Var}(X_i) = \sigma^2 < \infty$。
+
+定义标准化的和:
+
+$$Z_n = \frac{\sum_{i=1}^n X_i - n\mu}{\sqrt{n\sigma^2}} = \frac{\overline{X}_n - \mu}{\sigma / \sqrt{n}}$$
+
+则:
+
+$$Z_n \xrightarrow{d} N(0, 1) \quad \text{(依分布收敛)}$$
+
+*大白话*: 无论 $X_i$ 是什么分布 (只要有有限方差)，$n$ 足够大时，样本均值 $\overline{X}_n$ *近似服从正态分布*:
+
+$$\overline{X}_n \approx N\left(\mu, \frac{\sigma^2}{n}\right)$$
+
+*这就是为什么正态分布无处不在！*
+
+** CLT 的应用
+
+*** 1. 二项分布的正态近似
+
+$X \sim \text{Binom}(n, p)$，当 $n$ 很大时:
+
+$$X \approx N(np, np(1-p))$$
+
+*经验法则*: $np \geq 5$ 且 $n(1-p) \geq 5$ 时近似较好。
+
+*** 2. 置信区间
+
+样本均值 $\overline{X}_n$ 的 95% 置信区间:
+
+$$\left[\overline{X}_n - 1.96 \frac{\sigma}{\sqrt{n}}, \overline{X}_n + 1.96 \frac{\sigma}{\sqrt{n}}\right]$$
+
+(1.96 是 $N(0,1)$ 的 97.5 分位数)
+
+*** 3. 统计推断
+
+几乎所有统计检验 (t-test, z-test, etc.) 都依赖 CLT。
+
+* 常见陷阱与误区
+
+** 陷阱 1: 独立 vs. 不相关
+
+*独立 → 不相关，但不相关 ≠ 独立。*
+
+例子: $X \sim N(0,1)$, $Y = X^2$。
+
+- $\text{Cov}(X, Y) = 0$ (不相关)
+- 但 $Y$ 完全由 $X$ 决定 (不独立)
+
+** 陷阱 2: 条件概率的方向
+
+$P(A \mid B) \neq P(B \mid A)$！
+
+例子: $P(\text{下雨} \mid \text{带伞}) \neq P(\text{带伞} \mid \text{下雨})$
+
+** 陷阱 3: 期望的非线性
+
+$E[g(X)] \neq g(E[X])$ (除非 $g$ 是线性的)！
+
+例子: $E[X^2] \neq (E[X])^2$
+
+*Jensen 不等式*: 若 $g$ 是凸函数，则 $E[g(X)] \geq g(E[X])$。
+
+** 陷阱 4: 方差的加法
+
+$\text{Var}(X + Y) \neq \text{Var}(X) + \text{Var}(Y)$ (除非独立或不相关)！
+
+** 陷阱 5: 小概率事件的累积
+
+即使每个事件概率很小，累积起来可能很大！
+
+例子: 某程序每天崩溃概率 0.01，运行 100 天至少崩溃一次的概率:
+
+$$P(\text{至少一次}) = 1 - (1 - 0.01)^{100} \approx 0.634$$
+
+*超过 60%！*
+
+** 陷阱 6: 辛普森悖论 (Simpson's Paradox)
+
+整体趋势可能与分组趋势 *相反*！
+
+例子: 两种治疗方案，分男女统计:
+
+| 组别 | 方案 A 治愈率 | 方案 B 治愈率 |
+|----|-----------:|-----------:|
+| 男性 |        80% |        70% |
+| 女性 |        60% |        50% |
+| 合计 |        65% |   *75%*    |
+
+分组看 A 更好，合计看 B 更好！
+
+*原因*: 样本量分布不均 (更多轻症患者用 B)。
+
+*教训*: 永远考虑 *混淆变量* (confounding variable)。
+
+* 速查公式汇总
+
+** 基本公式
+
+| 公式名                | 表达式                                                               |
+|--------------------|--------------------------------------------------------------------|
+| 条件概率               | $P(A \mid B) = \frac{P(AB)}{P(B)}$                                  |
+| 乘法公式               | $P(AB) = P(A \mid B) P(B)$                                           |
+| 全概率公式              | $P(A) = \sum_i P(A \mid B_i) P(B_i)$                                 |
+| 贝叶斯公式              | $P(B \mid A) = \frac{P(A \mid B) P(B)}{P(A)}$                        |
+| 期望定义               | $E[X] = \sum_x x p(x)$ 或 $\int x f(x) dx$                           |
+| 方差定义               | $\text{Var}(X) = E[X^2] - (E[X])^2$                                  |
+| 协方差                | $\text{Cov}(X,Y) = E[XY] - E[X]E[Y]$                                 |
+| 相关系数               | $\rho = \frac{\text{Cov}(X,Y)}{\sigma_X \sigma_Y}$                   |
+
+** 常用分布期望方差
+
+| 分布                       | 期望            | 方差                  |
+|--------------------------|---------------|--------------------|
+| $\text{Bern}(p)$           | $p$             | $p(1-p)$             |
+| $\text{Binom}(n,p)$        | $np$            | $np(1-p)$            |
+| $\text{Geom}(p)$           | $\frac{1}{p}$   | $\frac{1-p}{p^2}$    |
+| $\text{Pois}(\lambda)$     | $\lambda$       | $\lambda$            |
+| $\text{Uniform}[a,b]$      | $\frac{a+b}{2}$ | $\frac{(b-a)^2}{12}$ |
+| $\text{Exp}(\lambda)$      | $\frac{1}{\lambda}$ | $\frac{1}{\lambda^2}$ |
+| $N(\mu, \sigma^2)$         | $\mu$           | $\sigma^2$           |
+
+** 重要不等式
+
+| 名称            | 表达式                                 |          |                                   |
+|-----------------+---------------------------------------+----------+-----------------------------------|
+| Markov 不等式    | $P(X \geq a) \leq \frac{E[X]}{a}$     |          |                                   |
+| Chebyshev 不等式 | $P(\                                  | X - \mu\ | \geq k\sigma) \leq \frac{1}{k^2}$ |
+| Union Bound     | $P(\bigcup_i A_i) \leq \sum_i P(A_i)$ |          |                                   |
+
+* 学习建议
+
+1. *先理解概念，再记公式*: 大多数公式都能从定义推导。
+
+2. *做题！做题！做题！*: 概率论必须通过大量练习建立直觉。
+
+3. *画图*: Venn 图、树状图、PDF 图形都能帮助理解。
+
+4. *检验极端情况*: 代入 $p=0$, $p=1$, $n=1$ 等边界值检验公式。
+
+5. *注意反例*: 很多 "看起来对" 的命题是错的 (如不相关 → 独立)。
+
+6. *联系实际*: 把抽象概念和真实问题联系起来 (扑克牌、掷骰子、疾病检测)。
+
+*概率论不是计算技巧，而是一种思维方式 — 用数学语言严格描述不确定性。*
