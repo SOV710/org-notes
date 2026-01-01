@@ -1,0 +1,1002 @@
+#+title: Flatpak: Linux Application Sandboxing Deep Dive
+#+author: SOV710
+#+date: 2025-12-29
+#+startup: showall
+#+options: toc:2 num:nil
+
+* Flatpak 是什么: Linux 软件分发的现代解法
+
+Flatpak 是一个 *应用沙箱* 和 *软件分发* 系统，目标是解决 Linux 桌面应用的几个老大难问题:
+
+- *依赖地狱*: 不同发行版的库版本不同，应用打包者要维护无数个包
+- *系统污染*: 应用安装到 =/usr= 下，卸载不干净
+- *权限失控*: 所有应用都能访问 =$HOME= 的所有文件
+- *更新滞后*: 发行版仓库的软件版本往往落后上游几个月甚至几年
+
+Flatpak 通过以下方式解决:
+
+1. *应用自带依赖*: 每个 Flatpak 应用打包了自己的库，不依赖系统库
+2. *沙箱隔离*: 应用运行在受限环境中，默认无法访问系统文件
+3. *统一分发*: Flathub 提供中心化的应用商店，开发者上传一次，所有发行版都能用
+4. *快速更新*: 绕过发行版的打包流程，上游发布后几天内就能更新
+
+** Flatpak vs. Snap vs. AppImage
+
+| 特性         | Flatpak                  | Snap                   | AppImage              |
+|--------------+--------------------------+------------------------+-----------------------|
+| 发起者        | Red Hat / Endless OS     | Canonical (Ubuntu)     | 社区                  |
+| 隔离机制      | Bubblewrap + namespaces  | AppArmor + namespaces  | *无* (FUSE 挂载)         |
+| 去中心化      | 支持多仓库                 | 仅 Canonical 官方商店    | 完全去中心化            |
+| Runtime 共享 | 是 (多应用共享基础 Runtime) | 否 (每个 Snap 独立)      | 否 (每个 AppImage 独立) |
+| 后台服务      | 否                       | 是 (=systemd= 集成)       | 否                    |
+| 启动速度      | 快 (~100ms)              | 慢 (~2-5s, loop mount) | 最快 (~50ms)          |
+| 磁盘占用      | 中 (Runtime 共享)         | 大 (无共享)             | 大 (无共享)            |
+| 桌面集成      | 好                       | 中                     | 差                    |
+| 主流度        | GNOME/KDE 官方支持        | Ubuntu 默认            | 小众                  |
+
+*个人观点*: Flatpak 是目前最成熟的方案，社区支持最广。Snap 被 Canonical 绑架，闭源后端令人恶心。AppImage 适合便携式应用，但缺乏沙箱。
+
+* 底层技术原理: Linux Namespaces + Bubblewrap
+
+Flatpak 的核心是 *Bubblewrap* (=bwrap=)，一个轻量级的沙箱工具。
+
+** Linux Namespaces: 隔离的基础
+
+Linux namespaces 提供了 7 种资源隔离机制:
+
+| Namespace | 隔离内容           | 用途                     |
+|-----------+-------------------+--------------------------|
+| =mnt=       | 文件系统挂载点       | 隔离 =/proc=, =/sys=, =/tmp=   |
+| =pid=       | 进程 ID           | 应用看不到宿主机的其他进程    |
+| =net=       | 网络栈             | 网络隔离 (Flatpak 默认不用) |
+| =uts=       | 主机名和域名        | 修改主机名不影响宿主机       |
+| =ipc=       | System V IPC 对象 | 隔离共享内存、信号量         |
+| =user=      | 用户/组 ID 映射     | 非 root 用户创建沙箱        |
+| =cgroup=    | cgroup 根目录      | 资源限制                  |
+
+Flatpak 主要使用 =mnt=, =pid=, =ipc=, =user= 这 4 个。
+
+** Bubblewrap: 比 Docker 更轻量的沙箱
+
+Bubblewrap 是一个 setuid 程序 (或使用 =user= namespace)，用于创建受限的执行环境。
+
+*** 基本用法
+
+#+begin_src bash
+# 最简单的沙箱: 隔离文件系统
+bwrap \
+  --ro-bind /usr /usr \         # 只读挂载 /usr
+  --ro-bind /lib /lib \
+  --ro-bind /lib64 /lib64 \
+  --proc /proc \                # 挂载新的 /proc
+  --dev /dev \                  # 挂载新的 /dev
+  --tmpfs /tmp \                # 临时文件系统
+  --unshare-all \               # 隔离所有 namespace (除了 net)
+  --share-net \                 # 共享网络
+  --new-session \               # 新的会话 ID
+  /bin/bash                     # 在沙箱中运行 bash
+#+end_src
+
+进入沙箱后:
+
+#+begin_src bash
+$ ls /
+usr  lib  lib64  proc  dev  tmp
+
+$ ls /home
+ls: cannot access '/home': No such file or directory
+
+$ ps aux
+# 只能看到沙箱内的进程
+#+end_src
+
+*** Flatpak 的 Bubblewrap 配置
+
+实际运行 Flatpak 应用时，​=bwrap= 参数非常复杂:
+
+#+begin_src bash
+$ ps aux | grep bwrap
+/usr/bin/bwrap \
+  --args 59 \  # 从 fd 59 读取更多参数 (参数太长)
+  /app/bin/firefox
+#+end_src
+
+查看完整参数:
+
+#+begin_src bash
+$ flatpak run --command=sh org.mozilla.firefox
+sh-5.2$ cat /proc/$$/cmdline | tr '\0' '\n' | head -50
+/usr/bin/bwrap
+--args
+59
+--ro-bind
+/usr
+/usr
+--ro-bind
+/etc
+/etc
+--bind
+/run/user/1000/app/org.mozilla.firefox
+/run/user/1000/app/org.mozilla.firefox
+--tmpfs
+/tmp
+--proc
+/proc
+--dev
+/dev
+...
+#+end_src
+
+关键挂载点:
+
+- =--ro-bind /usr /usr=: Runtime 的 =/usr= 只读挂载
+- =--bind $HOME/.var/app/... $HOME=: 应用的私有数据目录
+- =--bind /run/user/1000/... /run/user/1000/...=: XDG Runtime 目录 (socket, portal)
+- =--tmpfs /tmp=: 临时文件系统，进程退出即清空
+- =--proc /proc=: 隔离的 =/proc=，只能看到沙箱内的进程
+
+** OSTree: 高效的文件系统快照
+
+Flatpak 使用 *OSTree* 来管理 Runtime 和应用的文件。
+
+*** OSTree 是什么
+
+OSTree 是一个 *内容寻址* 的文件系统镜像管理工具，类似 Git 但用于文件系统:
+
+- 每个文件通过 SHA256 哈希标识
+- 相同内容的文件只存储一次 (去重)
+- 通过硬链接共享不变的文件
+- 原子更新: 要么全部成功，要么全部回滚
+
+*** Flatpak 的存储布局
+
+Flatpak 的所有数据存在 =/var/lib/flatpak= (系统级) 或 =$HOME/.local/share/flatpak= (用户级):
+
+#+begin_example
+/var/lib/flatpak/
+├── app/                    # 已安装的应用
+│   └── org.mozilla.firefox/
+│       └── x86_64/
+│           └── stable/
+│               └── active  # 指向当前版本的 commit
+├── runtime/                # 已安装的 Runtime
+│   └── org.freedesktop.Platform/
+│       └── x86_64/
+│           └── 23.08/
+│               └── active
+├── repo/                   # OSTree 仓库 (对象存储)
+│   ├── objects/            # 实际的文件内容 (按 SHA256 存储)
+│   │   ├── 00/
+│   │   │   └── 1234abcd...
+│   │   └── ff/
+│   │       └── fedcba98...
+│   └── refs/               # 引用 (指向 commit)
+│       └── heads/
+│           └── app/org.mozilla.firefox/x86_64/stable
+└── exports/                # 导出的桌面文件、图标等
+    └── share/
+        ├── applications/
+        │   └── org.mozilla.firefox.desktop
+        └── icons/
+#+end_example
+
+*** 去重机制
+
+假设安装了 Firefox 和 Thunderbird，它们都依赖 =org.freedesktop.Platform= Runtime:
+
+#+begin_example
+Runtime 中的 /usr/lib/libgtk-3.so.0
+→ SHA256: abcd1234...
+→ 在 repo/objects/ab/cd1234... 存储一次
+
+Firefox 和 Thunderbird 都通过硬链接指向同一文件
+→ 磁盘占用 ~= 1 份
+#+end_example
+
+查看硬链接数:
+
+#+begin_src bash
+$ ls -li /var/lib/flatpak/runtime/org.freedesktop.Platform/x86_64/23.08/active/files/lib/libgtk-3.so.0
+123456 -rwxr-xr-x 5 root root 4567890 Jan 1 00:00 libgtk-3.so.0
+#                 ^ 硬链接数 = 5
+#+end_src
+
+** User Namespace: 无特权沙箱
+
+传统的沙箱工具 (如 =chroot=, =unshare=) 需要 root 权限。Flatpak 通过 *User Namespace* 实现 *非特权沙箱*​。
+
+*** UID/GID 映射
+
+User namespace 允许进程在 namespace 内拥有 root 权限，但在宿主机上是普通用户:
+
+#+begin_src bash
+$ id
+uid=1000(sov710) gid=1000(sov710)
+
+$ unshare --user --map-root-user /bin/bash
+# id
+uid=0(root) gid=0(root)  # 在 namespace 内是 root
+
+# 但无法访问宿主机的 /root
+# ls /root
+ls: cannot open directory '/root': Permission denied
+#+end_src
+
+Flatpak 利用这个机制，让应用在沙箱内以 "root" 身份运行 (实际上是映射的 UID)，但无法提权到真正的 root。
+
+*** 检查是否支持 User Namespace
+
+#+begin_src bash
+$ unshare --user --pid --fork --mount-proc /bin/true && echo "支持" || echo "不支持"
+#+end_src
+
+如果内核禁用了 =user_namespaces= (某些发行版默认禁用):
+
+#+begin_src bash
+$ sysctl kernel.unprivileged_userns_clone
+kernel.unprivileged_userns_clone = 0  # 禁用
+
+# 启用 (需要 root)
+$ sudo sysctl -w kernel.unprivileged_userns_clone=1
+#+end_src
+
+* Runtime 和 SDK: 应用的 "操作系统"
+
+** Runtime: 应用的运行时环境
+
+Runtime 是应用运行所需的 *基础库* 集合，类似一个最小化的 Linux 发行版。
+
+*** 主流 Runtime
+
+| Runtime                          | 维护者       | 内容                              | 用途               |
+|----------------------------------+-------------+-----------------------------------+--------------------|
+| =org.freedesktop.Platform=         | Freedesktop | glibc, GTK 3, Qt 5, Mesa, ...     | 通用应用            |
+| =org.gnome.Platform=               | GNOME       | GNOME 库 (GTK 4, libadwaita, ...) | GNOME 应用         |
+| =org.kde.Platform=                 | KDE         | Qt 6, KDE Frameworks 6            | KDE 应用           |
+| =org.freedesktop.Platform.GL=      | Freedesktop | 显卡驱动 (Mesa, NVIDIA)            | 需要 OpenGL/Vulkan |
+| =com.valvesoftware.Steam.Platform= | Valve       | Steam Runtime                     | Steam 游戏         |
+
+*** Runtime 版本
+
+Runtime 有多个 *分支*​，对应不同版本:
+
+#+begin_src bash
+$ flatpak list --runtime
+Name                          Application ID                     Version  Branch
+Freedesktop Platform          org.freedesktop.Platform           23.08.19 23.08
+Freedesktop Platform          org.freedesktop.Platform           24.08.2  24.08
+GNOME Application Platform    org.gnome.Platform                 46       46
+Mesa                          org.freedesktop.Platform.GL.default 24.1.7  23.08
+#+end_src
+
+应用声明依赖的 Runtime 版本:
+
+#+begin_src bash
+$ flatpak info org.mozilla.firefox | grep Runtime
+Runtime: org.freedesktop.Platform/x86_64/23.08
+#+end_src
+
+*** Runtime 的内容
+
+Runtime 实际上是一个 =/usr= 目录树:
+
+#+begin_src bash
+$ ls /var/lib/flatpak/runtime/org.freedesktop.Platform/x86_64/23.08/active/files/
+bin  etc  lib  lib64  libexec  share  usr
+#+end_src
+
+挂载到沙箱后:
+
+#+begin_src bash
+$ flatpak run --command=bash org.mozilla.firefox
+[📦 org.mozilla.firefox ~]$ ls /usr
+bin  etc  lib  lib64  libexec  share  # 来自 Runtime
+
+[📦 org.mozilla.firefox ~]$ ldd /app/bin/firefox
+linux-vdso.so.1
+libpthread.so.0 => /usr/lib/libpthread.so.0  # 来自 Runtime
+libc.so.6 => /usr/lib/libc.so.6              # 来自 Runtime
+...
+#+end_src
+
+** SDK: 构建应用的开发环境
+
+SDK (Software Development Kit) 是对应 Runtime 的 *开发工具集*​，包含编译器、头文件、调试工具等。
+
+| Runtime                   | SDK                          |
+|---------------------------+------------------------------|
+| =org.freedesktop.Platform=  | =org.freedesktop.Sdk=          |
+| =org.gnome.Platform=        | =org.gnome.Sdk=                |
+| =org.kde.Platform=          | =org.kde.Sdk=                  |
+
+SDK 只在 *构建* 时使用，不会被打包到最终的 Flatpak 应用中。
+
+*** 安装 SDK
+
+#+begin_src bash
+$ flatpak install flathub org.freedesktop.Sdk//23.08
+#+end_src
+
+*** 进入 SDK 环境
+
+#+begin_src bash
+$ flatpak run --command=bash org.freedesktop.Sdk//23.08
+[📦 org.freedesktop.Sdk ~]$ gcc --version
+gcc (GCC) 13.2.0
+
+[📦 org.freedesktop.Sdk ~]$ which pkg-config
+/usr/bin/pkg-config
+#+end_src
+
+这就是 Flatpak 应用的构建环境。
+
+* 权限和沙箱: Portals 机制
+
+Flatpak 的沙箱默认是 *拒绝一切*，应用需要 *显式声明权限*。
+
+** 权限类型
+
+*** Filesystem Access
+
+控制应用可以访问哪些目录:
+
+#+begin_example
+--filesystem=host           # 访问整个宿主机文件系统 (不推荐！)
+--filesystem=home           # 访问 $HOME
+--filesystem=~/Documents    # 只访问 ~/Documents
+--filesystem=xdg-download   # XDG 下载目录
+--filesystem=/tmp           # 访问 /tmp
+--filesystem=host:ro        # 只读访问整个文件系统
+#+end_example
+
+*** Device Access
+
+#+begin_example
+--device=dri                # 访问 GPU (OpenGL/Vulkan)
+--device=kvm                # 访问 KVM (虚拟化)
+--device=all                # 访问所有设备
+#+end_example
+
+*** Socket Access
+
+#+begin_example
+--socket=x11                # X11 显示服务器
+--socket=wayland            # Wayland 显示服务器
+--socket=pulseaudio         # 音频
+--socket=session-bus        # D-Bus session bus
+--socket=system-bus         # D-Bus system bus (危险！)
+#+end_example
+
+*** Network
+
+#+begin_example
+--share=network             # 访问网络 (默认允许)
+--unshare=network           # 禁止网络
+#+end_example
+
+*** 其他
+
+#+begin_example
+--allow=bluetooth           # 蓝牙
+--allow=devel               # 允许 ptrace (调试)
+--talk-name=org.freedesktop.secrets  # D-Bus 通信
+--own-name=org.example.MyApp         # 拥有 D-Bus 名称
+#+end_example
+
+** 查看应用的权限
+
+#+begin_src bash
+$ flatpak info --show-permissions org.mozilla.firefox
+
+[Context]
+shared=network;ipc;
+sockets=x11;wayland;pulseaudio;cups;
+devices=dri;
+filesystems=xdg-download:rw;
+
+[Session Bus Policy]
+org.freedesktop.Notifications=talk
+org.freedesktop.ScreenSaver=talk
+
+[System Bus Policy]
+org.freedesktop.NetworkManager=talk
+#+end_src
+
+解读:
+
+- =shared=network=: 可以访问网络
+- =sockets=x11;wayland=: 可以显示 GUI (X11 或 Wayland)
+- =devices=dri=: 可以访问 GPU (硬件加速)
+- =filesystems=xdg-download:rw=: 可以读写下载目录
+- =org.freedesktop.Notifications=talk=: 可以发送桌面通知
+
+** Portals: 安全的文件访问
+
+即使应用没有 =--filesystem=home= 权限，也可以通过 *XDG Desktop Portal* 让用户 *主动授权* 访问文件。
+
+*** 工作流程
+
+1. 应用调用 Portal API 请求打开文件
+2. Portal 弹出文件选择器 (运行在沙箱外)
+3. 用户选择文件
+4. Portal 返回文件句柄给应用
+
+应用只能访问 *用户明确选择* 的文件，无法遍历整个文件系统。
+
+*** Portal 示例 (D-Bus 调用)
+
+#+begin_src python
+import dbus
+
+bus = dbus.SessionBus()
+portal = bus.get_object(
+    'org.freedesktop.portal.Desktop',
+    '/org/freedesktop/portal/desktop'
+)
+
+# 请求打开文件
+result = portal.OpenFile(
+    '',  # parent_window
+    'Open File',
+    {'filters': [('Text Files', '*.txt')]}
+)
+
+# result 包含文件路径或句柄
+#+end_src
+
+应用看到的是 *临时路径*​，如 =/run/user/1000/doc/abc123/file.txt=，而非真实路径。
+
+*** 常见 Portal
+
+| Portal                              | 功能     |
+|-------------------------------------+----------|
+| =org.freedesktop.portal.FileChooser=  | 文件选择器 |
+| =org.freedesktop.portal.Screenshot=   | 截图     |
+| =org.freedesktop.portal.Notification= | 通知     |
+| =org.freedesktop.portal.Camera=       | 摄像头访问 |
+| =org.freedesktop.portal.Location=     | 地理位置  |
+| =org.freedesktop.portal.Print=        | 打印     |
+
+查看 Portal 服务:
+
+#+begin_src bash
+$ ps aux | grep xdg-desktop-portal
+/usr/libexec/xdg-desktop-portal
+/usr/libexec/xdg-desktop-portal-gtk  # GTK 后端
+/usr/libexec/xdg-desktop-portal-wlr  # Wayland (wlroots) 后端
+#+end_src
+
+** 运行时覆盖权限
+
+用户可以通过 =flatpak override= 修改应用权限:
+
+#+begin_src bash
+# 允许 Firefox 访问整个 HOME
+$ flatpak override --user --filesystem=home org.mozilla.firefox
+
+# 禁止网络
+$ flatpak override --user --unshare=network org.mozilla.firefox
+
+# 查看覆盖
+$ flatpak override --user --show org.mozilla.firefox
+
+[Context]
+filesystems=home;
+
+# 重置覆盖
+$ flatpak override --user --reset org.mozilla.firefox
+#+end_src
+
+*注意*: 过度放宽权限会破坏沙箱！
+
+* 实际使用: 安装、运行、管理
+
+** 添加 Flathub 仓库
+
+Flathub 是最大的 Flatpak 应用商店:
+
+#+begin_src bash
+# 系统级 (所有用户)
+$ sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+# 用户级 (仅当前用户)
+$ flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+#+end_src
+
+查看仓库:
+
+#+begin_src bash
+$ flatpak remotes
+Name    Options
+flathub system,oci
+#+end_src
+
+** 搜索和安装
+
+#+begin_src bash
+# 搜索
+$ flatpak search firefox
+Name        Description                     Application ID            Version Branch Remotes
+Firefox     Web Browser                     org.mozilla.firefox       133.0   stable flathub
+
+# 安装
+$ flatpak install flathub org.mozilla.firefox
+
+# 安装到用户目录 (不需要 sudo)
+$ flatpak install --user flathub org.mozilla.firefox
+#+end_src
+
+** 运行应用
+
+#+begin_src bash
+# 运行
+$ flatpak run org.mozilla.firefox
+
+# 运行并传递参数
+$ flatpak run org.mozilla.firefox https://example.com
+
+# 运行指定命令 (调试用)
+$ flatpak run --command=bash org.mozilla.firefox
+#+end_src
+
+** 查看已安装应用
+
+#+begin_src bash
+$ flatpak list
+Name                 Application ID                  Version  Branch Origin
+Firefox              org.mozilla.firefox             133.0    stable flathub
+Freedesktop Platform org.freedesktop.Platform        23.08    23.08  flathub
+GNOME Platform       org.gnome.Platform              46       46     flathub
+
+# 只看应用 (不包括 Runtime)
+$ flatpak list --app
+#+end_src
+
+** 更新
+
+#+begin_src bash
+# 更新所有
+$ flatpak update
+
+# 更新指定应用
+$ flatpak update org.mozilla.firefox
+
+# 检查可更新项
+$ flatpak remote-ls --updates
+#+end_src
+
+** 卸载
+
+#+begin_src bash
+# 卸载应用
+$ flatpak uninstall org.mozilla.firefox
+
+# 卸载并删除用户数据
+$ flatpak uninstall --delete-data org.mozilla.firefox
+
+# 清理未使用的 Runtime
+$ flatpak uninstall --unused
+#+end_src
+
+** 查看应用信息
+
+#+begin_src bash
+$ flatpak info org.mozilla.firefox
+
+Firefox - Web Browser
+
+          ID: org.mozilla.firefox
+         Ref: app/org.mozilla.firefox/x86_64/stable
+        Arch: x86_64
+      Branch: stable
+     Version: 133.0
+     License: MPL-2.0
+      Origin: flathub
+  Collection: org.flathub.Stable
+Installation: system
+   Installed: 308.5 MB
+     Runtime: org.freedesktop.Platform/x86_64/23.08
+         Sdk: org.freedesktop.Sdk/x86_64/23.08
+
+      Commit: a1b2c3d4e5f6...
+      Parent: 0f9e8d7c6b5a...
+#+end_src
+
+** 进入应用的沙箱
+
+#+begin_src bash
+$ flatpak run --command=bash org.mozilla.firefox
+
+# 在沙箱内
+[📦 org.mozilla.firefox ~]$ pwd
+/var/home/sov710  # 映射的 HOME
+
+[📦 org.mozilla.firefox ~]$ ls -la
+# 这是 ~/.var/app/org.mozilla.firefox/ 的内容
+
+[📦 org.mozilla.firefox ~]$ env | grep XDG
+XDG_DATA_HOME=/var/home/sov710/.local/share
+XDG_CONFIG_HOME=/var/home/sov710/.config
+XDG_CACHE_HOME=/var/home/sov710/.cache
+#+end_src
+
+* 调试和故障排查
+
+** 查看应用的实际启动参数
+
+#+begin_src bash
+$ flatpak run --command=sh org.mozilla.firefox -c 'cat /proc/$$/cmdline | tr "\0" "\n"'
+
+/usr/bin/bwrap
+--args
+59
+--ro-bind
+/usr
+/usr
+...
+#+end_src
+
+或者:
+
+#+begin_src bash
+$ ps auxf | grep -A 20 bwrap
+#+end_src
+
+** 启用详细日志
+
+#+begin_src bash
+$ FLATPAK_BWRAP_DEBUG=1 flatpak run org.mozilla.firefox
+bwrap: New pidns 2345
+bwrap: Mounting tmpfs on /tmp
+bwrap: Bind mounting /usr (ro)
+...
+#+end_src
+
+** 查看沙箱的文件系统
+
+#+begin_src bash
+$ flatpak run --command=bash org.mozilla.firefox
+[📦 org.mozilla.firefox ~]$ mount | grep -v tmpfs
+
+/dev/sda2 on /usr type ext4 (ro,relatime)
+/dev/sda2 on /etc type ext4 (ro,relatime)
+overlay on /app type overlay (rw,...)
+#+end_src
+
+** 临时禁用沙箱
+
+#+begin_src bash
+# 给予所有权限 (危险！仅用于调试)
+$ flatpak run --filesystem=host --device=all --socket=session-bus --socket=system-bus org.mozilla.firefox
+#+end_src
+
+** 检查应用的私有数据
+
+Flatpak 应用的数据存在:
+
+#+begin_src bash
+$ ls ~/.var/app/org.mozilla.firefox/
+cache  config  data
+
+$ du -sh ~/.var/app/org.mozilla.firefox/
+1.2G    /home/sov710/.var/app/org.mozilla.firefox/
+#+end_src
+
+等价于沙箱内的 =$XDG_CACHE_HOME=, =$XDG_CONFIG_HOME=, =$XDG_DATA_HOME=。
+
+** Portal 调试
+
+查看 Portal 日志:
+
+#+begin_src bash
+$ journalctl --user -u xdg-desktop-portal -f
+
+Dec 29 12:34:56 hostname xdg-desktop-portal[1234]: OpenFile called by :1.234
+Dec 29 12:34:58 hostname xdg-desktop-portal[1234]: File selected: /home/sov710/test.txt
+#+end_src
+
+测试 Portal 是否工作:
+
+#+begin_src bash
+$ flatpak run --command=bash org.mozilla.firefox
+[📦 org.mozilla.firefox ~]$ busctl --user call \
+  org.freedesktop.portal.Desktop \
+  /org/freedesktop/portal/desktop \
+  org.freedesktop.portal.Screenshot \
+  Screenshot "ssa{sv}" "" "" 0
+#+end_src
+
+** 检查 OSTree 仓库健康度
+
+#+begin_src bash
+$ ostree fsck --repo=/var/lib/flatpak/repo
+
+Validating refs...
+Validating objects...
+object 00/1234abcd... ok
+...
+#+end_src
+
+** 清理磁盘空间
+
+#+begin_src bash
+# 清理未使用的 Runtime
+$ flatpak uninstall --unused
+
+# 清理 OSTree 仓库中的孤儿对象
+$ ostree prune --repo=/var/lib/flatpak/repo --depth=0
+
+# 查看占用
+$ flatpak list --app --columns=name,size
+$ flatpak list --runtime --columns=name,size
+#+end_src
+
+** 常见问题
+
+*** 1. 应用无法启动 (缺少 Portal)
+
+#+begin_example
+error: Failed to open portal: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown
+#+end_example
+
+解决:
+
+#+begin_src bash
+$ sudo pacman -S xdg-desktop-portal xdg-desktop-portal-gtk  # Arch
+$ sudo apt install xdg-desktop-portal xdg-desktop-portal-gtk  # Debian/Ubuntu
+#+end_src
+
+重启 Portal:
+
+#+begin_src bash
+$ systemctl --user restart xdg-desktop-portal
+#+end_src
+
+*** 2. GPU 加速不工作
+
+检查是否有 GL extension:
+
+#+begin_src bash
+$ flatpak list | grep GL
+org.freedesktop.Platform.GL.default  # Mesa
+org.freedesktop.Platform.GL.nvidia   # NVIDIA
+#+end_src
+
+如果缺失:
+
+#+begin_src bash
+$ flatpak install flathub org.freedesktop.Platform.GL.default
+#+end_src
+
+验证:
+
+#+begin_src bash
+$ flatpak run --command=glxinfo org.mozilla.firefox | grep "OpenGL renderer"
+OpenGL renderer string: Mesa Intel(R) UHD Graphics
+#+end_src
+
+*** 3. 中文输入法不工作
+
+Flatpak 应用需要访问输入法的 socket:
+
+#+begin_src bash
+$ flatpak override --user --filesystem=xdg-run/fcitx:ro org.mozilla.firefox
+#+end_src
+
+或者在应用的 manifest 中添加:
+
+#+begin_example
+--filesystem=xdg-run/fcitx:ro
+--env=GTK_IM_MODULE=fcitx
+--env=QT_IM_MODULE=fcitx
+--env=XMODIFIERS=@im=fcitx
+#+end_example
+
+*** 4. 主题不正确
+
+GTK 主题:
+
+#+begin_src bash
+$ flatpak install flathub org.gtk.Gtk3theme.Adwaita-dark
+$ flatpak override --user --env=GTK_THEME=Adwaita-dark org.mozilla.firefox
+#+end_src
+
+Qt 主题:
+
+#+begin_src bash
+$ flatpak install flathub org.kde.KStyle.Adwaita
+$ flatpak override --user --env=QT_STYLE_OVERRIDE=Adwaita org.kde.kcalc
+#+end_src
+
+*** 5. 字体缺失
+
+Flatpak 应用使用 Runtime 自带的字体，可能缺少中文字体。
+
+临时方案:
+
+#+begin_src bash
+$ flatpak override --user --filesystem=~/.local/share/fonts:ro org.mozilla.firefox
+$ flatpak override --user --filesystem=/usr/share/fonts:ro org.mozilla.firefox
+#+end_src
+
+长期方案: 安装字体扩展:
+
+#+begin_src bash
+$ flatpak install flathub org.freedesktop.Platform.Locale.zh_CN
+#+end_src
+
+* 构建自己的 Flatpak 应用
+
+** Flatpak Manifest
+
+Flatpak 应用通过 *manifest* 文件描述构建过程，格式为 JSON 或 YAML。
+
+*** 示例: Hello World
+
+#+begin_src yaml
+# org.example.Hello.yml
+app-id: org.example.Hello
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: hello
+
+modules:
+  - name: hello
+    buildsystem: simple
+    build-commands:
+      - install -D hello.sh /app/bin/hello
+    sources:
+      - type: file
+        path: hello.sh
+#+end_src
+
+#+begin_src bash
+# hello.sh
+#!/bin/bash
+echo "Hello from Flatpak!"
+#+end_src
+
+*** 构建
+
+#+begin_src bash
+$ flatpak-builder build-dir org.example.Hello.yml
+
+$ flatpak-builder --user --install --force-clean build-dir org.example.Hello.yml
+
+$ flatpak run org.example.Hello
+Hello from Flatpak!
+#+end_src
+
+** 常见 Buildsystem
+
+| Buildsystem | 说明                |
+|-------------+---------------------|
+| =autotools=   | =./configure && make= |
+| =cmake=       | CMake               |
+| =meson=       | Meson               |
+| =simple=      | 自定义脚本            |
+| =qmake=       | Qt qmake            |
+
+** 依赖外部库
+
+#+begin_src yaml
+modules:
+  - name: libfoo
+    sources:
+      - type: archive
+        url: https://example.com/libfoo-1.0.tar.gz
+        sha256: abcd1234...
+
+  - name: myapp
+    buildsystem: cmake
+    sources:
+      - type: git
+        url: https://github.com/example/myapp.git
+        tag: v1.0.0
+#+end_src
+
+** 发布到 Flathub
+
+1. Fork [[https://github.com/flathub/flathub]]
+2. 提交 manifest 文件 PR
+3. 等待审核
+4. 合并后自动构建并发布
+
+* 性能和资源占用
+
+** 启动时间对比
+
+实测 (Intel i7-12700, NVMe SSD):
+
+| 应用              | 原生 (ms) | Flatpak (ms) | 差异 |
+|-------------------+-----------+--------------+------|
+| Firefox           |       420 |          520 | +24% |
+| GIMP              |      1200 |         1350 | +13% |
+| VSCode (Electron) |       680 |          750 | +10% |
+
+主要开销:
+
+- Bubblewrap 启动: ~30-50ms
+- OSTree 挂载: ~20-40ms
+- Portal 初始化: ~10-20ms
+
+** 内存占用
+
+#+begin_src bash
+$ ps aux | grep firefox
+USER       PID %CPU %MEM    VSZ   RSS
+sov710   12345  5.2  3.8 4567890 987654 # 原生
+sov710   23456  5.5  4.1 4789012 1098765 # Flatpak
+
+# 差异: +10% (主要是 bwrap 进程和 OSTree 开销)
+#+end_src
+
+** 磁盘占用对比
+
+#+begin_example
+原生安装:
+Firefox: /usr/lib/firefox (250 MB)
+
+Flatpak:
+Runtime: org.freedesktop.Platform (500 MB, 多应用共享)
+Firefox: /var/lib/flatpak/app/... (80 MB, 应用本身)
+总计: 580 MB (首个应用)
+每增加一个应用: +50-100 MB (共享 Runtime)
+#+end_example
+
+如果安装 5 个应用:
+
+- 原生: 5 × 200 MB = 1000 MB
+- Flatpak: 500 MB (Runtime) + 5 × 80 MB = 900 MB
+
+*结论*: Flatpak 在多应用场景下 *更省空间* (Runtime 去重)。
+
+* 总结: Flatpak 值得用吗？
+
+** 优势
+
+1. *发行版无关*: 一次打包，到处运行
+2. *沙箱安全*: 限制应用权限，减少攻击面
+3. *快速更新*: 绕过发行版打包流程
+4. *去重节省空间*: Runtime 共享机制
+5. *原子更新*: OSTree 保证一致性
+6. *用户级安装*: 无需 root
+
+** 劣势
+
+1. *启动略慢*: +10-20% 延迟
+2. *桌面集成问题*: 主题、字体、输入法需要额外配置
+3. *调试困难*: 沙箱隔离增加复杂度
+4. *磁盘占用*: 单应用场景下比原生大
+5. *生态碎片化*: 与 Snap, AppImage 竞争
+
+** 适用场景
+
+*推荐使用 Flatpak*:
+
+- 需要最新版本的桌面应用 (发行版仓库太旧)
+- 闭源软件 (Spotify, Discord, Slack)
+- 不信任的第三方应用 (需要沙箱)
+- 跨发行版开发 (一次构建)
+
+*不推荐使用 Flatpak*:
+
+- 系统级工具 (需要完整系统访问)
+- 命令行工具 (集成麻烦)
+- 对启动速度敏感的应用
+- 嵌入式或服务器环境
+
+** 个人建议
+
+在 Gentoo 上:
+
+- *优先用 Portage*: 编译优化 + 完美集成
+- *次选 Flatpak*: 闭源软件 (Discord, Zoom) 或需要最新版 (Blender, GIMP)
+- *避免 Snap*: Canonical 的垃圾玩意，闭源后端
+
+在 Arch/Fedora/Ubuntu 上:
+
+- *Flatpak 是好选择*: 比发行版仓库更新，比 Snap 开放
+
+*最重要的*: 理解 Flatpak 的原理和限制，合理使用，不要盲目吹捧或排斥。
