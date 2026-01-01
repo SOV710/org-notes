@@ -1,0 +1,11 @@
+#+title: Obsidian is a piece of Shit
+#+author: SOV710
+#+date: <2025-12-27 Sat>
+#+startup: showall
+
+* Obsidian 就是一坨屎
+疲惫了
+
+优化了半年工作流，最近才发现一直坐在史里
+
+刚配置 Gentoo 到勉强 "可用", 踌躇满志, 打算一口气配置完
