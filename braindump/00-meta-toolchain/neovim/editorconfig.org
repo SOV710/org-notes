@@ -1,0 +1,783 @@
+#+title: EditorConfig: The One Config to Rule Them All
+#+author: SOV710
+#+date: 2025-12-29
+#+startup: showall
+#+options: toc:2 num:nil
+
+* EditorConfig 是什么: 终结编辑器配置混乱的救星
+
+EditorConfig 是一个 *跨编辑器的代码风格配置标准*​，通过项目根目录的 =.editorconfig= 文件，让所有编辑器 (Vim, Emacs, VS Code, IntelliJ...) 自动采用统一的格式化规则。
+
+** 为什么需要 EditorConfig
+
+想象一个场景:
+
+- 你用 Vim，习惯 4 空格缩进
+- 同事用 VS Code，默认 2 空格缩进
+- 另一个用 Emacs，配置了 Tab 缩进
+- 第三个用 IntelliJ，不知道配了啥
+
+结果:
+
+#+begin_src python
+def foo():
+    if True:
+      print("混乱")  # 2 空格
+        print("的")    # 4 空格
+	print("缩进")      # Tab (显示为 8 空格)
+#+end_src
+
+每次 commit，Git diff 全是空白符变更:
+
+#+begin_example
+-    print("混乱")
++  print("混乱")
+#+end_example
+
+*EditorConfig 的解决方案*:
+
+在项目根目录创建 =.editorconfig=:
+
+#+begin_src ini
+[*.py]
+indent_style = space
+indent_size = 4
+#+end_src
+
+所有支持 EditorConfig 的编辑器打开 =.py= 文件时，​*自动* 应用这些规则。无需手动配置，无需口头约定，无需 Code Review 时吵架。
+
+** EditorConfig 的历史
+
+- *2012 年*: Trey Hunner 和 Hong Xu 在 GitHub 上发起 EditorConfig 项目
+- *2013 年*: 发布 v0.12.0，确立 =.editorconfig= 文件格式
+- *2015 年*: 主流编辑器开始原生支持 (VS Code, Atom)
+- *2018 年*: EditorConfig Specification v0.15 成为事实标准
+- *2020+*: 几乎所有现代编辑器和 IDE 都支持
+
+核心理念: *"一次配置，到处生效"*​。
+
+* EditorConfig 的生态现状
+
+** 原生支持的编辑器
+
+无需插件，开箱即用:
+
+- *VS Code* (1.0+): 内置支持
+- *IntelliJ IDEA* (2017.1+): 内置支持
+- *PyCharm / WebStorm / CLion* 等 JetBrains 全家桶: 内置支持
+- *GitHub / GitLab Web Editor*: 在线编辑器支持
+- *Visual Studio 2017+*: 内置支持
+- *Neovim*: 内置支持
+- *Atom*: =editorconfig= 包 (已内置)
+
+** 需要插件的编辑器
+
+- *Vim*: [[https://github.com/editorconfig/editorconfig-vim][editorconfig-vim]]
+- *Emacs*: [[https://github.com/editorconfig/editorconfig-emacs][editorconfig-emacs]]
+- *Sublime Text*: [[https://github.com/sindresorhus/editorconfig-sublime][EditorConfig 插件]]
+- *Notepad++*: EditorConfig 插件
+
+** 编程语言生态集成
+
+几乎所有主流语言的工具链都支持 EditorConfig:
+
+*** JavaScript / TypeScript
+
+- *Prettier*: 自动读取 =.editorconfig=
+- *ESLint*: 通过 =eslint-plugin-editorconfig= 集成
+- *Webpack*: =editorconfig-loader= 验证代码风格
+
+*** Python
+
+- *Black*: 尊重 =max_line_length=
+- *autopep8*: 读取缩进配置
+- *isort*: 读取行尾和缩进配置
+
+*** Rust
+
+- *rustfmt*: 通过 =edition_config_path= 指定 EditorConfig
+
+*** Go
+
+- *gofmt*: 不支持 (Go 强制固定格式)
+- *goimports*: 同样不支持
+
+*** C / C++
+
+- *clang-format*: 通过 =.clang-format= 间接支持 (可读取 EditorConfig)
+- *uncrustify*: 支持 EditorConfig
+
+*** Java / Kotlin
+
+- *IntelliJ IDEA*: 自动应用 EditorConfig
+- *Google Java Format*: 不支持 (强制 Google 风格)
+
+** 项目采用情况
+
+在 GitHub 上搜索 =filename:.editorconfig=​，有超过 *500 万个仓库* 使用 EditorConfig，包括:
+
+- *Linux Kernel* (部分子项目)
+- *Node.js*
+- *TypeScript*
+- *Rust*
+- *Angular*
+- *React* (部分组件库)
+- *Bootstrap*
+- *TensorFlow*
+
+* EditorConfig 文件格式详解
+
+** 基本结构
+
+=.editorconfig= 是一个 *INI 格式* 的配置文件:
+
+#+begin_src ini
+# EditorConfig 文件标识
+root = true
+
+# 全局规则
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Python 文件
+[*.py]
+indent_style = space
+indent_size = 4
+
+# JavaScript / TypeScript
+[*.{js,ts}]
+indent_size = 2
+
+# Makefile 必须用 Tab
+[Makefile]
+indent_style = tab
+#+end_src
+
+** =root= 声明
+
+#+begin_src ini
+root = true
+#+end_src
+
+表示这是 *最顶层* 的 EditorConfig 文件。编辑器从当前文件目录向上搜索 =.editorconfig=​，遇到 =root = true= 就停止。
+
+*为什么需要 =root=?*
+
+假设项目结构:
+
+#+begin_example
+~/projects/myproject/.editorconfig  (root = true)
+~/projects/.editorconfig
+~/.editorconfig
+#+end_example
+
+打开 =~/projects/myproject/src/main.py= 时:
+
+1. 编辑器从 =src/= 向上搜索
+2. 找到 =myproject/.editorconfig=，看到 =root = true=
+3. 停止搜索，*不会* 继续读取 =~/projects/.editorconfig=
+
+如果不写 =root = true=，编辑器会一直搜索到用户主目录，可能加载到不相关的配置。
+
+** 文件匹配模式 (Glob Pattern)
+
+*** 基本通配符
+
+| 模式         | 匹配            | 示例                       |
+|--------------+-----------------+----------------------------|
+| =*=            | 任意字符 (不含 =/=) | =*.py= → =main.py=, =test.py=    |
+| =**=           | 任意字符 (含 =/=)   | =src/**/*.js= → =src/a/b.js=   |
+| =?=            | 单个字符         | =file?.txt= → =file1.txt=      |
+| =[abc]=        | 字符集合         | =[Mm]akefile= → =Makefile=     |
+| =[!abc]=       | 非字符集合        | =[!.]*.py= → 非隐藏 py 文件    |
+| ={s1,s2}=      | 多选一           | =*.{js,ts}= → =a.js=, =b.ts=     |
+| ={num1..num2}= | 数字范围         | =file{1..3}.txt= → =file1.txt= |
+
+*** 实际例子
+
+#+begin_src ini
+# 所有 C/C++ 头文件和源文件
+[*.{c,cpp,h,hpp}]
+indent_style = space
+indent_size = 4
+
+# 所有 src 目录下的 Python 文件 (递归)
+[src/**/*.py]
+max_line_length = 88
+
+# 所有 Markdown 文件，但排除 node_modules
+[*.md]
+trim_trailing_whitespace = false
+
+# 特定文件
+[package.json]
+indent_size = 2
+#+end_src
+
+*** 模式优先级
+
+*越具体的规则，优先级越高*:
+
+#+begin_src ini
+[*]
+indent_size = 4
+
+[*.js]
+indent_size = 2
+
+[src/legacy/*.js]
+indent_size = 8
+#+end_src
+
+打开 =src/legacy/old.js=:
+
+1. 匹配 =[*]= → 缩进 4
+2. 匹配 =[*.js]= → 缩进 2
+3. 匹配 =[src/legacy/*.js]= → 缩进 8 (*最终生效*)
+
+** 配置属性速查表
+
+*** =indent_style=
+
+缩进风格: =space= 或 =tab=​。
+
+#+begin_src ini
+[*.py]
+indent_style = space  # Python 推荐空格
+
+[Makefile]
+indent_style = tab    # Makefile 必须 Tab
+
+[*.go]
+indent_style = tab    # Go 官方强制 Tab
+#+end_src
+
+*** =indent_size=
+
+缩进大小 (空格数)。如果 =indent_style = tab=​，表示 Tab 显示宽度。
+
+#+begin_src ini
+[*.js]
+indent_size = 2
+
+[*.py]
+indent_size = 4
+
+[*.java]
+indent_size = 4
+#+end_src
+
+*** =tab_width=
+
+Tab 字符的 *显示宽度*​。如果不设置，默认等于 =indent_size=​。
+
+#+begin_src ini
+[Makefile]
+indent_style = tab
+tab_width = 4  # Tab 显示为 4 个空格宽度 (实际仍是 Tab 字符)
+#+end_src
+
+*** =end_of_line=
+
+行尾符: =lf= (Unix), =crlf= (Windows), =cr= (旧 Mac)。
+
+#+begin_src ini
+[*]
+end_of_line = lf  # 强制 Unix 风格 (推荐)
+
+[*.bat]
+end_of_line = crlf  # Windows 批处理文件必须 CRLF
+#+end_src
+
+*为什么统一用 =lf=?*
+
+- Git 默认自动转换行尾 (=core.autocrlf=)，统一 =lf= 可避免混乱
+- Linux 服务器只认 =lf=
+- Windows 10+ 的 Notepad 已支持 =lf=
+
+*** =charset=
+
+文件编码: =utf-8=, =utf-8-bom=, =latin1=, =utf-16be=, =utf-16le=​。
+
+#+begin_src ini
+[*]
+charset = utf-8  # 现代项目唯一选择
+
+[*.txt]
+charset = utf-8-bom  # 某些 Windows 软件需要 BOM
+#+end_src
+
+*注意*: 绝大多数情况用 =utf-8=​，不要用 BOM。
+
+*** =trim_trailing_whitespace=
+
+是否删除行尾空白: =true= 或 =false=​。
+
+#+begin_src ini
+[*]
+trim_trailing_whitespace = true
+
+[*.md]
+trim_trailing_whitespace = false  # Markdown 的行尾双空格表示换行
+#+end_src
+
+*** =insert_final_newline=
+
+文件末尾是否插入空行: =true= 或 =false=​。
+
+#+begin_src ini
+[*]
+insert_final_newline = true  # POSIX 标准要求
+#+end_src
+
+*为什么需要最后的空行?*
+
+POSIX 定义: "文本文件是由零行或多行组成，每行以换行符结尾"。
+
+如果文件最后没有换行符:
+
+- =cat= 命令输出会和下一行 shell 提示符连在一起
+- =diff= 会显示 ="No newline at end of file"=
+- 某些编译器会警告
+
+*** =max_line_length=
+
+最大行长度。
+
+#+begin_src ini
+[*.py]
+max_line_length = 88  # Black 的默认值
+
+[*.java]
+max_line_length = 120
+#+end_src
+
+*注意*: 并非所有编辑器都支持此属性，主要用于语言格式化工具 (如 Black, Prettier)。
+
+** 完整示例: 多语言项目
+
+#+begin_src ini
+# .editorconfig for a polyglot project
+root = true
+
+# 全局默认
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Python
+[*.py]
+indent_size = 4
+max_line_length = 88
+
+# JavaScript / TypeScript / JSON
+[*.{js,ts,jsx,tsx,json}]
+indent_size = 2
+
+# HTML / CSS / SCSS
+[*.{html,css,scss}]
+indent_size = 2
+
+# YAML (对缩进极其敏感)
+[*.{yml,yaml}]
+indent_size = 2
+
+# Makefile (必须 Tab)
+[{Makefile,*.mk}]
+indent_style = tab
+tab_width = 4
+
+# Go (官方强制 Tab)
+[*.go]
+indent_style = tab
+tab_width = 4
+
+# Markdown (保留行尾空格)
+[*.md]
+trim_trailing_whitespace = false
+max_line_length = 80
+
+# Rust
+[*.rs]
+indent_size = 4
+max_line_length = 100
+
+# Shell 脚本
+[*.{sh,bash,zsh}]
+indent_size = 2
+
+# Windows 批处理
+[*.{bat,cmd}]
+end_of_line = crlf
+
+# Git 配置文件
+[.git{config,modules}]
+indent_style = tab
+#+end_src
+
+* EditorConfig 的工作原理
+
+** 编辑器端的实现
+
+以 VS Code 为例:
+
+1. 打开文件 =src/main.py=
+2. VS Code 从 =src/= 向上搜索 =.editorconfig=
+3. 找到 =myproject/.editorconfig= (含 =root = true=)
+4. 解析文件，匹配 =[*.py]= 规则
+5. 应用 =indent_size = 4=, =charset = utf-8= 等配置
+6. 用户按 Tab 键时，自动插入 4 个空格
+
+** 优先级: EditorConfig vs. 编辑器配置
+
+大多数编辑器的优先级:
+
+#+begin_example
+EditorConfig > 项目配置 > 用户配置 > 默认配置
+#+end_example
+
+例如 VS Code:
+
+- *EditorConfig* (=.editorconfig=): 最高优先级
+- *Workspace Settings* (=.vscode/settings.json=): 次之
+- *User Settings* (=~/.config/Code/User/settings.json=): 再次
+- *Default Settings*: 最低
+
+这意味着: *EditorConfig 会覆盖编辑器的个人配置*。
+
+** 与格式化工具的关系
+
+EditorConfig *不是* 代码格式化工具，它只是配置标准。实际格式化由:
+
+- *编辑器内置格式化*: VS Code, IntelliJ
+- *语言格式化工具*: Prettier, Black, rustfmt
+
+很多工具会自动读取 EditorConfig:
+
+*** Prettier (JavaScript / TypeScript)
+
+#+begin_src json
+// package.json
+{
+  "prettier": {
+    "editorconfig": true  // 读取 .editorconfig
+  }
+}
+#+end_src
+
+优先级: =.prettierrc= > =.editorconfig= > Prettier 默认值。
+
+*** Black (Python)
+
+Black 会读取 =.editorconfig= 的 =max_line_length=:
+
+#+begin_src ini
+[*.py]
+max_line_length = 88
+#+end_src
+
+相当于:
+
+#+begin_src toml
+# pyproject.toml
+[tool.black]
+line-length = 88
+#+end_src
+
+*** rustfmt (Rust)
+
+rustfmt 通过 =edition_config_path= 读取 EditorConfig:
+
+#+begin_src toml
+# rustfmt.toml
+edition_config_path = ".editorconfig"
+#+end_src
+
+* 常见问题和最佳实践
+
+** 问题 1: EditorConfig 不生效
+
+*排查步骤*:
+
+1. *检查编辑器是否支持*:
+
+   - VS Code: 内置支持
+   - Vim: 需要安装插件 =editorconfig-vim=
+
+2. *检查 =root = true= 是否设置*:
+
+   #+begin_src sh
+   cat .editorconfig | grep root
+   #+end_src
+
+3. *检查文件匹配模式*:
+
+   #+begin_src ini
+   # 错误: 不会匹配 src/main.py (缺少 **)
+   [src/*.py]
+
+   # 正确: 递归匹配
+   [src/**/*.py]
+   #+end_src
+
+4. *检查配置语法*:
+
+   #+begin_src ini
+   # 错误: 多余的引号
+   indent_size = "4"
+
+   # 正确
+   indent_size = 4
+   #+end_src
+
+5. *重启编辑器*: 某些编辑器不会自动重载 =.editorconfig=
+
+** 问题 2: EditorConfig 与 Prettier 冲突
+
+如果 =.editorconfig= 和 =.prettierrc= 都设置了 =indent_size=，以谁为准？
+
+*答案*: Prettier 自身配置优先。
+
+*解决方案*: 在 Prettier 中启用 EditorConfig 支持:
+
+#+begin_src json
+{
+  "prettier": {
+    "editorconfig": true
+  }
+}
+#+end_src
+
+然后删除 =.prettierrc= 中的冗余配置，只在 =.editorconfig= 中维护。
+
+** 问题 3: 性能问题
+
+在巨大的 monorepo 中 (如包含 10 万个文件)，EditorConfig 的解析可能变慢。
+
+*优化策略*:
+
+1. *使用 =root = true=*: 避免向上搜索到用户主目录
+2. *减少通配符复杂度*:
+
+   #+begin_src ini
+   # 慢: 每次都递归匹配
+   [**/*.js]
+
+   # 快: 只匹配顶层
+   [*.js]
+   #+end_src
+
+3. *缓存*: 某些编辑器会缓存 =.editorconfig= 解析结果
+
+** 最佳实践
+
+*** 1. 每个项目都应有 =.editorconfig=
+
+即使是个人项目，也应该添加 =.editorconfig=。好处:
+
+- 自己在不同机器上编辑代码时，格式一致
+- 将来有协作者时，无需手动同步配置
+- 开源项目的外部贡献者自动遵守格式
+
+*** 2. 提交到 Git
+
+#+begin_src sh
+git add .editorconfig
+git commit -m "Add EditorConfig"
+#+end_src
+
+*不要* 把 =.editorconfig= 加入 =.gitignore=​。
+
+*** 3. 配合 =.gitattributes=
+
+=.editorconfig= 控制编辑器行为，=.gitattributes= 控制 Git 行为:
+
+#+begin_src text
+# .gitattributes
+
+ * text=auto eol=lf
+ *.sh text eol=lf
+ *.bat text eol=crlf
+#+end_src
+
+这样可以确保:
+
+- 编辑器保存时用 =lf=
+- Git 提交时用 =lf=
+- Windows 用户 checkout 时自动转换为 =crlf= (如果需要)
+
+*** 4. 分层配置
+
+对于复杂项目，可以在子目录添加 =.editorconfig=:
+
+#+begin_example
+myproject/
+  .editorconfig         (root = true, 全局规则)
+  frontend/
+    .editorconfig       (不设置 root, 覆盖前端规则)
+  backend/
+    .editorconfig       (不设置 root, 覆盖后端规则)
+#+end_example
+
+子目录的 =.editorconfig= 会继承父目录的规则，并覆盖冲突的配置。
+
+*** 5. 使用注释
+
+=.editorconfig= 支持 =#= 注释:
+
+#+begin_src ini
+# 全局规则: 适用于所有文本文件
+[*]
+charset = utf-8
+end_of_line = lf
+
+# Python: PEP 8 风格
+[*.py]
+indent_size = 4  # 4 空格缩进
+max_line_length = 88  # Black 默认值
+
+# JavaScript: Airbnb 风格
+[*.js]
+indent_size = 2
+#+end_src
+
+*** 6. 定期验证
+
+使用 =editorconfig-checker= 工具验证项目文件是否符合 =.editorconfig=:
+
+#+begin_src sh
+# 安装
+npm install -g editorconfig-checker
+
+# 检查
+editorconfig-checker
+
+# 输出示例
+src/main.py:42: Wrong amount of indentation (expected 4, got 2)
+#+end_src
+
+可以集成到 CI/CD:
+
+#+begin_src yaml
+# .github/workflows/lint.yml
+- name: Check EditorConfig
+  run: editorconfig-checker
+#+end_src
+
+* EditorConfig 的局限性
+
+** 不能替代完整的格式化工具
+
+EditorConfig 只定义 *基本规则* (缩进、行尾、编码)，无法处理:
+
+- 代码风格: 括号位置、空格分布
+- 导入排序: =import= 语句的顺序
+- 复杂格式化: 多行对齐、注释格式
+
+这些需要 Prettier, Black, rustfmt 等工具。
+
+** 配置项有限
+
+EditorConfig 只有 ~10 个标准配置项，无法满足所有需求。例如:
+
+- 无法配置 "字符串用单引号还是双引号"
+- 无法配置 "函数参数换行规则"
+- 无法配置 "import 顺序"
+
+这些需要语言特定的工具 (如 ESLint, Pylint)。
+
+** 编辑器支持参差不齐
+
+虽然主流编辑器都支持，但细节实现不同:
+
+- *VS Code*: =max_line_length= 不生效 (需要 Prettier)
+- *IntelliJ*: 完全支持，包括 =max_line_length=
+- *Vim*: 需要插件，且某些高级功能不支持
+
+** 与 IDE 配置冲突
+
+某些 IDE (如 IntelliJ) 有自己的代码风格配置 (=.idea/codeStyles=)。如果两者冲突，结果不可预测。
+
+*建议*: 要么全部用 EditorConfig，要么全部用 IDE 配置，不要混用。
+
+* 总结: EditorConfig 的定位
+
+EditorConfig 是 *跨编辑器的基础配置标准*，解决的是 "最小公约数" 问题:
+
+- *适用场景*:
+  - 多人协作项目
+  - 使用多种编辑器的团队
+  - 开源项目 (贡献者工具五花八门)
+
+- *不适用场景*:
+  - 单人项目且只用一个编辑器
+  - 需要复杂格式化规则 (用 Prettier/Black)
+
+** 推荐配置方案
+
+*** 小型项目
+
+只用 =.editorconfig=:
+
+#+begin_src ini
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+#+end_src
+
+*** 中型项目
+
+=.editorconfig= + 语言格式化工具:
+
+- =.editorconfig=: 基础规则 (缩进、行尾)
+- =.prettierrc=: JavaScript/TypeScript 格式化
+- =pyproject.toml=: Python Black 配置
+
+*** 大型项目
+
+=.editorconfig= + 多种工具 + CI/CD 验证:
+
+- =.editorconfig=: 基础规则
+- =.prettierrc=, =.eslintrc=, =rustfmt.toml=: 语言特定工具
+- =.github/workflows/=: CI 自动检查格式
+
+** 最后的建议
+
+*不要过度配置*​。EditorConfig 的价值在于 "自动化" 和 "统一"，而不是 "完美"。
+
+一个简单的 =.editorconfig=:
+
+#+begin_src ini
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{js,json,yml}]
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+#+end_src
+
+就足以覆盖 90% 的场景。剩下的细节，留给语言格式化工具。
+
+*记住*: EditorConfig 是工具，不是教条。如果它让你的工作更轻松，就用；如果它制造了更多麻烦，就不用。
