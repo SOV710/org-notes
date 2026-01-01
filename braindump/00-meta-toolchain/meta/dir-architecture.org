@@ -1,0 +1,131 @@
+#+title: Dir Architecture
+#+author: SOV710
+#+date: <2026-01-01 Thu>
+
+* 用户主目录
+
+#+begin_src bash
+$HOME/
+├── proj/              # 开发项目主目录, 使用 git 进行版本管理
+├── workspace/         # 临时试验代码 (不进版本库)
+├── temp/              # 临时下载文件
+├── docs/              # 文档/论文/读书笔记 (Markdown/PDF等)
+│   ├── org/
+│   ├── markdown/
+│   ├── typst/
+│   ├── books/
+│   └── papers/
+├── media/             # 媒体资源
+│   ├── images/
+│   ├── videos/
+│   ├── audio/
+│   └── fonts/
+├── .config/           # 应用配置 (XDG_CONFIG_HOME)
+├── .cache/            # 缓存 (XDG_CACHE_HOME)
+├── .local/
+│   ├── bin/           # 用户级可执行 (XDG 约定; 代替 ~/bin)
+│   ├── share/         # 应用数据 (XDG_DATA_HOME)
+│   └── state/         # 运行状态/日志 (XDG_STATE_HOME, 如 logs/)
+├── .secrets/
+│   ├── keyring/       # 密钥管理器数据库(如 pass store)
+│   ├── tokens/        # API tokens, oauth tokens
+│   └── certs/         # TLS 自签证书, 开发 CA
+├── .env.d/
+├── .ssh/
+└── .gnupg/
+#+end_src
+
+** proj
+这是我的开发主目录, 没什么可说的, 只是我的一切都在这里罢了
+
+我主要的个人项目 (上 git), 我参与的社区项目, 别人的一些被我借鉴/抄代码而被 clone 下来的项目和工程, 我都放在这里。
+
+不过一个主要的问题是关于 dotfiles 的管理，将 dotfiles 从原本五花八门的配置目录迁移到 =~/proj/dotfiles= 下还是挺糟心的，我在开发 =github.com/SOV710/synchron= 项目以解决这个问题
+
+** workspace
+这玩意也是我的开发目录，不过是我的小型试验场
+
+很多小想法和小实验我知道 99% 不会为它开一个项目，这个时候我就会用到 workspace
+
+这个需求还挺多的，比如我有时候想按照别人的技术博客，实现一个小型的 docker, 或者是实验一下 typst 0.14 的新特性, 之类
+
+** temp
+之所以叫 temp 而不是 tmp, 主要是对 zoxide 友好, 在 =z tmp= 的时候不至于跳到 =/tmp= 去
+
+这是我的所有临时文件中转站, 语义上类似于 XDG 的 =Downloads= 的语义, 只是我很不喜欢大写字母这种不 =Unix= 的写法, 另外，我感觉如果使用 =downloads= 的语义的话, 会让我忘记这是一个临时文件夹，最后导致垃圾在这里堆积成山，所以我命名为了 =temp= 以让我记得要把这里的垃圾清走
+
+另外，我很不喜欢 XDG 的命名语义，为什么 Linux 的命名标准会带大写字母，我完全不能理解，也不能接受
+
+不过，"临时文件"这层属性光靠命名是无法维持的，所以我们必须使用更加严厉的方式，比如对每个文件都追踪其存活时间，当其在这个文件夹中待满 7 天后, 就每次启动 shell 的时候就发警告……之类的，虽然不会造成实质性影响，但是会很烦，而我从来容忍不了这么不优雅的东西
+
+** docs
+我的外置大脑，我的 PCIE 口，连接我最大最广阔的知识库，连接我的所有持久化知识
+
+*** org
+我的 org 笔记，我的所有笔记已经基本迁移到 emacs org-mode 了，这里就是我以后的主战场，我的最强大最有拓展性的外置大脑。
+
+未来我一定会成为全世界最懂 emacs 和 org-mode 的人, 但是现在我只是配置了最简单的 doom emacs 和 org-mode 配置, 未来的事情就交给未来吧, 认识到自己永远做不完所有事情也是很重要的品质
+
+*** markdown
+如题，我迁移之前的 markdown 笔记，仅作为备份，一般不使用
+
+*** typst
+我所有的 typst 的模板, 我的所有的 documents 的模板
+
+*** books
+我的赛博书架, 存放着我的所有电子书籍，我看过的和我准备看的东西都放在这里
+
+*** papers
+我的所有论文数据库，存放着我觉得很有价值的论文，收藏在这里
+
+内部的分类，先按照发表年份进行粗分，然后再按照分类进行粗分
+
+应当被 org/ 内的笔记索引
+
+** media
+存放着我的所有二进制的素材数据
+
+包括图片、视频、音乐、字体之类
+
+语义上等同于 XDG 下的 Pictures, Videos, Music 这些
+
+为什么改名，因为我感觉这些文件夹的访问频率太低了，按照频率平均的观点看，根本不配和 =Downloads= 在同一类，遂改名为 =images=, =videos=, =audio=, =fonts=
+
+** .config
+没必要解释
+
+** .local
+关于 =.local/bin= 和 =.local/share/= 怎么管理，仍然是一个严峻的问题
+
+*** .local/bin
+此处存放个人编译/打包的二进制/cron 脚本
+
+用了 fish 的一个坏处就是，脚本不用再单独开一个脚本系统组织起来了，写在 =.config/fish/functions= 就可以了，和 sh 脚本系统完全不是一回事了
+
+不过，这应该算是更现代了吧，I know it
+
+*** .local/lib
+此处存放 jar 包
+
+** .secret
+用户手动管理的，不属于标准位置的，最机密的密钥
+
+但是说实话目前除了能放 =main.kbdx= 以外，没看出和 ​.env.d 的任何区别
+
+可能区别就是 .secret ​​能放不是键值格式的密钥吧​​
+
+*** keyring
+现在唯一的用途就是，放我的 keepassxc 的 =main.kbdx= 数据库
+
+但是原本的设计就是放更多的密钥
+
+** .env.d
+说实话设计和 .secret/ 有点重了，.env.d 是放所有键值格式的密钥的，典型如 api_key
+
+** .gnupg
+
+** .ssh
+
+* 系统级目录
+
+**
