@@ -1,0 +1,763 @@
+#+title: Lean Theorem Prover: From Formal Verification to Mathematical Proofs
+#+author: SOV710
+#+date: <2025-12-27 Sat>
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 为什么需要形式化证明？
+
+在数学和计算机科学中, *证明* 是验证命题正确性的基础。但人类写的证明有两个问题:
+
+1. *容易出错*: 复杂证明可能有几百页，审稿人无法逐行检查
+2. *难以复用*: 证明是自然语言，计算机无法理解和自动推理
+
+形式化证明 (Formal Proof) 用 *机器可验证* 的语言重写数学证明，让计算机检查每一步推理是否正确。
+
+** 经典案例: 四色定理
+
+四色定理 (1976 年证明) 是第一个用计算机辅助证明的重大数学定理:
+
+- 定理: 任何平面地图最多用 4 种颜色着色，使相邻区域颜色不同
+- 证明方法: 枚举 1,936 种配置，每种用计算机验证
+- 争议: 证明太长 (几百页代码)，人类无法检查
+
+*形式化证明的意义*: 用定理证明器 (Theorem Prover) 重新证明，机器自动验证每一步，消除人为错误。
+
+** 软件验证的需求
+
+在安全关键系统 (航空、医疗、金融) 中，软件 bug 可能导致灾难:
+
+- 1996 年 Ariane 5 火箭爆炸: 浮点溢出 bug，损失 3.7 亿美元
+- 2017 年 Equifax 数据泄露: 未修补的漏洞，1.43 亿人信息泄露
+
+*形式验证* (Formal Verification) 用数学方法证明程序正确性:
+
+- 证明: "这个排序算法对任意输入都返回有序数组"
+- 证明: "这个加密协议不存在中间人攻击"
+
+定理证明器是实现形式验证的工具。
+
+* 定理证明器简史
+
+** 第一代: LCF 和 ML (1970s)
+
+*LCF* (Logic for Computable Functions, 1972) 是第一个交互式定理证明器，由 Robin Milner 开发。
+
+核心思想: *小核心 + 策略*
+
+- *内核* (Kernel): 只有几个基本推理规则 (如 modus ponens)，保证正确性
+- *策略* (Tactics): 高层证明自动化工具，最终调用内核
+
+为了实现 LCF，Milner 设计了 *ML 语言* (Meta Language)，这是第一个支持 *类型推导* 和 *代数数据类型* 的函数式语言 (后来演化为 OCaml, F#)。
+
+** 第二代: Coq 和 依赖类型 (1980s-1990s)
+
+*Coq* (1984, 法国 INRIA) 基于 *Calculus of Inductive Constructions* (CIC)，一种依赖类型论。
+
+关键创新:
+
+1. *Curry-Howard 同构*: 类型 = 命题，程序 = 证明
+   - 类型 =forall n : Nat, n + 0 = n= 对应命题 "对任意自然数 n，n + 0 = n"
+   - 该类型的值就是该命题的证明
+
+2. *归纳类型*: 用递归定义数据结构和命题
+   #+begin_src coq
+   Inductive Nat : Type :=
+   | O : Nat
+   | S : Nat -> Nat.
+   #+end_src
+
+3. *策略语言*: 用 =apply=, =induction=, =reflexivity= 等高层命令构造证明
+
+*重大成果*:
+
+- 2004 年: CompCert 编译器，第一个形式化验证的 C 编译器
+- 2013 年: 四色定理的 Coq 形式化证明
+
+** 第三代: Isabelle 和 高阶逻辑 (1990s)
+
+*Isabelle* (1986, 剑桥大学) 基于 *高阶逻辑* (Higher-Order Logic, HOL)。
+
+特点:
+
+- *泛型框架*: 支持多种逻辑 (HOL, ZF 集合论, 模态逻辑)
+- *Sledgehammer*: 调用外部 SMT solver (Z3, E, CVC4) 自动证明
+- *代码生成*: 从证明中提取可执行代码 (Haskell, OCaml, Scala)
+
+*重大成果*:
+
+- seL4 微内核 (2009): 第一个形式化验证的操作系统内核
+
+** 第四代: Lean 和 统一编程与证明 (2010s)
+
+*Lean* (2013, Leonardo de Moura @ Microsoft Research) 是新一代定理证明器，目标:
+
+1. *数学家友好*: 语法接近数学符号，易于学习
+2. *程序员友好*: 作为通用编程语言，支持编译到高效机器码
+3. *强大自动化*: 集成 SMT solver，自动证明简单定理
+4. *大规模数学库*: mathlib 包含超过 100 万行形式化数学
+
+*与前代的区别*:
+
+- Coq: 主要用于软件验证，语法偏函数式编程
+- Isabelle: 主要用于数学证明，依赖外部工具
+- Lean: *编程语言 + 定理证明器* 的统一体，原生支持高性能编译
+
+* Lean 的类型论基础
+
+Lean 基于 *依赖类型论* (Dependent Type Theory)，核心是 *Calculus of Constructions* (CoC) 的扩展。
+
+** 类型层级: Type, Prop, Sort
+
+Lean 有三种宇宙 (Universe):
+
+1. *Prop*: 命题 (可证明或可反驳的陈述)
+   - 例: =2 + 2 = 4= (类型是 =Prop=)
+   - 特性: 证明无关 (Proof Irrelevance)，所有证明等价
+
+2. *Type u*: 数据类型 (可计算的值)
+   - 例: =Nat=, =List Int=, =String=
+   - 层级: =Type 0 : Type 1 : Type 2 : ...= (避免罗素悖论)
+
+3. *Sort u*: 统一表示 (=Prop = Sort 0=, =Type u = Sort (u+1)=)
+
+#+begin_src lean
+#check Nat        -- Type
+#check List Nat   -- Type
+#check 2 + 2 = 4  -- Prop
+#check Prop       -- Type 1
+#check Type       -- Type 1
+#+end_src
+
+** 依赖类型: Pi 类型
+
+*Pi 类型* (Dependent Function Type) 是函数类型的推广:
+
+普通函数类型:
+- =Int -> Int= (输入整数，返回整数)
+
+依赖函数类型:
+- =forall (n : Nat), Vec n= (输入自然数 n，返回长度为 n 的向量)
+- 返回类型 *依赖* 输入值
+
+语法: =(x : A) -> B x= 或 =forall x : A, B x=
+
+#+begin_src lean
+-- 依赖函数: 重复 n 次得到长度为 n 的列表
+def replicate (n : Nat) (a : α) : List α :=
+  List.replicate n a
+
+#check replicate 3 'x'  -- List Char (长度为 3)
+#+end_src
+
+** Curry-Howard 同构
+
+*类型即命题，程序即证明*:
+
+- 命题 =P= 对应类型 =P : Prop=
+- 证明 =p= 对应该类型的值 =p : P=
+
+逻辑联结词对应类型构造器:
+
+#+begin_src lean
+-- 蕴含 (P -> Q)
+theorem modus_ponens (p : P) (h : P -> Q) : Q := h p
+
+-- 合取 (P ∧ Q)
+theorem and_intro (p : P) (q : Q) : P ∧ Q := ⟨p, q⟩
+
+-- 析取 (P ∨ Q)
+theorem or_intro_left (p : P) : P ∨ Q := Or.inl p
+
+-- 全称量词 (∀ x, P x)
+theorem forall_intro (f : forall x : Nat, P x) : forall n, P n := f
+
+-- 存在量词 (∃ x, P x)
+theorem exists_intro (a : Nat) (h : P a) : ∃ x, P x := ⟨a, h⟩
+#+end_src
+
+** 归纳类型
+
+归纳类型 (Inductive Type) 用递归定义数据和命题:
+
+#+begin_src lean
+-- 自然数
+inductive Nat where
+  | zero : Nat
+  | succ : Nat -> Nat
+
+-- 列表
+inductive List (α : Type u) where
+  | nil  : List α
+  | cons : α -> List α -> List α
+
+-- 相等性 (命题)
+inductive Eq (a : α) : α -> Prop where
+  | refl : Eq a a  -- 自反性
+#+end_src
+
+归纳类型自动生成:
+
+- *构造器* (=zero=, =succ=)
+- *递归器* (=Nat.rec=)
+- *归纳原理* (=Nat.recOn=)
+
+#+begin_src lean
+-- 用归纳定义加法
+def add : Nat -> Nat -> Nat
+  | m, Nat.zero   => m
+  | m, Nat.succ n => Nat.succ (add m n)
+
+-- 证明结合律 (用归纳法)
+theorem add_assoc (a b c : Nat) : add (add a b) c = add a (add b c) := by
+  induction c with
+  | zero => rfl  -- 基础情况
+  | succ n ih => simp [add, ih]  -- 归纳步骤
+#+end_src
+
+* Lean 的证明风格
+
+Lean 支持两种证明风格:
+
+1. *Term Mode* (项模式): 直接构造证明项 (函数式风格)
+2. *Tactic Mode* (策略模式): 用命令逐步构造证明 (交互式风格)
+
+** Term Mode: 显式证明项
+
+直接写出证明的函数式表示:
+
+#+begin_src lean
+theorem and_comm (p q : Prop) : p ∧ q -> q ∧ p :=
+  fun ⟨hp, hq⟩ => ⟨hq, hp⟩
+
+theorem impl_trans (p q r : Prop) : (p -> q) -> (q -> r) -> (p -> r) :=
+  fun hpq hqr hp => hqr (hpq hp)
+#+end_src
+
+特点:
+
+- *简洁*: 一行代码完成证明
+- *类型驱动*: 编译器检查类型是否匹配
+- *适合简单定理*: 复杂证明难以手写
+
+** Tactic Mode: 交互式证明
+
+用策略 (Tactics) 逐步分解目标:
+
+#+begin_src lean
+theorem add_comm (a b : Nat) : a + b = b + a := by
+  induction b with
+  | zero =>
+    -- 目标: a + 0 = 0 + a
+    simp [Nat.add_zero, Nat.zero_add]
+  | succ n ih =>
+    -- 目标: a + (n+1) = (n+1) + a
+    -- 归纳假设: a + n = n + a
+    simp [Nat.add_succ, Nat.succ_add, ih]
+#+end_src
+
+常用策略:
+
+- =intro=: 引入假设
+- =apply=: 应用定理
+- =rfl= / =refl=: 自反性 (证明 =a = a=)
+- =simp=: 化简表达式
+- =induction=: 归纳法
+- =cases=: 分类讨论
+- =rw= / =rewrite=: 重写 (用等式替换)
+
+#+begin_src lean
+theorem example_proof (p q : Prop) (hp : p) (hpq : p -> q) : q := by
+  apply hpq  -- 应用 p -> q
+  exact hp   -- 提供 p 的证明
+#+end_src
+
+** 混合风格
+
+实际中常混用两种风格:
+
+#+begin_src lean
+theorem exists_example : ∃ x : Nat, x > 5 := by
+  use 10  -- 策略: 提供 witness
+  norm_num  -- 自动证明 10 > 5
+
+-- 等价的 term mode 写法
+theorem exists_example' : ∃ x : Nat, x > 5 :=
+  ⟨10, by norm_num⟩
+#+end_src
+
+* Lean 作为编程语言
+
+Lean 不仅是证明器，也是 *纯函数式编程语言*，支持编译到高效机器码。
+
+** 基本语法
+
+#+begin_src lean
+-- 函数定义
+def factorial (n : Nat) : Nat :=
+  match n with
+  | 0 => 1
+  | n+1 => (n+1) * factorial n
+
+-- 类型推导
+def double := fun x => x + x  -- Nat -> Nat
+
+-- 递归定义
+def fib : Nat -> Nat
+  | 0 => 0
+  | 1 => 1
+  | n+2 => fib n + fib (n+1)
+
+-- 高阶函数
+def map (f : α -> β) : List α -> List β
+  | [] => []
+  | x :: xs => f x :: map f xs
+#+end_src
+
+** 类型类 (Type Classes)
+
+Lean 的类型类系统类似 Haskell，用于 *ad-hoc 多态*:
+
+#+begin_src lean
+-- 定义类型类
+class Add (α : Type u) where
+  add : α -> α -> α
+
+-- 实例化
+instance : Add Nat where
+  add := Nat.add
+
+instance : Add Int where
+  add := Int.add
+
+-- 泛型函数 (约束类型类)
+def double [Add α] (x : α) : α :=
+  Add.add x x
+
+#eval double 5     -- 10 (Nat)
+#eval double (-3)  -- -6 (Int)
+#+end_src
+
+标准类型类:
+
+- =Inhabited α=: 类型有默认值
+- =BEq α=: 布尔相等
+- =Ord α=: 全序
+- =ToString α=: 字符串转换
+- =Monad m=: Monad 接口
+
+** Monad 和 do 记法
+
+Lean 支持 Monad 抽象，用 =do= 记法处理副作用:
+
+#+begin_src lean
+-- IO Monad
+def main : IO Unit := do
+  let name <- IO.getStdIn >>= fun stdin => stdin.getLine
+  IO.println s!"Hello, {name}!"
+
+-- Option Monad (可能失败的计算)
+def safeDivide (a b : Nat) : Option Nat := do
+  if b == 0 then
+    none
+  else
+    some (a / b)
+
+-- Except Monad (带错误信息)
+def parseNat (s : String) : Except String Nat :=
+  match s.toNat? with
+  | some n => Except.ok n
+  | none => Except.error s!"Invalid number: {s}"
+#+end_src
+
+** 性能: 编译到原生代码
+
+Lean 4 编译器生成高效 C 代码，性能接近手写 C:
+
+#+begin_src bash
+# 编译 Lean 程序
+lean --c fib.c fib.lean
+gcc -O3 fib.c -o fib
+./fib
+#+end_src
+
+性能优化:
+
+- *引用计数*: 自动内存管理 (非 GC)
+- *尾递归优化*: 转换为循环
+- *构造器专门化*: 避免装箱
+
+#+begin_src lean
+-- 尾递归优化
+def sum_tail : List Nat -> Nat -> Nat
+  | [], acc => acc
+  | x :: xs, acc => sum_tail xs (acc + x)
+
+def sum (xs : List Nat) : Nat :=
+  sum_tail xs 0
+#+end_src
+
+基准测试 (斐波那契第 40 项):
+
+- Lean 4: ~0.8 秒
+- Python: ~30 秒
+- OCaml: ~0.5 秒
+- C (gcc -O3): ~0.4 秒
+
+** 与外部代码互操作
+
+Lean 可以调用 C 函数:
+
+#+begin_src lean
+-- 导入 C 函数
+@[extern "my_c_function"]
+opaque myFunction : Nat -> Nat
+
+-- 或者用 FFI
+@[extern c inline "#1 * #1"]
+def square (n : UInt32) : UInt32 := n * n
+#+end_src
+
+* Lean 的生态系统
+
+** Lake: 包管理和构建工具
+
+*Lake* (Lean Make) 是 Lean 4 的官方构建工具:
+
+#+begin_src bash
+# 创建新项目
+lake new MyProject
+cd MyProject
+
+# 添加依赖
+# 编辑 lakefile.lean:
+require mathlib from git
+  "https://github.com/leanprover-community/mathlib4"
+
+# 构建
+lake build
+
+# 运行
+lake exe MyProject
+#+end_src
+
+项目结构:
+
+#+begin_example
+MyProject/
+├── lakefile.lean       -- 构建配置
+├── MyProject.lean      -- 主模块
+├── MyProject/
+│   └── Basic.lean      -- 子模块
+└── lake-packages/      -- 依赖包
+    └── mathlib/
+#+end_example
+
+** 标准库: Lean.* 模块
+
+Lean 4 标准库包含:
+
+*** 数据结构
+
+#+begin_src lean
+import Lean.Data.HashMap
+import Lean.Data.RBTree
+
+-- 哈希表
+def map : HashMap String Nat :=
+  HashMap.empty
+    |>.insert "alice" 25
+    |>.insert "bob" 30
+
+-- 红黑树
+def tree : RBTree Nat compare :=
+  RBTree.empty
+    |>.insert 10
+    |>.insert 5
+    |>.insert 15
+#+end_src
+
+*** 元编程
+
+Lean 支持编写 *宏* 和 *tactics* (元编程):
+
+#+begin_src lean
+import Lean.Elab.Tactic
+
+-- 自定义 tactic
+syntax "my_tactic" : tactic
+
+@[tactic my_tactic]
+def evalMyTactic : Tactic := do
+  -- 获取当前目标
+  let goal <- getMainGoal
+  -- 自动化证明逻辑
+  ...
+#+end_src
+
+*** 解析器组合子
+
+#+begin_src lean
+import Lean.Parser
+
+-- 自定义语法
+syntax "do_twice " term : term
+
+macro_rules
+  | `(do_twice $t) => `($t; $t)
+
+#check do_twice (IO.println "Hi")
+-- 展开为: IO.println "Hi"; IO.println "Hi"
+#+end_src
+
+** mathlib: 数学库
+
+*mathlib* 是 Lean 社区维护的大规模数学库，包含:
+
+- *代数*: 群、环、域、模
+- *分析*: 实数、拓扑、微积分、测度论
+- *数论*: 素数、同余、二次互反律
+- *组合*: 图论、组合优化
+- *逻辑*: 集合论、范畴论
+
+统计 (2024 年):
+
+- 超过 *150 万行* Lean 代码
+- 超过 *10 万个* 定理
+- 超过 *300 位* 贡献者
+
+*** mathlib 的组织结构
+
+#+begin_example
+mathlib4/
+├── Mathlib/
+│   ├── Algebra/           -- 代数结构
+│   │   ├── Group/
+│   │   ├── Ring/
+│   │   └── Field/
+│   ├── Analysis/          -- 分析
+│   │   ├── Calculus/
+│   │   ├── Topology/
+│   │   └── Measure/
+│   ├── Data/              -- 数据结构
+│   │   ├── Nat/
+│   │   ├── List/
+│   │   └── Finset/
+│   ├── NumberTheory/      -- 数论
+│   └── Logic/             -- 逻辑基础
+└── Archive/               -- 经典定理
+    ├── FourColor.lean     -- 四色定理
+    ├── FLT.lean           -- 费马大定理 (进行中)
+    └── PrimeNumberTheorem.lean
+#+end_example
+
+*** mathlib 示例: 群论
+
+#+begin_src lean
+import Mathlib.Algebra.Group.Defs
+
+-- 定义群
+class Group (G : Type u) extends Mul G, One G, Inv G where
+  mul_assoc : ∀ a b c : G, (a * b) * c = a * (b * c)
+  one_mul : ∀ a : G, 1 * a = a
+  mul_one : ∀ a : G, a * 1 = a
+  inv_mul : ∀ a : G, a⁻¹ * a = 1
+
+-- 证明性质
+theorem inv_unique {G : Type*} [Group G] (a b : G) (h : a * b = 1) : b = a⁻¹ := by
+  calc b = 1 * b        := by rw [one_mul]
+       _ = (a⁻¹ * a) * b := by rw [inv_mul]
+       _ = a⁻¹ * (a * b) := by rw [mul_assoc]
+       _ = a⁻¹ * 1       := by rw [h]
+       _ = a⁻¹           := by rw [mul_one]
+#+end_src
+
+*** mathlib 示例: 实数和极限
+
+#+begin_src lean
+import Mathlib.Analysis.Calculus.Deriv.Basic
+
+-- 定义导数
+theorem deriv_polynomial (a b : ℝ) :
+  deriv (fun x => a * x^2 + b * x) = fun x => 2 * a * x + b := by
+  ext x
+  simp [deriv_pow, deriv_mul_const, deriv_add]
+
+-- 连续性
+theorem continuous_polynomial (a b : ℝ) :
+  Continuous (fun x => a * x^2 + b * x) := by
+  continuity
+#+end_src
+
+*** 使用 mathlib
+
+#+begin_src lean
+import Mathlib.Data.Nat.Prime
+
+-- 无穷多个素数
+theorem infinitude_of_primes : ∀ n : Nat, ∃ p ≥ n, Nat.Prime p := by
+  intro n
+  -- 证明省略 (mathlib 已提供)
+  exact Nat.exists_infinite_primes n
+#+end_src
+
+** 形式化数学的里程碑
+
+Lean + mathlib 已经形式化了多个重要定理:
+
+*** 已完成
+
+- *素数定理* (Prime Number Theorem): 素数分布的渐近公式
+- *二次互反律* (Quadratic Reciprocity): 数论基础定理
+- *液体张量实验* (Liquid Tensor Experiment, 2022):
+  - Peter Scholze 的凝聚态数学理论
+  - 6 个月内完成形式化，验证了原始论文
+
+*** 进行中
+
+- *费马大定理* (Fermat's Last Theorem):
+  - 需要形式化椭圆曲线和模形式
+  - 预计 2025-2026 年完成
+
+- *黎曼猜想* (Riemann Hypothesis):
+  - 目前只形式化了前置定义 (解析延拓、泛函方程)
+
+* Lean 的实际应用
+
+** 软件验证
+
+*** 验证编译器优化
+
+#+begin_src lean
+-- 证明常量折叠优化的正确性
+theorem const_fold_correct (a b : Int) :
+  eval (optimize (Add (Const a) (Const b))) = eval (Const (a + b)) := by
+  simp [optimize, eval]
+#+end_src
+
+*** 验证密码学协议
+
+#+begin_src lean
+-- 证明加密方案的安全性
+theorem encryption_correctness (k : Key) (m : Message) :
+  decrypt k (encrypt k m) = m := by
+  simp [decrypt, encrypt, key_inverse]
+#+end_src
+
+** 数学研究
+
+*** 辅助证明发现
+
+数学家用 Lean 探索定理:
+
+#+begin_src lean
+-- 尝试证明某个猜想
+theorem my_conjecture (n : Nat) : P n := by
+  sorry  -- 让 Lean 提示需要什么引理
+
+-- Lean 会报错提示缺少的条件
+-- "需要证明: Q n -> P n"
+#+end_src
+
+*** 检验已有证明
+
+将纸质证明翻译成 Lean，发现原证明的漏洞:
+
+- 2018 年: Lean 发现群论教科书中的证明错误
+- 2021 年: 液体张量实验修正了原论文的技术细节
+
+** 教学
+
+*** 交互式教材
+
+*Natural Number Game* 是用 Lean 教数学归纳法的游戏:
+
+#+begin_src lean
+-- Level 1: 证明 0 + n = n
+theorem zero_add (n : Nat) : 0 + n = n := by
+  induction n with
+  | zero => rfl
+  | succ n ih => rw [add_succ, ih]
+#+end_src
+
+网站: [[https://www.ma.imperial.ac.uk/~buzzard/xena/natural_number_game/]]
+
+*** 形式化课程
+
+许多大学用 Lean 教授:
+
+- 离散数学
+- 编程语言理论
+- 形式化方法
+
+* Lean 4 vs Lean 3
+
+Lean 4 (2021 发布) 是完全重写的版本:
+
+** 主要改进
+
+*** 编译器性能
+
+- Lean 3: 解释器 (慢)
+- Lean 4: 编译到 C (快 10-100 倍)
+
+*** 宏系统
+
+Lean 4 的宏系统更强大:
+
+#+begin_src lean
+-- Lean 4 宏
+macro "unless " c:term " then " t:term : term =>
+  `(if !$c then $t else ())
+#+end_src
+
+*** 标准库重构
+
+- Lean 3: 依赖 mathlib
+- Lean 4: 独立标准库 (Lean.*)
+
+** 迁移
+
+mathlib 从 Lean 3 迁移到 Lean 4 花了 2 年 (2021-2023):
+
+- 自动化工具: =mathport= (语法转换)
+- 手动修复: 策略行为差异
+- 2023 年 7 月: mathlib4 完全替代 mathlib3
+
+* 学习路径
+
+** 初学者
+
+1. *Theorem Proving in Lean 4*:
+   - 官方教程
+   - 网址: [[https://leanprover.github.io/theorem_proving_in_lean4/]]
+
+2. *Functional Programming in Lean*:
+   - 编程导向教程
+   - 网址: [[https://leanprover.github.io/functional_programming_in_lean/]]
+
+3. *Natural Number Game*:
+   - 游戏化学习
+   - 网址: [[https://adam.math.hhu.de/#/g/leanprover-community/nng4]]
+
+** 中级
+
+1. *Mathematics in Lean*:
+   - mathlib 使用指南
+   - 网址: [[https://leanprover-community.github.io/mathematics_in_lean/]]
+
+2. *Metaprogramming in Lean 4*:
+   - 元编程和策略开发
+   - 网址: [[https://leanprover-community.github.io/lean4-metaprogramming-book/]]
+
+** 高级
+
+1. *阅读 mathlib 源码*:
+   - 学习证明技巧
+   - 理解大规模形式化组织
+
+2. *贡献 mathlib*:
+   - 形式化新定理
+   - 参与社区讨论
+
+Welcome to the world of formal verification!
