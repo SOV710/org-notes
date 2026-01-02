@@ -12,15 +12,15 @@
 
 OSI (Open Systems Interconnection) 七层模型是 ISO 在 1984 年制定的理论模型, 虽然实际实现很少完全遵循, 但它提供了一个清晰的概念框架。
 
-| 层级 | 名称                      | 功能简述                          | 典型协议/技术              |
-|----+-------------------------+---------------------------------+--------------------------|
-|  7 | 应用层 (Application)      | 为用户提供网络服务                | HTTP, FTP, SMTP, DNS     |
-|  6 | 表示层 (Presentation)     | 数据格式化、加密、压缩              | TLS, JPEG, MPEG          |
-|  5 | 会话层 (Session)          | 建立、管理和终止会话连接            | NetBIOS, RPC             |
-|  4 | 传输层 (Transport)        | 端到端通信, 可靠性控制              | TCP, UDP                 |
-|  3 | 网络层 (Network)          | 路由与寻址, 跨网络传输              | IP, ICMP, OSPF, BGP      |
-|  2 | 数据链路层 (Data Link)    | 帧传输、错误检测、MAC 寻址          | Ethernet, Wi-Fi, PPP     |
-|  1 | 物理层 (Physical)         | 传输比特流, 物理介质规范            | 电缆, 光纤, 无线信号       |
+| 层级 | 名称                 | 功能简述                | 典型协议/技术          |
+|------+----------------------+------------------------+----------------------|
+|    7 | 应用层 (Application)  | 为用户提供网络服务        | HTTP, FTP, SMTP, DNS |
+|    6 | 表示层 (Presentation) | 数据格式化、加密、压缩     | TLS, JPEG, MPEG      |
+|    5 | 会话层 (Session)      | 建立、管理和终止会话连接    | NetBIOS, RPC         |
+|    4 | 传输层 (Transport)    | 端到端通信, 可靠性控制     | TCP, UDP             |
+|    3 | 网络层 (Network)      | 路由与寻址, 跨网络传输     | IP, ICMP, OSPF, BGP  |
+|    2 | 数据链路层 (Data Link) | 帧传输、错误检测、MAC 寻址 | Ethernet, Wi-Fi, PPP |
+|    1 | 物理层 (Physical)     | 传输比特流, 物理介质规范   | 电缆, 光纤, 无线信号    |
 
 *** 为什么 OSI 没有成为事实标准？
 
@@ -34,12 +34,12 @@ OSI (Open Systems Interconnection) 七层模型是 ISO 在 1984 年制定的理�
 
 Stanford CS144 和实际 Internet 使用的是更简化的四层模型, 也叫 TCP/IP 模型或 Internet 协议栈。
 
-| 层级 | 名称                 | 典型协议              | 主要功能              | 与 OSI 对应 |
-|----+--------------------+---------------------+---------------------+-----------|
-|  4 | 应用层 (Application) | HTTP, SMTP, DNS     | 定义应用程序语义       | 5-7       |
-|  3 | 传输层 (Transport)   | TCP, UDP            | 可靠性、流控、拥塞控制  | 4         |
-|  2 | 网络层 (Network)     | IP, ICMP            | 端到端路由和寻址       | 3         |
-|  1 | 链路层 (Link)        | Ethernet, Wi-Fi     | 单跳帧传输            | 1-2       |
+| 层级 | 名称                | 典型协议         | 主要功能            | 与 OSI 对应 |
+|------+---------------------+-----------------+--------------------+------------|
+|    4 | 应用层 (Application) | HTTP, SMTP, DNS | 定义应用程序语义      |        5-7 |
+|    3 | 传输层 (Transport)   | TCP, UDP        | 可靠性、流控、拥塞控制 |          4 |
+|    2 | 网络层 (Network)     | IP, ICMP        | 端到端路由和寻址      |          3 |
+|    1 | 链路层 (Link)        | Ethernet, Wi-Fi | 单跳帧传输           |        1-2 |
 
 *** 封装原理: 洋葱模型
 
