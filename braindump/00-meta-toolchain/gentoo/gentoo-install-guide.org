@@ -1068,43 +1068,6 @@ sudo emerge -av dev-qt/qtdeclarative gui-apps/quickshell
 - GUI file manager: thunar
 - TUI file manager: yazi
 
-* 目录管理
-
-#+begin_src bash
-$HOME/
-├── bin/               # 大量用于自动化的可执行文件/脚本
-├── proj/              # 开发项目主目录, 使用 git 进行版本管理
-├── data/              # 大型数据集/模型/实验素材 (与源码分离)
-│   ├── datasets/
-│   ├── models/
-│   └── assets/5
-├── docs/              # 文档/论文/读书笔记 (Markdown/PDF等)
-│   ├── books/
-│   ├── papers/
-│   └── notes/
-│   └── courses/
-│   └── personal/
-├── media/             # 媒体资源
-│   ├── images/
-│   ├── videos/
-│   ├── audio/
-│   └── fonts/
-├── workspace/         # 临时试验代码 (不进版本库)
-├── temp/              # 临时下载文件
-├── .config/           # 应用配置 (XDG_CONFIG_HOME)
-├── .cache/            # 缓存 (XDG_CACHE_HOME)
-├── .local/
-│   ├── bin/           # 用户级可执行 (XDG 约定; 代替 ~/bin)
-│   ├── share/         # 应用数据 (XDG_DATA_HOME)
-│   └── state/         # 运行状态/日志 (XDG_STATE_HOME, 如 logs/)
-├── .secrets/
-│   ├── keyring/ # 密钥管理器数据库(如 pass store)
-|   ├── tokens/        # API tokens, oauth tokens
-|   └── certs/         # TLS 自签证书, 开发 CA
-├── .env.d/
-├── .ssh/
-└── .gnupg/
-#+end_src
 
 * 删包流
 
