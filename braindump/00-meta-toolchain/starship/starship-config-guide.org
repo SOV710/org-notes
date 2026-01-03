@@ -1,0 +1,941 @@
+#+title: Starship Configuration Guide: Prompt Customization Directions and Strategies
+#+author: SOV710
+#+date: 2025-01-02
+#+startup: showall
+#+options: toc:2 num:nil
+
+* 文档适用版本
+
+本笔记基于 *Starship v1.24.2* (2024-12-30) 撰写。Starship 是一个快速迭代的项目, 未来版本可能会引入 breaking changes。本文档只记录当前稳定版本的特性, 不包含任何已 deprecated 的配置项。
+
+* Starship 配置体系概览
+
+Starship 的所有配置通过单一 TOML 文件 =~/.config/starship.toml= 完成。配置体系分为三个层次:
+
+1. *Prompt-wide settings*: 全局行为 (format, timeout, scan behavior)
+2. *Module configuration*: 各功能模块的启用/禁用、触发条件、显示格式
+3. *Advanced customization*: 瞬态提示 (transient prompt)、钩子函数、样式系统
+
+** 配置文件位置
+
+默认位置: =~/.config/starship.toml=
+
+通过环境变量自定义:
+
+#+begin_src bash
+export STARSHIP_CONFIG=~/dotfiles/starship.toml
+#+end_src
+
+** 配置文件结构
+
+#+begin_src toml
+# Schema 自动补全 (支持 VSCode/Neovim LSP)
+"$schema" = 'https://starship.rs/config-schema.json'
+
+# 全局配置
+add_newline = true
+command_timeout = 500
+scan_timeout = 30
+format = '$all'
+right_format = ''
+
+# 调色板 (Palette)
+palette = 'catppuccin_mochiato'
+
+[palettes.catppuccin_mochiato]
+rosewater = '#f4dbd6'
+flamingo = '#f0c6c6'
+pink = '#f5bde6'
+# ...
+
+# 模块配置
+[character]
+success_symbol = '[❯](bold green)'
+error_symbol = '[❯](bold red)'
+
+[directory]
+truncation_length = 3
+truncate_to_repo = true
+
+[git_branch]
+symbol = ' '
+format = 'on [$symbol$branch]($style) '
+#+end_src
+
+* 全局配置选项 (Prompt-Wide Settings)
+
+** Format String 系统
+
+=format= 定义了提示符的组成和顺序。三种书写方式:
+
+1. *使用* =$all=: 包含所有启用的模块 (按默认顺序)
+2. *显式列出模块*: 完全控制顺序和包含关系
+3. *混合方式*: =$all= + 自定义位置的特定模块
+
+#+begin_src toml
+# 方式 1: 默认顺序
+format = '$all'
+
+# 方式 2: 自定义顺序
+format = '''
+[┌───────────────────>](bold green)
+[│](bold green)$directory$rust$package
+[└─>](bold green) '''
+
+# 方式 3: 移动特定模块到新位置
+format = '$all$directory$character'
+#+end_src
+
+*** Format String 语法
+
+*变量*: =$module_name= 插入模块输出
+
+#+begin_src toml
+format = '$username@$hostname:$directory'
+#+end_src
+
+*文本组 (Text Group)*: =[content](style)= 格式
+
+#+begin_src toml
+format = '[on](red bold) [$symbol$branch](green)'
+#+end_src
+
+*条件渲染*: =(...)= 包裹的内容, 当内部所有变量为空时整组不显示
+
+#+begin_src toml
+format = '($region) '  # region 为空时整个括号都不显示
+#+end_src
+
+** 超时配置
+
+| 选项            | 默认值 | 说明                 |
+|-----------------+-------+----------------------|
+| =command_timeout= |   500 | 执行外部命令的超时 (ms) |
+| =scan_timeout=    |    30 | 扫描文件系统的超时 (ms) |
+
+#+begin_src toml
+command_timeout = 1000  # 给慢速命令更多时间
+scan_timeout = 10       # 快速扫描网络文件系统
+#+end_src
+
+** 符号链接处理
+
+#+begin_src toml
+follow_symlinks = false  # 不跟随符号链接检查目录类型
+#+end_src
+
+*适用场景*: 当项目目录通过 NFS/CIFS 挂载时, 禁用可显著提速。
+
+** 行为配置
+
+#+begin_src toml
+add_newline = false      # 提示符前不插入空行
+#+end_src
+
+* Module 配置的三个维度
+
+每个 module 都可以从三个维度配置:
+
+1. *触发条件 (Detection)*: 何时显示该模块
+2. *显示内容 (Format)*: 显示什么信息, 如何排版
+3. *样式 (Style)*: 颜色、粗体、下划线等视觉效果
+
+** 触发条件配置
+
+所有检测类模块都支持:
+
+- =detect_extensions=: 匹配文件扩展名 (如 =['py', 'ipynb']=)
+- =detect_files=: 匹配完整文件名 (如 =['Cargo.toml', 'Cargo.lock']=)
+- =detect_folders=: 匹配目录名 (如 =['node_modules']=)
+- =detect_env_vars=: 匹配环境变量 (如 =['VIRTUAL_ENV']=)
+
+*Negative Matching*: 使用 =!= 前缀排除
+
+#+begin_src toml
+[nodejs]
+detect_extensions = ['js', 'mjs', 'cjs', 'ts', '!video.ts']
+detect_files = ['package.json', '!package-lock.json']
+#+end_src
+
+*工作原理*: 任何负向匹配命中, 模块 *立即禁用*, 即使有其他正向匹配。
+
+** Format String 配置
+
+每个模块都有 =format= 选项, 定义其输出格式。使用模块特定的变量。
+
+#+begin_src toml
+[git_branch]
+format = 'on [$symbol$branch(:$remote_branch)]($style) '
+# 变量: $symbol, $branch, $remote_branch, $style
+#+end_src
+
+*变量作用域*: 模块变量只能在该模块的 format 中使用, 不能跨模块引用。
+
+** 样式配置
+
+=style= 选项接受 *style string*, 语法:
+
+#+begin_src
+'[modifier] [modifier] fg:<color> bg:<color>'
+#+end_src
+
+*Modifiers*: =bold=, =italic=, =underline=, =dimmed=, =inverted=, =strikethrough=
+
+*Colors*:
+- 标准色: =red=, =green=, =blue=, =yellow=, =purple=, =cyan=, =white=, =black=
+- 高亮色: =bright-red=, =bright-green=, ...
+- 256 色: 数字 =0-255=
+- RGB: =#RRGGBB= 格式
+- 特殊: =prev_fg=, =prev_bg= (继承前一个元素的颜色)
+
+#+begin_src toml
+[character]
+success_symbol = '[❯](bold green)'
+error_symbol = '[❯](bold red)'
+
+[directory]
+style = 'bold cyan'
+
+[git_status]
+style = 'fg:208 bg:#1e1e2e'  # 256色 + RGB背景
+#+end_src
+
+* 模块配置策略
+
+** 按功能分类
+
+*** 1. Shell 状态模块
+
+| 模块         | 显示内容        | 典型场景        |
+|--------------+----------------+----------------|
+| =character=    | 提示符 (❯/✖)   | 区分命令成功/失败 |
+| =cmd_duration= | 命令耗时        | 监控慢命令       |
+| =jobs=         | 后台任务数       | 提醒未完成任务    |
+| =status=       | 退出码          | 调试脚本        |
+| =shell=        | 当前 shell 类型 | 多 shell 环境   |
+
+*配置示例*:
+
+#+begin_src toml
+[character]
+success_symbol = '[➜](bold green)'
+error_symbol = '[✗](bold red)'
+vimcmd_symbol = '[❮](bold green)'  # Vim 模式提示
+
+[cmd_duration]
+min_time = 2000  # 超过 2s 才显示
+format = 'took [$duration]($style) '
+show_notifications = true  # 桌面通知 (长时间命令)
+min_time_to_notify = 45000
+
+[jobs]
+symbol = '✦ '
+number_threshold = 2  # >= 2 个任务才显示数字
+symbol_threshold = 1  # >= 1 个任务显示符号
+#+end_src
+
+*** 2. 路径和版本控制
+
+| 模块        | 显示内容      | 关键配置                             |
+|-------------+--------------+-------------------------------------|
+| =directory=   | 当前目录      | =truncation_length=, =truncate_to_repo= |
+| =git_branch=  | Git 分支     | =ignore_branches=, =truncation_length=  |
+| =git_status=  | Git 工作区状态 | 未跟踪/已修改/已暂存符号                |
+| =git_commit=  | Commit hash  | =commit_hash_length=, =tag_symbol=      |
+| =git_state=   | Git 操作状态  | REBASING/MERGING/BISECTING          |
+| =git_metrics= | 增删行数      | =only_nonzero_diffs=                  |
+
+*配置示例*:
+
+#+begin_src toml
+[directory]
+truncation_length = 4
+truncate_to_repo = true
+truncation_symbol = '…/'
+read_only = ' 🔒'
+format = '[$path]($style)[$read_only]($read_only_style) '
+
+[git_branch]
+symbol = ' '
+format = 'on [$symbol$branch(:$remote_branch)]($style) '
+truncation_length = 20
+truncation_symbol = '…'
+ignore_branches = ['master', 'main']  # 不显示这些分支
+
+[git_status]
+format = '([\[$all_status$ahead_behind\]]($style) )'
+conflicted = '='
+ahead = '⇡${count}'
+behind = '⇣${count}'
+diverged = '⇕⇡${ahead_count}⇣${behind_count}'
+untracked = '?${count}'
+stashed = '\$${count}'
+modified = '!${count}'
+staged = '+${count}'
+renamed = '»${count}'
+deleted = '✘${count}'
+
+[git_metrics]
+disabled = false
+added_style = 'bold green'
+deleted_style = 'bold red'
+format = '[+$added]($added_style)/[-$deleted]($deleted_style) '
+#+end_src
+
+*** 3. 编程语言版本
+
+*检测机制*: 所有语言模块都基于文件/目录检测触发。
+
+| 模块       | 检测文件示例                  | 显示内容          |
+|-----------+---------------------------+------------------|
+| =rust=      | =Cargo.toml=, =*.rs=           | Rust 版本         |
+| =python=    | =*.py=, =requirements.txt=     | Python 版本 + venv |
+| =nodejs=    | =package.json=, =*.js=         | Node.js 版本      |
+| =golang=    | =go.mod=, =*.go=               | Go 版本 + 指令版本 |
+| =java=      | =pom.xml=, =*.java=            | Java 版本         |
+| =ruby=      | =Gemfile=, =*.rb=              | Ruby 版本         |
+
+*通用配置模式*:
+
+#+begin_src toml
+[rust]
+format = 'via [$symbol($version )]($style)'
+symbol = '🦀 '
+detect_extensions = ['rs']
+detect_files = ['Cargo.toml', 'Cargo.lock']
+detect_folders = []
+style = 'bold red'
+disabled = false
+
+[python]
+format = 'via [${symbol}${pyenv_prefix}(${version} )(\($virtualenv\) )]($style)'
+symbol = '🐍 '
+pyenv_version_name = false
+detect_extensions = ['py', 'ipynb']
+detect_files = ['.python-version', 'Pipfile', 'requirements.txt']
+detect_folders = ['.venv', 'venv']
+detect_env_vars = ['VIRTUAL_ENV', 'CONDA_DEFAULT_ENV']
+#+end_src
+
+*优化策略*: 只保留常用语言, 禁用不需要的:
+
+#+begin_src toml
+[java]
+disabled = true
+
+[kotlin]
+disabled = true
+
+[haskell]
+disabled = true
+#+end_src
+
+*** 4. 云服务和容器
+
+| 模块           | 显示内容               | 触发条件                    |
+|----------------+-----------------------+----------------------------|
+| =aws=            | AWS 账户 + 区域        | =AWS_PROFILE= 或 credentials |
+| =gcloud=         | GCP 项目 + 区域        | =~/.config/gcloud/=          |
+| =azure=          | Azure 订阅            | =~/.azure/=                  |
+| =kubernetes=     | K8s context + 命名空间 | =KUBECONFIG= 或 =~/.kube/=     |
+| =docker_context= | Docker context        | =docker-compose.yml= 等      |
+| =container=      | 容器环境名              | 检测容器环境变量              |
+
+*配置示例*:
+
+#+begin_src toml
+[aws]
+format = 'on [$symbol($profile )(\($region\) )]($style)'
+symbol = '☁️ '
+[aws.region_aliases]
+ap-northeast-1 = 'tokyo'
+us-east-1 = 'virginia'
+[aws.profile_aliases]
+CompanyGroupFrobozzOnCallAccess = 'Frobozz'
+
+[kubernetes]
+disabled = false
+format = 'on [⛵ ($user on )($cluster in )$context \($namespace\)](dimmed green) '
+detect_files = ['k8s']
+contexts = [
+  { context_pattern = "dev.local.cluster.k8s", style = "green", symbol = "💔 " },
+]
+
+[docker_context]
+format = 'via [$symbol$context]($style) '
+symbol = '🐳 '
+only_with_files = true
+detect_files = ['docker-compose.yml', 'Dockerfile']
+#+end_src
+
+** 模块禁用的两种方式
+
+1. *完全禁用*:
+
+#+begin_src toml
+[package]
+disabled = true
+#+end_src
+
+2. *从 format 中移除*:
+
+#+begin_src toml
+# 显式 format 不包含 $package
+format = '$username$hostname$directory$git_branch$character'
+#+end_src
+
+* Advanced Configuration: 高级定制
+
+** Right Prompt (右侧提示符)
+
+Starship 支持在同一行输入位置右侧显示信息。
+
+*支持的 shell*: fish, zsh, elvish, xonsh, cmd, nushell, bash (需要 Ble.sh v0.4+)
+
+#+begin_src toml
+# 左侧简洁
+format = '$character'
+
+# 右侧显示所有信息
+right_format = '''
+$cmd_duration\
+$git_branch\
+$git_status\
+$rust\
+$python\
+$nodejs\
+'''
+#+end_src
+
+*效果*:
+
+#+begin_example
+▶                         on  main [!] via 🦀 v1.70.0 took 2s
+#+end_example
+
+** Transient Prompt (瞬态提示符)
+
+*功能*: 历史命令的提示符简化显示, 只保留当前行的完整提示符。
+
+*支持的 shell*: fish, bash (Ble.sh v0.4+), PowerShell, Cmd
+
+*** Fish 配置
+
+#+begin_src fish
+# ~/.config/fish/config.fish
+
+function starship_transient_prompt_func
+  starship module character
+end
+
+starship init fish | source
+enable_transience
+#+end_src
+
+*自定义右侧瞬态提示*:
+
+#+begin_src fish
+function starship_transient_rprompt_func
+  starship module time
+end
+#+end_src
+
+*** Bash 配置 (with Ble.sh)
+
+#+begin_src bash
+# ~/.blerc 或 ~/.config/blesh/init.sh
+
+bleopt prompt_ps1_transient='trim'
+
+# 左侧瞬态提示
+bleopt prompt_ps1_final='$(starship module character)'
+
+# 右侧瞬态提示
+bleopt prompt_rps1_final='$(starship module time)'
+#+end_src
+
+** Continuation Prompt (续行提示符)
+
+*功能*: 多行输入时, 后续行的提示符。
+
+*支持的 shell*: bash, zsh, PowerShell
+
+#+begin_src toml
+continuation_prompt = '▶▶ '
+#+end_src
+
+*默认值*: ='[∙](bright-black) '=
+
+** 自定义 Pre-Prompt 和 Pre-Exec 钩子
+
+*** Bash 示例
+
+#+begin_src bash
+# ~/.bashrc
+
+# 在提示符绘制前执行
+function blastoff() {
+    echo "🚀"
+}
+starship_precmd_user_func="blastoff"
+
+# 在命令执行前运行
+function pre_exec() {
+    echo "Executing: $1"
+}
+trap pre_exec DEBUG  # 必须在 starship init 之前
+set -o functrace
+eval $(starship init bash)
+set +o functrace
+#+end_src
+
+*** PowerShell 示例
+
+#+begin_src powershell
+# $PROFILE
+
+function Invoke-Starship-PreCommand {
+    $host.ui.Write("🚀")
+}
+
+Invoke-Expression (&starship init powershell)
+#+end_src
+
+** 修改终端窗口标题
+
+*Bash / Zsh*:
+
+#+begin_src bash
+# ~/.bashrc 或 ~/.zshrc
+
+function set_win_title() {
+    echo -ne "\033]0; $(basename "$PWD") \007"
+}
+
+# Bash
+starship_precmd_user_func="set_win_title"
+
+# Zsh
+precmd_functions+=(set_win_title)
+#+end_src
+
+* 样式系统 (Style Strings)
+
+** 基础语法
+
+#+begin_src
+'[modifier] [modifier] fg:<color> bg:<color>'
+#+end_src
+
+*Modifiers*:
+- =bold=
+- =italic=
+- =underline=
+- =dimmed=
+- =inverted= (前景背景互换)
+- =strikethrough=
+- =blink= (大多终端默认禁用)
+- =hidden= (iTerm 不支持)
+
+*示例*:
+
+#+begin_src toml
+style = 'bold fg:green bg:blue'
+style = 'underline bg:#bf5700'
+style = 'bold italic fg:purple'
+#+end_src
+
+** 颜色系统
+
+*** 1. 标准 16 色
+
+=black=, =red=, =green=, =yellow=, =blue=, =purple=, =cyan=, =white=
+
+*高亮版本*: 加 =bright-= 前缀
+
+#+begin_src toml
+style = 'bright-red'
+style = 'fg:bright-cyan bg:black'
+#+end_src
+
+*** 2. 256 色 (ANSI)
+
+使用数字 =0-255=
+
+#+begin_src toml
+style = 'fg:27'     # 亮蓝
+style = 'bold fg:208'  # 橙色
+#+end_src
+
+*** 3. RGB 真彩色
+
+=#RRGGBB= 格式
+
+#+begin_src toml
+style = 'fg:#af8700'
+style = 'bg:#1e1e2e'
+#+end_src
+
+*** 4. 特殊颜色值
+
+- =prev_fg= / =prev_bg=: 继承前一元素的颜色
+- =none=: 禁用所有样式 (覆盖其他设置)
+
+#+begin_src toml
+format = '[$symbol](red)[$branch](prev_fg underline)'
+# branch 继承 symbol 的红色, 并加下划线
+#+end_src
+
+** Palette 系统 (颜色调色板)
+
+*用途*: 集中定义颜色方案, 便于主题切换。
+
+#+begin_src toml
+palette = 'catppuccin_mochiato'
+
+[palettes.catppuccin_mochiato]
+rosewater = '#f4dbd6'
+flamingo = '#f0c6c6'
+pink = '#f5bde6'
+mauve = '#c6a0f6'
+red = '#ed8796'
+maroon = '#ee99a0'
+peach = '#f5a97f'
+yellow = '#eed49f'
+green = '#a6da95'
+teal = '#8bd5ca'
+sky = '#91d7e3'
+sapphire = '#7dc4e4'
+blue = '#8aadf4'
+lavender = '#b7bdf8'
+
+[palettes.nord]
+polar_night = '#2e3440'
+snow_storm = '#eceff4'
+frost = '#88c0d0'
+aurora_red = '#bf616a'
+aurora_orange = '#d08770'
+aurora_yellow = '#ebcb8b'
+aurora_green = '#a3be8c'
+aurora_purple = '#b48ead'
+#+end_src
+
+*使用方式*:
+
+#+begin_src toml
+[directory]
+style = 'bold blue'  # 使用 palette 中定义的 blue
+
+[git_branch]
+style = 'fg:green bg:polar_night'  # 组合 palette 颜色
+#+end_src
+
+*切换主题*:
+
+#+begin_src toml
+palette = 'nord'  # 只需改一行
+#+end_src
+
+* 实战配置策略
+
+** 策略 1: 极简配置 (Minimal)
+
+*目标*: 只显示核心信息, 最快响应。
+
+#+begin_src toml
+format = '''
+$directory\
+$git_branch\
+$git_status\
+$character
+'''
+
+[directory]
+truncation_length = 3
+truncate_to_repo = true
+
+[git_branch]
+format = '[$symbol$branch]($style) '
+
+[git_status]
+format = '([$all_status$ahead_behind]($style) )'
+
+[character]
+success_symbol = '[❯](bold green)'
+error_symbol = '[❯](bold red)'
+
+# 禁用所有语言模块
+[rust]
+disabled = true
+[python]
+disabled = true
+[nodejs]
+disabled = true
+# ... 其他语言
+#+end_src
+
+** 策略 2: 开发者配置 (Developer-Focused)
+
+*目标*: 显示常用语言版本、Git 信息、执行时间。
+
+#+begin_src toml
+format = '''
+$username\
+$hostname\
+$directory\
+$git_branch\
+$git_status\
+$rust\
+$python\
+$nodejs\
+$golang\
+$cmd_duration\
+$line_break\
+$character
+'''
+
+[cmd_duration]
+min_time = 1000
+format = 'took [$duration]($style) '
+
+[git_branch]
+format = 'on [$symbol$branch(:$remote_branch)]($style) '
+
+[git_status]
+ahead = '⇡${count}'
+behind = '⇣${count}'
+diverged = '⇕⇡${ahead_count}⇣${behind_count}'
+
+[rust]
+format = 'via [$symbol($version )]($style)'
+
+[python]
+format = 'via [$symbol$pyenv_prefix($version )(\($virtualenv\) )]($style)'
+detect_extensions = ['py', 'ipynb']
+
+[nodejs]
+format = 'via [$symbol($version )]($style)'
+detect_files = ['package.json']
+#+end_src
+
+** 策略 3: 双栏配置 (Two-Line / Right Prompt)
+
+*目标*: 左侧显示核心信息, 右侧显示辅助信息。
+
+#+begin_src toml
+# 左侧: 路径 + Git + 语言
+format = '''
+$directory\
+$git_branch\
+$git_status\
+$rust\
+$python\
+$line_break\
+$character
+'''
+
+# 右侧: 时间 + 命令耗时 + 云服务
+right_format = '''
+$cmd_duration\
+$time\
+$aws\
+$kubernetes
+'''
+
+[time]
+disabled = false
+format = '[$time]($style) '
+time_format = '%T'
+
+[cmd_duration]
+min_time = 0  # 总是显示
+
+[kubernetes]
+disabled = false
+format = '[$symbol$context( \($namespace\))]($style) '
+#+end_src
+
+** 策略 4: 性能优化配置
+
+*问题*: 网络文件系统 (NFS/SMB) 或大型仓库导致 prompt 卡顿。
+
+*优化方向*:
+
+1. 减少文件扫描
+
+#+begin_src toml
+scan_timeout = 10  # 降低扫描超时
+follow_symlinks = false  # 不跟随符号链接
+#+end_src
+
+2. 禁用不需要的模块
+
+#+begin_src toml
+[git_metrics]
+disabled = true  # 耗时的 git diff 统计
+
+[git_status]
+disabled = false
+# 或者只检查关键状态
+ahead = '⇡'
+behind = '⇣'
+diverged = '⇕'
+untracked = ''
+stashed = ''
+modified = ''
+#+end_src
+
+3. 使用环境变量触发
+
+#+begin_src toml
+[python]
+detect_extensions = []  # 不通过文件扩展名触发
+detect_files = []
+detect_env_vars = ['VIRTUAL_ENV']  # 只通过环境变量
+#+end_src
+
+* 调试和故障排查
+
+** 查看当前配置
+
+#+begin_src bash
+starship explain
+#+end_src
+
+*输出*: 当前显示的每个模块的配置和数据来源。
+
+** 启用调试日志
+
+#+begin_src bash
+# 设置日志级别
+export STARSHIP_LOG=trace
+
+# 针对特定模块
+starship module rust
+#+end_src
+
+** 性能分析
+
+#+begin_src bash
+starship timings
+#+end_src
+
+*输出*: 每个模块的执行耗时, 快速定位慢模块。
+
+** 配置验证
+
+#+begin_src bash
+starship config
+#+end_src
+
+*功能*: 检查 =starship.toml= 语法错误。
+
+** 常见问题
+
+*** 1. 模块不显示
+
+*检查顺序*:
+1. 模块是否在 =format= 中?
+2. =disabled = false= ?
+3. 检测条件是否满足?
+4. 用 =starship explain= 查看原因
+
+*** 2. 图标显示为方块
+
+*原因*: 终端未使用 Nerd Font。
+
+*解决*: 安装 Nerd Font (如 =FiraCode Nerd Font=), 并在终端配置中设置。
+
+*** 3. 提示符延迟高
+
+*排查*:
+1. =starship timings= 找到慢模块
+2. 检查是否在网络文件系统
+3. 降低 =scan_timeout= 或 =command_timeout=
+4. 禁用 =git_metrics=
+
+* Ghostty 特定注意事项
+
+Ghostty 是一款现代终端模拟器, 对 Starship 的支持情况:
+
+1. *Right Prompt*: Ghostty 支持 right prompt (通过标准 escape sequences)
+2. *True Color*: 完整支持 24-bit RGB 颜色
+3. *Ligatures*: 支持字体连字 (需要 Nerd Font)
+4. *Transient Prompt*: 支持 (基于 shell 实现)
+
+*推荐配置*:
+
+#+begin_src toml
+# 利用 Ghostty 的真彩色支持
+[directory]
+style = 'bold fg:#8aadf4'
+
+[git_branch]
+style = 'fg:#a6da95'
+
+# 使用 Right Prompt
+right_format = '$cmd_duration$time'
+#+end_src
+
+* 配置文件管理最佳实践
+
+** 1. 版本控制
+
+#+begin_src bash
+# 符号链接到 dotfiles 仓库
+ln -s ~/dotfiles/starship.toml ~/.config/starship.toml
+#+end_src
+
+** 2. 条件配置 (基于主机)
+
+Starship 本身不支持条件配置, 但可以通过 shell 脚本实现:
+
+#+begin_src bash
+# ~/.bashrc
+
+if [[ $(hostname) == "work-laptop" ]]; then
+    export STARSHIP_CONFIG=~/.config/starship-work.toml
+else
+    export STARSHIP_CONFIG=~/.config/starship-personal.toml
+fi
+
+eval "$(starship init bash)"
+#+end_src
+
+** 3. 模块化配置 (不支持)
+
+*注意*: Starship 不支持 =include= 或 =import=。所有配置必须在单一文件中。
+
+** 4. 配置测试
+
+#+begin_src bash
+# 使用临时配置测试
+STARSHIP_CONFIG=~/test-starship.toml bash
+#+end_src
+
+* 总结: 配置决策树
+
+#+begin_example
+是否需要高性能? (网络文件系统/大型仓库)
+├─ 是 → 极简配置 + 禁用慢模块 (git_metrics, 多数语言检测)
+└─ 否
+    │
+    ├─ 主要开发场景?
+    │   ├─ 单语言项目 → 只启用该语言模块
+    │   ├─ 多语言项目 → 启用所有常用语言
+    │   └─ 云原生开发 → 启用 k8s, docker, aws/gcp
+    │
+    ├─ 屏幕宽度?
+    │   ├─ 窄屏 (<100 列) → 双行配置或 right_format
+    │   └─ 宽屏 → 单行配置
+    │
+    └─ 视觉偏好?
+        ├─ 极简 → 少符号, 短 format, 无颜色
+        └─ 丰富 → Palette 系统, 多符号, 充分利用颜色
+#+end_example
+
+*核心原则*:
+1. 只启用真正需要的模块
+2. 优先使用环境变量触发而非文件扫描
+3. 针对慢速环境 (网络盘, WSL) 激进优化
+4. 定期用 =starship timings= 审查性能
