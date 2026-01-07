@@ -1,0 +1,166 @@
+#+title: Spaced Repetition Systems' best practice
+#+author: SOV710
+#+date: <2026-01-07 Wed>
+
+SRS (Spaced Repetition Systems), 即间隔重复系统, 理论上可以让每一个人记住一切能记住的东西, 前提是: *要按照最佳实践进行制卡*
+
+制卡之前, 要先明白制卡的本质: 「设计任务」
+
+「设计」的是什么「任务」? 对于 SR 来说, 设计的一般是「提取」 (Retrieval) 任务。「提取」可以训练什么能力？取决于卡片的设计思路。
+
+提取 (Retrieval) 是 SRS 有别于传统学习模式的关键。仅仅简单回顾材料 (如多读几遍) 既没有加强记忆. 更不能增进问题解决能力。
+而「提取」往往可以。这种通过「提取以掌握」的现象也被称为「测试效应」, 因为往往发生在做自我测试时, 故此得名。它形似学校考试, 目的上又有所相反: 「提取练习」是为了从测试中进行学习, 而非「评估」学习成果。
+
+SRS 的设计目的便是实现测试效应。如果想用它强化某方面的理解, 那你必须学会卡片化相关的全部细节, 一个不漏地做提取。
+
+* 学习的本质
+
+学习和记忆没有区别, 「理解」本质上是在赋予一些知识以另外的「意义」, 使其变得良构, 从而方便转化为长时记忆。
+
+我们可以建立这样一个模型: 世界中的知识是无穷的. 感官中能接受的知识是世界知识的一小部分, 然后「工作记忆」能储存的记忆又是感官接受知识的一小部分 (我们一般将「工作记忆」类比为「内存」, 即「Memory」), 最后, 「工作记忆」中的一部分「落盘」, 进入了「长期记忆」 (我们也一般称之为「存储」, 即「Disk」)
+
+这个模型中, 唯一造成这一个「学习流」被木桶效应阻塞的点是「工作记忆」的局限性, 有理论证明, 「工作记忆」的总大小差不多只有几十个到几百个 B 的级别, 甚至达不到 KB 级别。所以, 学习的主要课题, 就是怎么将「工作记忆」尽可能得「落盘」, 转化为长期记忆。
+
+这就是 SRS 在做的工作。
+
+* 如何制卡
+
+** 制卡的多项原则
+
+*原则1*: 对于同一个卡面, 只能有一个答案。有时候这是因为上下文不够充分导致的, 你需要为这种卡片多提供一些有效的线索。
+
+*原则2*: 在数量上, 需要尽可能地多制卡, 将知识尽量元素化, 让每张卡的问题原子化。让卡的数量变多, 让每张卡的复习难度再低一点。
+
+*原则3*: 让问题尽量简短, 并且尽量使用 basic 类型的卡片。因为当问题变得冗长时, 我们可能会因为其中某些出现的不常见的词或者线索而记住这个卡面的"形状"或者"答案"。"cloze" 类型的卡片容易产生这种问题。
+但是, cloze 卡片确实是一种很有效的卡片, 而且很多时候不适合使用 basic 卡片; 每当不适合使用 basic 卡片时, 你都应当尝试 cloze 卡片。
+
+*原则4*: 少问二元性的问题, 即, 让答案尽量少像是/否的这种格式。
+
+*原则5*: 每张卡片涉及的知识重复的部分应该尽可能少。
+
+*原则6*: 避免使用集合，使用枚举或者"套卡" (cloze 类型卡片的高级形式) 来代替
+
+集合的例子:
+#+begin_quote
+Q: What countries belong to the European Union (2002)?
+A: Austria, Belgium, Denmark, Finland, France, Germany, Greece, Ireland, Italy, Luxembourg, the Netherlands, Portugal, Spain, Sweden, and the United Kingdom.
+#+end_quote
+
+良好性质的枚举:
+#+begin_quote
+Q: Which country hosted a meeting to consider the creation of a European Community of Defence in 1951?
+A: France
+Q: Which countries apart from France joined the European Coal and Steel Community in 1952?
+A: Germany, Italy and the Benelux
+Q: What countries make up the Benelux?
+A: Belgium, Luxembourg, and the Netherlands
+Q: Whose membership did Charles de Gaulle oppose in the 1960s?
+A: that of UK
+Q: Which countries joined the EEC along the UK in 1973?
+A: Ireland and Denmark
+Q: Which country joined the EEC in 1981?
+A: Greece
+Q: Which countries joined the EEC in 1986?
+A: Spain and Portugal
+Q: Which countries joined the EU in 1995?
+A: Austria, Sweden and Finland
+Q: What was the historic course of expansion of the European Union membership?
+A: (1) France and (2) Germany, Italy and the Benelux, (3) UK and (4) Ireland and Denmark, (5) Greece, (6) Spain and Portugal and (7) Austria, Sweden and Finland
+#+end_quote
+
+*原则7*: 避免使用枚举, 它也是一个难以学习的例子, 除非它的性质能被优化到如上述例子一样良好, 不然的话，使用“套卡” (重叠的 cloze)
+
+性质差的枚举:
+#+begin_quote
+Q: What is the sequence of letters in the alphabet?
+A: abcdefghijklmnopqrstuvwxyz
+#+end_quote
+
+** 基于卡片内容的制卡策略
+
+有知识是「事实性知识」, 有些是「过程性知识」, 有些是「概念性」的, 与之对应的有不同的制卡策略
+
+注意, 完美主义不一定是最好的。人类的知识体系分为不同的层次, 如果我们要深刻理解怎么修收音机, 可能需要接触电路理论；如果需要进一步深究电路中的计算, 可能还需要深入学习数学理论。一个显而易见的常识是, 现代人类之所以能构建其这么庞大的知识体系框架, 就是因为「分工体系」将世界上的知识进行巨大的分层, 「没有人会去学习一整套知识」, 要达到我们的目的, 只需要了解这部分知识就行了, 多的知识只是认知负担。
+
+对于 *概念性的卡*, 用定义制卡是最基础的, 除此之外, 我们还可以用 *特性和倾向*, *整体和部分*, *异与同* 来辨析定义。
+
+#+begin_quote
+问: 取鸡身上哪个「类型」的部位做高汤原料？
+
+答: 骨头。（Bones）
+#+end_quote
+
+某些卡片对自己有特殊定义的, 我们还可以使用类似于这种制卡方法:
+
+#+begin_quote
+问: 如果我注意到我在咸口的烹饪时使用了水, 我应该问自己什么？
+
+答: 「我应该用高汤代替吗？」
+#+end_quote
+
+注: 这是在形成一种决策树
+
+对于 *事实性的卡*, 当我们对于背后的原因有疑惑时, 不妨加一张针对「为什么」的解释卡。这对我们了解他们的原理有帮助。但是注意, 不要深陷完美主义的深渊。
+另外, 加一个小提示也是合理的, 比如询问「香菜」时, 加上 (一种味道浓厚的香料), 这样有助于构成知识网络, 也是确保答案唯一性的一个小技巧。
+
+#+begin_quote
+问: 为什么高汤通常没有突出的味道？
+
+答: 为了使它们更广泛地兼容多种菜肴。
+#+end_quote
+
+对于清单类的卡, 使用套卡功能是比较好的选择, 每次只挑选其中一个进行挖空, 即所谓 cloze deletions
+
+#+begin_quote
+问: 典型的鸡肉高汤香料:
+
+？？？
+胡萝卜
+芹菜
+大蒜
+香菜
+答: 洋葱
+
+问: 典型的鸡肉高汤香料:
+
+洋葱
+？？？
+芹菜
+大蒜
+香菜
+答: 胡萝卜
+#+end_quote
+
+对于程序类的卡, 一个程序往往可以被分解为几个关键词: 重要动词是什么；何时转移到下一个动作；哪些是关键形容词、副词, 以及关键的主语、宾语。
+
+鸡肉高汤中的程序相当线性, 而更复杂的程序可能会有分支, 包括特殊情况下的备选项。这样的谓词结构 (Predicate structure) 往往值得写卡。如果分支实在太多, 你可以考虑画一个流程图。如果更加复杂, 可能会构成一个决策树。
+
+(*注*:「谓词 (Predicate) 」—— 简单地讲, =if (A > B) {…}=, 中的 A > B 就是一个谓词, 它决定了你走入下面哪一步)
+
+程序类的卡片的例子（这个例子相当浅显，但我想其依然有效）:
+
+#+begin_quote
+问: 你应该以什么速度加热一锅鸡肉高汤的原料？
+
+答: 慢慢地。
+
+问: 在制作鸡肉高汤时，你应该在什么时候降低火候？
+
+答: 在锅里沸腾后。
+
+问: 在制作鸡肉高汤时，在锅内达到沸腾后，你应该做什么？
+
+答: 将温度降至轻微沸腾。
+
+问: 鸡肉高汤必须炖多长时间？
+
+答: 90 分钟。
+#+end_quote
+
+最后一种卡片类型: 启示卡。当我们将视野放到知识的框架之外, 我们会发现生活中的每个选择都是一次「提取」, 而每一个选择都可以被当成一张「提示」的测试。比如说:
+
+#+begin_quote
+问: 为了保持满冰箱的鸡肉高汤, 我买鸡时一定要用？？？而不是？？？。
+
+答: 买整只鸡；买鸡的部分
+#+end_quote
