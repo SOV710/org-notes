@@ -1,0 +1,48 @@
+#+title: Spaced Repetition System App Selection
+#+author: SOV710
+#+date: <2026-01-08 Thu>
+
+* Anki
+强项:
+- *开源*
+- *最强的跨平台生态*
+- *支持卡片自定义布局*
+- 算法使用 *FSRS*
+- 支持 HTML 渲染 + 富文本
+
+弱项: 上手比较难
+
+* Supermemo
+强项:
+- 历史最悠久的 SRS App
+- 使用自研的 *SM-18* SR 算法
+
+弱项:
+- *闭源*
+- 跨平台生态较弱，对 linux user 极度不友好, 常见于 windows 体系
+
+* Quizlet
+强项;
+- 据说对于学校场景做了不少优化？
+- 学习门槛低
+
+弱项:
+- 各方面能力都不如 Anki / Supermemo
+
+* RemNote
+强项:
+- 支持笔记软件 + SRS 合二为一, 适合不想分别折腾 SRS 和笔记软件的用户
+
+弱项:
+- 各方面能力都不如 Anki / Supermemo
+
+* Mochi
+强项:
+- Markdown 笔记 + SRS 双软件合一
+- *跨平台生态很强*
+
+弱项:
+- 和 Anki 相比，模板字段/共享牌组生态更弱
+
+* Rember
+仍在早期阶段
