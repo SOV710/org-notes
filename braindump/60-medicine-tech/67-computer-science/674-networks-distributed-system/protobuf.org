@@ -1,0 +1,1023 @@
+#+title: Protocol Buffers Configuration Guide: From Wire Format to Best Practices
+#+author: SOV710
+#+date: 2025-01-10
+#+startup: showall
+#+options: toc:2 num:nil
+
+* Protocol Buffers 是什么
+
+Protocol Buffers (protobuf) 是 Google 开发的一种 *语言中立、平台中立* 的结构化数据序列化格式。简单说, 就是比 JSON/XML 更快、更小、更严格的数据交换格式。
+
+** 为什么需要 Protobuf
+
+在 protobuf 出现之前 (2001 年之前), Google 内部的服务间通信主要用 XML。但 XML 有几个致命问题:
+
+1. *体积大*: 大量的标签冗余 (=<name>John</name>=)
+2. *解析慢*: 需要构建 DOM 树或者写复杂的 SAX 解析器
+3. *无 schema*: 数据格式在运行时才知道, 容易出错
+4. *无版本控制*: 字段变更会导致兼容性问题
+
+Google 的工程师们受够了, 于是在 2001 年左右开发了第一版 protobuf。2008 年开源。
+
+** Protobuf vs. JSON
+
+| 特性     | Protobuf              | JSON               |
+|----------+-----------------------+--------------------|
+| 体积     | *小* (二进制, 紧凑编码)    | 大 (文本, 冗余)      |
+| 速度     | *快* (无需解析文本)        | 慢 (文本解析)        |
+| Schema   | *强制* (必须定义 .proto)  | 可选 (JSON Schema) |
+| 人类可读  | *否* (二进制)            | 是 (文本)           |
+| 向后兼容性 | *内建支持*               | 手动处理            |
+| 跨语言支持 | 优秀 (官方支持 20+ 语言) | 优秀 (几乎所有语言)   |
+| 浏览器支持 | 需要库                 | *原生支持*            |
+
+简单说: *Protobuf 是给机器看的, JSON 是给人看的*
+
+** Protobuf 的版本
+
+- *proto2* (2008): 第一个开源版本, 支持 =required/optional= 字段
+- *proto3* (2016): 简化版本, 移除 =required=, 默认值语义改变
+- *Editions* (2023+): 统一 proto2/proto3, 允许逐特性迁移
+
+*建议*: 新项目用 proto3 或 Editions。proto2 只在维护老代码时用。
+
+* .proto 文件语法基础
+
+Protobuf 使用 =.proto= 文件定义数据结构, 类似于 C 的头文件或者 IDL (Interface Definition Language)。
+
+** 最简单的例子
+
+#+begin_src protobuf
+syntax = "proto3";
+
+package tutorial;
+
+message Person {
+  string name = 1;
+  int32 age = 2;
+  repeated string emails = 3;
+}
+#+end_src
+
+编译后会生成对应语言的代码 (C++/Java/Python/Go/Rust...), 提供:
+
+- 序列化方法: =person.SerializeToString()=
+- 反序列化方法: =Person.ParseFromString(data)=
+- 字段访问器: =person.name()=, =person.set_name("Alice")=
+
+** 字段编号 (Field Number)
+
+*最重要的规则*: 每个字段后面的数字 (=1=, =2=, =3=) 叫做 *字段编号* (field number), 用于在二进制格式中标识字段。
+
+*** 编号规则
+
+- 编号必须 *唯一*
+- 范围: 1 ~ 536,870,911 (2^29 - 1)
+- *保留区间*:
+  - =19000~19999=: protobuf 内部保留
+  - =1~15=: 用 1 字节编码 (推荐给常用字段)
+  - =16~2047=: 用 2 字节编码
+  - =2048+=: 用 3+ 字节编码
+
+*黄金规则*: 字段编号 *永远不要重用*! 一旦分配, 即使字段删除了, 编号也要保留 (用 =reserved= 标记)。
+
+#+begin_src protobuf
+message Person {
+  reserved 2, 4 to 6;  // 这些编号永远不再使用
+  reserved "old_field"; // 这个名字也不再使用
+
+  string name = 1;
+  int32 age = 3;
+}
+#+end_src
+
+** 字段类型
+
+*** 标量类型 (Scalar Types)
+
+| Proto 类型  | 说明              | C++ 类型        | 默认值    |
+|-----------+-----------------+---------------+---------|
+| =double=    | 64 位浮点         | =double=        | =0.0=     |
+| =float=     | 32 位浮点         | =float=         | =0.0=     |
+| =int32=     | 变长编码 32 位整数   | =int32_t=       | =0=       |
+| =int64=     | 变长编码 64 位整数   | =int64_t=       | =0=       |
+| =uint32=    | 变长编码无符号 32 位 | =uint32_t=      | =0=       |
+| =uint64=    | 变长编码无符号 64 位 | =uint64_t=      | =0=       |
+| =sint32=    | *带符号* 变长编码   | =int32_t=       | =0=       |
+| =sint64=    | *带符号* 变长编码   | =int64_t=       | =0=       |
+| =fixed32=   | 固定 4 字节       | =uint32_t=      | =0=       |
+| =fixed64=   | 固定 8 字节       | =uint64_t=      | =0=       |
+| =sfixed32=  | 固定 4 字节有符号   | =int32_t=       | =0=       |
+| =sfixed64=  | 固定 8 字节有符号   | =int64_t=       | =0=       |
+| =bool=      | 布尔值            | =bool=          | =false=   |
+| =string=    | UTF-8 字符串      | =std::string=   | ==""=     |
+| =bytes=     | 任意字节序列        | =std::string=   | ==""=     |
+
+*** 何时用 =int32= vs =sint32= vs =fixed32=
+
+*变长编码 (Varint)*: =int32=, =int64=, =uint32=, =uint64=
+
+- 小数字用少字节 (1 字节编码 0~127)
+- *负数很低效*: =-1= 需要 10 字节 (因为补码表示)
+
+*带符号变长编码 (ZigZag)*: =sint32=, =sint64=
+
+- 用 ZigZag 编码: 0 → 0, -1 → 1, 1 → 2, -2 → 3...
+- 负数也高效
+
+*固定长度*: =fixed32=, =fixed64=, =sfixed32=, =sfixed64=
+
+- 总是用固定字节数
+- *适合大数字* (> 2^28)
+
+*选择建议*:
+
+- 非负数且通常较小: =uint32=
+- 可能为负且通常绝对值较小: =sint32=
+- 总是很大的数字 (如时间戳): =fixed64=
+- 不确定就用 =int32= (默认选择)
+
+*** 复合类型
+
+*枚举 (Enum)*
+
+#+begin_src protobuf
+enum PhoneType {
+  PHONE_TYPE_UNSPECIFIED = 0;  // proto3 必须有 0 值
+  PHONE_TYPE_MOBILE = 1;
+  PHONE_TYPE_HOME = 2;
+  PHONE_TYPE_WORK = 3;
+}
+
+message PhoneNumber {
+  string number = 1;
+  PhoneType type = 2;
+}
+#+end_src
+
+*重要*: proto3 的枚举 *必须* 有一个值为 0 的枚举值, 且按惯例命名为 =XXX_UNSPECIFIED= 。
+
+*嵌套消息 (Nested Message)*
+
+#+begin_src protobuf
+message Person {
+  string name = 1;
+
+  message Address {
+    string street = 1;
+    string city = 2;
+  }
+
+  Address address = 2;
+}
+#+end_src
+
+*其他消息类型*
+
+#+begin_src protobuf
+message SearchRequest {
+  string query = 1;
+  int32 page_number = 2;
+  Person requester = 3;  // 引用其他消息
+}
+#+end_src
+
+** 字段修饰符
+
+*** =repeated=: 数组/列表
+
+#+begin_src protobuf
+message Person {
+  repeated string emails = 1;
+  repeated PhoneNumber phones = 2;
+}
+#+end_src
+
+- 可以有 0 个或多个值
+- 顺序保留
+- 在二进制中, =repeated= 字段的元素可以 *打包* (packed) 编码以节省空间
+
+*** =optional= (proto3 中需要显式声明)
+
+#+begin_src protobuf
+syntax = "proto3";
+
+message Person {
+  optional string middle_name = 1;
+}
+#+end_src
+
+- proto3 默认所有字段都是 "optional" (可以不设置)
+- 但不设置时, 无法区分 "未设置" 和 "设置为默认值"
+- 显式声明 =optional= 后, 生成的代码会有 =has_middle_name()= 方法
+
+*** =map=: 键值对
+
+#+begin_src protobuf
+message Project {
+  map<string, string> metadata = 1;
+  map<int32, Person> members = 2;
+}
+#+end_src
+
+- 键类型: 整数或字符串 (不能是浮点、枚举、消息)
+- 值类型: 任意类型
+- *不保证顺序*
+- 不能是 =repeated=
+
+** =oneof=: 互斥字段
+
+#+begin_src protobuf
+message Sample {
+  oneof test_oneof {
+    string name = 1;
+    int32 id = 2;
+    bytes data = 3;
+  }
+}
+#+end_src
+
+- 同时只能设置 *一个* 字段
+- 设置一个会清除其他
+- 节省内存 (所有字段共享内存)
+
+*注意*: =oneof= 字段 *不能* 是 =repeated=。
+
+** 默认值规则 (proto3)
+
+proto3 中, 所有字段都有 *隐式默认值*:
+
+- 数字: =0=
+- 布尔: =false=
+- 字符串: ==""=
+- 字节: 空字节串
+- 枚举: 第一个值 (必须是 0)
+- 消息: 未设置 (语言相关, C++ 是 =nullptr=)
+- =repeated=: 空列表
+
+*问题*: 无法区分 "未设置" 和 "设置为默认值"。
+
+*解决*: 用 =optional= 或者用特殊值 (如 =-1= 表示未设置)。
+
+* 二进制编码格式 (Wire Format)
+
+这是 protobuf 的核心魔法。理解 wire format 能帮你:
+
+1. 优化消息大小
+2. 理解向后兼容性
+3. Debug 二进制数据
+
+** Varint 编码
+
+Protobuf 用 *Varint* (Variable-length Integer) 编码整数, 用 *最少的字节* 表示数字。
+
+*** 编码规则
+
+- 每个字节的 *最高位* (MSB) 是 *继续位*:
+  - =1=: 后面还有字节
+  - =0=: 这是最后一个字节
+- 低 7 位是数据
+- *Little-endian* (低位字节在前)
+
+*** 示例: 编码 300
+
+#+begin_example
+300 (十进制) = 0b100101100 (二进制)
+
+拆成 7 位一组 (从右往左):
+  0000010  0101100
+
+逆序 (little-endian):
+  0101100  0000010
+
+加上继续位:
+  10101100 00000010
+  ^        ^
+  还有字节  最后一个字节
+
+十六进制: 0xAC 0x02
+#+end_example
+
+验证:
+
+#+begin_example
+0xAC = 10101100 → 去掉 MSB: 0101100 = 44
+0x02 = 00000010 → 去掉 MSB: 0000010 = 2
+
+44 + (2 << 7) = 44 + 256 = 300 ✓
+#+end_example
+
+*** 编码长度
+
+| 数字范围         | 字节数 |
+|-----------------+-------|
+| 0 ~ 127         |     1 |
+| 128 ~ 16,383    |     2 |
+| 16,384 ~ 2^21-1 |     3 |
+| 2^21 ~ 2^28-1   |     4 |
+| 2^28 ~ 2^35-1   |     5 |
+
+这就是为什么 *字段编号 1~15 只用 1 字节*, 16~2047 用 2 字节。
+
+** ZigZag 编码 (用于 =sint32= / =sint64=)
+
+负数的补码表示会导致 varint 编码低效:
+
+#+begin_example
+-1 (int32) = 0xFFFFFFFF (补码)
+  Varint 编码: 10 字节! (每个字节都是 0xFF)
+#+end_example
+
+*ZigZag 编码* 把有符号整数映射到无符号整数:
+
+#+begin_example
+ZigZag(n) = (n << 1) XOR (n >> 31)  // 32 位
+ZigZag(n) = (n << 1) XOR (n >> 63)  // 64 位
+#+end_example
+
+映射结果:
+
+| 有符号 | ZigZag 编码 |
+|------+-----------|
+| 0    | 0         |
+| -1   | 1         |
+| 1    | 2         |
+| -2   | 3         |
+| 2    | 4         |
+
+解码:
+
+#+begin_example
+n = (n >> 1) XOR (-(n & 1))
+#+end_example
+
+*** 示例: 编码 -1
+
+#+begin_example
+ZigZag(-1) = (-1 << 1) XOR (-1 >> 31)
+           = -2 XOR -1
+           = 0xFFFFFFFE XOR 0xFFFFFFFF
+           = 1
+
+Varint(1) = 0x01  (1 字节)
+#+end_example
+
+*结论*: 用 =sint32= 编码 =-1= 只需 1 字节, 而 =int32= 需要 10 字节！
+
+** 消息结构: Tag-Length-Value
+
+Protobuf 消息的二进制格式是一系列 *(Tag, Value)* 对, 没有消息头或分隔符。
+
+*** Tag 编码
+
+Tag = (field_number << 3) | wire_type
+
+| Wire Type | 含义             | 用于                                                     |
+|-----------+------------------+----------------------------------------------------------  |
+|         0 | Varint           | int32, int64, uint32, uint64, sint32, sint64, bool, enum |
+|         1 | 64-bit           | fixed64, sfixed64, double                                |
+|         2 | Length-delimited | string, bytes, 嵌套消息, repeated packed                  |
+|         3 | Start group      | 已废弃                                                    |
+|         4 | End group        | 已废弃                                                    |
+|         5 | 32-bit           | fixed32, sfixed32, float                                 |
+
+*** 示例: 编码消息
+
+#+begin_src protobuf
+message Test {
+  int32 a = 1;
+}
+
+Test msg;
+msg.set_a(150);
+#+end_src
+
+编码过程:
+
+#+begin_example
+字段 a:
+  field_number = 1
+  wire_type = 0 (varint)
+  Tag = (1 << 3) | 0 = 0x08
+
+值 150:
+  Varint(150) = 10010110 00000001 = 0x96 0x01
+
+最终: 08 96 01
+#+end_example
+
+*** 字符串编码 (Length-delimited)
+
+#+begin_src protobuf
+message Test {
+  string b = 2;
+}
+
+msg.set_b("testing");
+#+end_src
+
+#+begin_example
+字段 b:
+  Tag = (2 << 3) | 2 = 0x12
+
+长度: 7
+  Varint(7) = 0x07
+
+值: "testing" = 0x74 0x65 0x73 0x74 0x69 0x6E 0x67
+
+最终: 12 07 74 65 73 74 69 6E 67
+#+end_example
+
+** Packed Repeated 字段
+
+默认情况下, =repeated= 字段的每个元素都有自己的 Tag:
+
+#+begin_src protobuf
+message Test {
+  repeated int32 nums = 1;
+}
+
+msg.add_nums(1);
+msg.add_nums(2);
+msg.add_nums(3);
+#+end_src
+
+普通编码:
+
+#+begin_example
+08 01  (Tag=0x08, Value=1)
+08 02  (Tag=0x08, Value=2)
+08 03  (Tag=0x08, Value=3)
+总计: 6 字节
+#+end_example
+
+*Packed 编码* (proto3 默认):
+
+#+begin_example
+0A     (Tag=(1<<3)|2 = 0x0A, wire_type=2)
+03     (长度=3)
+01 02 03  (三个值)
+总计: 5 字节
+#+end_example
+
+*节省空间*: 对于大量小数字, 节省 ~50% 空间。
+
+*注意*: Packed 编码 *不保留字段顺序信息*, 解析时可能乱序 (虽然实际实现通常保持顺序)。
+
+** Unknown Fields (未知字段)
+
+如果解析器遇到 *未知的字段编号*, 会:
+
+1. 根据 wire type 跳过对应字节
+2. 保留原始数据 (在内存中)
+3. 重新序列化时写回 (保持向前兼容)
+
+这就是 protobuf *向后兼容* 的核心机制。
+
+* 向后兼容性 (Schema Evolution)
+
+Protobuf 的杀手级特性: *可以安全地修改 .proto 定义, 而不破坏已有的数据*
+
+** 兼容性规则
+
+*** 可以安全做的修改
+
+*添加新字段*
+
+#+begin_src protobuf
+// 旧版本
+message Person {
+  string name = 1;
+}
+
+// 新版本
+message Person {
+  string name = 1;
+  int32 age = 2;  // 新增
+}
+#+end_src
+
+- 旧代码解析新数据: 忽略 =age= 字段 (unknown field)
+- 新代码解析旧数据: =age= 为默认值 0
+
+*删除字段*
+
+#+begin_src protobuf
+message Person {
+  reserved 2;  // 曾经的 age 字段, 永久保留编号
+  string name = 1;
+}
+#+end_src
+
+- 必须用 =reserved= 标记编号, 防止未来重用
+- 旧代码解析新数据: 发现没有 =age= 字段, 使用默认值
+- 新代码解析旧数据: 忽略 =age= 字段
+
+*重命名字段*
+
+#+begin_src protobuf
+// 字段名不影响二进制格式
+message Person {
+  string full_name = 1;  // 之前叫 name
+}
+#+end_src
+
+- 二进制格式只看字段编号, 不看名字
+- *完全兼容*
+
+*修改字段类型 (部分兼容)*
+
+某些类型转换是安全的:
+
+| 从      | 到                    | 兼容性                |
+|---------+-----------------------+----------------------|
+| =int32=   | =int64=, =uint32=, =uint64= | ✓                    |
+| =uint32=  | =uint64=                | ✓                    |
+| =int64=   | =uint64=                | ✓ (如果值非负)         |
+| =sint32=  | =sint64=                | ✓                    |
+| =fixed32= | =sfixed32=              | ✓ (如果值非负)         |
+| =string=  | =bytes=                 | ✓ (如果是 UTF-8)      |
+| =bytes=   | =string=                | ✗ (可能不是 UTF-8)    |
+| 单个值   | =repeated=              | ✓ (新数据只有 1 个元素) |
+
+*** 危险操作 (禁止)
+
+*重用字段编号*
+
+#+begin_src protobuf
+// 禁止！
+message Person {
+  string email = 2;  // 之前是 int32 age = 2
+}
+#+end_src
+
+- 旧数据中的 =age= 会被误解析为 =email=
+- *数据损坏*
+
+*修改 wire type 不兼容的类型*
+
+#+begin_src protobuf
+// 禁止
+message Person {
+  string name = 1;  // 之前是 int32
+}
+#+end_src
+
+- =int32= 是 wire type 0 (varint)
+- =string= 是 wire type 2 (length-delimited)
+- 解析器会彻底混乱
+
+*修改 repeated ↔ 单个值* (proto2)
+
+在 proto2 中, =required/optional= 和 =repeated= 在二进制格式中有区别, 不能互换。
+
+proto3 中, 单个值和 =repeated= 可以互换 (但有语义差异)。
+
+** 版本演进最佳实践
+
+1. *永远不要重用字段编号*: 用 =reserved= 标记删除的字段
+2. *新字段用高编号*: 1~15 留给常用字段, 新字段从 16 开始
+3. *不要修改已有字段的类型*: 除非确认兼容
+4. *用 =optional= 区分未设置*: proto3 需要显式声明
+5. *枚举总是有 0 值*: 且命名为 =XXX_UNSPECIFIED=
+6. *用 =reserved= 而不是注释*: 编译器会检查
+
+* 最佳实践
+
+** 文件组织
+
+*** 一个 package 一个文件
+
+#+begin_src protobuf
+// person.proto
+syntax = "proto3";
+
+package com.example.tutorial;
+
+import "google/protobuf/timestamp.proto";
+
+message Person {
+  // ...
+}
+#+end_src
+
+*** 避免循环依赖
+
+#+begin_example
+a.proto imports b.proto
+b.proto imports c.proto
+c.proto imports a.proto  // 禁止！
+#+end_example
+
+*解决*: 提取公共依赖到第三个文件。
+
+** 命名规范
+
+*** 消息名: PascalCase
+
+#+begin_src protobuf
+message MyRequest { }
+message MyResponse { }
+#+end_src
+
+*** 字段名: snake_case
+
+#+begin_src protobuf
+message Person {
+  string first_name = 1;
+  int32 birth_year = 2;
+}
+#+end_src
+
+*** 枚举值: UPPER_SNAKE_CASE
+
+#+begin_src protobuf
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_ACTIVE = 1;
+  STATUS_INACTIVE = 2;
+}
+#+end_src
+
+*** 枚举值加前缀
+
+#+begin_src protobuf
+// 好
+enum PhoneType {
+  PHONE_TYPE_UNSPECIFIED = 0;
+  PHONE_TYPE_MOBILE = 1;
+}
+
+// 坏 (可能命名冲突)
+enum PhoneType {
+  UNSPECIFIED = 0;
+  MOBILE = 1;
+}
+#+end_src
+
+** 字段编号分配策略
+
+1. *1~15*: 最常用的字段 (1 字节 Tag)
+2. *16~127*: 常用字段 (2 字节 Tag)
+3. *128~2047*: 不常用字段
+4. *2048+*: 很少用的字段或预留
+
+#+begin_src protobuf
+message Person {
+  string name = 1;          // 必有
+  int32 age = 2;            // 必有
+  string email = 3;         // 常用
+  repeated string phones = 4;  // 常用
+
+  string middle_name = 16;  // 偶尔有
+  Address address = 17;     // 偶尔有
+
+  map<string, string> metadata = 100;  // 很少用
+}
+#+end_src
+
+** 避免过度嵌套
+
+#+begin_src protobuf
+// 坏: 嵌套太深
+message A {
+  message B {
+    message C {
+      message D {
+        string value = 1;
+      }
+      D d = 1;
+    }
+    C c = 1;
+  }
+  B b = 1;
+}
+
+// 好: 扁平化
+message D {
+  string value = 1;
+}
+
+message C {
+  D d = 1;
+}
+
+message B {
+  C c = 1;
+}
+
+message A {
+  B b = 1;
+}
+#+end_src
+
+** 用 Well-Known Types
+
+Google 提供了一些常用的消息类型:
+
+#+begin_src protobuf
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/any.proto";
+import "google/protobuf/empty.proto";
+
+message Event {
+  string name = 1;
+  google.protobuf.Timestamp occurred_at = 2;  // 而不是 int64
+  google.protobuf.Duration duration = 3;      // 而不是自定义
+}
+#+end_src
+
+常用的 Well-Known Types:
+
+- =Timestamp=: 时间点 (秒 + 纳秒)
+- =Duration=: 时间段
+- =Any=: 动态类型 (类似 =void*=)
+- =Empty=: 空消息 (用于 RPC 的空响应)
+- =Struct=: 动态结构 (类似 JSON)
+
+** RPC 服务定义
+
+Protobuf 不仅能定义数据, 还能定义 RPC 服务 (配合 gRPC 使用):
+
+#+begin_src protobuf
+service SearchService {
+  rpc Search (SearchRequest) returns (SearchResponse);
+  rpc StreamSearch (SearchRequest) returns (stream SearchResponse);
+}
+
+message SearchRequest {
+  string query = 1;
+  int32 page_number = 2;
+  int32 results_per_page = 3;
+}
+
+message SearchResponse {
+  repeated Result results = 1;
+}
+#+end_src
+
+- =rpc=: 定义远程调用
+- =stream=: 支持流式响应 (gRPC 特性)
+
+** 不要滥用 =bytes=
+
+#+begin_src protobuf
+// 坏: 把所有东西塞进 bytes
+message Image {
+  bytes data = 1;  // JPEG? PNG? 不知道
+}
+
+// 好: 明确格式
+enum ImageFormat {
+  IMAGE_FORMAT_UNSPECIFIED = 0;
+  IMAGE_FORMAT_JPEG = 1;
+  IMAGE_FORMAT_PNG = 2;
+}
+
+message Image {
+  ImageFormat format = 1;
+  bytes data = 2;
+}
+#+end_src
+
+** 避免大消息
+
+Protobuf 适合 *小到中等大小* (KB~MB) 的消息。如果消息很大 (> 10 MB):
+
+1. 用流式 RPC 分块传输
+2. 只传元数据, 数据用外部存储 (S3/云存储)
+
+#+begin_src protobuf
+// 坏
+message VideoFile {
+  bytes content = 1;  // 可能几 GB！
+}
+
+// 好
+message VideoMetadata {
+  string storage_url = 1;  // s3://bucket/video.mp4
+  int64 size_bytes = 2;
+  google.protobuf.Duration duration = 3;
+}
+#+end_src
+
+* 与其他格式对比
+
+** Protobuf vs JSON
+
+*何时用 Protobuf*:
+
+- 服务间通信 (微服务架构)
+- 性能敏感 (游戏、实时系统)
+- 强类型保证
+- 二进制存储 (日志、数据库)
+
+*何时用 JSON*:
+
+- Web API (浏览器原生支持)
+- 配置文件 (人类可读)
+- 快速原型
+- 与 JavaScript 深度集成
+
+** Protobuf vs FlatBuffers
+
+FlatBuffers (Google 开发, 用于游戏引擎):
+
+- *优势*: 零拷贝解析 (直接访问二进制), 更快
+- *劣势*: 不支持 schema evolution, 库支持少
+
+*选择*: 游戏/嵌入式用 FlatBuffers, 其他用 Protobuf。
+
+** Protobuf vs Cap'n Proto
+
+Cap'n Proto (Protobuf 原作者开发):
+
+- *优势*: 零拷贝, RPC 内建, 无需生成代码
+- *劣势*: 生态小, 缺少某些语言支持
+
+*选择*: 除非有特殊需求, 否则用 Protobuf (生态更成熟)。
+
+** Protobuf vs Thrift
+
+Apache Thrift (Facebook 开发):
+
+- 类似 Protobuf, 也是 IDL + 序列化 + RPC
+- *优势*: 更老, 某些大公司有历史代码
+- *劣势*: 生态分裂, 文档差
+
+*选择*: 新项目用 Protobuf (Google 维护更积极)。
+
+* 工具链
+
+** protoc 编译器
+
+#+begin_src bash
+# 安装
+# Arch Linux
+sudo pacman -S protobuf
+
+# macOS
+brew install protobuf
+
+# Ubuntu
+sudo apt install protobuf-compiler
+#+end_src
+
+#+begin_src bash
+# 编译 .proto 文件
+protoc --cpp_out=. person.proto         # C++
+protoc --python_out=. person.proto      # Python
+protoc --go_out=. person.proto          # Go
+protoc --rust_out=. person.proto        # Rust
+
+# 指定 import 路径
+protoc -I./protos --cpp_out=./gen person.proto
+#+end_src
+
+** 编译选项
+
+#+begin_src bash
+# 优化代码大小
+protoc --cpp_out=lite:. person.proto
+
+# 生成描述符文件 (用于运行时反射)
+protoc --descriptor_set_out=person.desc person.proto
+
+# 包含依赖
+protoc --descriptor_set_out=person.desc --include_imports person.proto
+#+end_src
+
+** 验证工具
+
+#+begin_src bash
+# buf: 现代化的 protobuf 工具
+# https://buf.build
+
+# 安装
+go install github.com/bufbuild/buf/cmd/buf@latest
+
+# Lint (检查风格)
+buf lint
+
+# Breaking change 检测
+buf breaking --against '.git#branch=main'
+
+# 生成代码
+buf generate
+#+end_src
+
+** 可视化工具
+
+- *Protobuf Viewer*: VSCode 插件, 语法高亮
+- *protoc-gen-doc*: 生成 HTML/Markdown 文档
+- *Postman*: 支持 gRPC (基于 protobuf)
+
+* 常见陷阱
+
+** 陷阱 1: 忘记 =reserved=
+
+#+begin_src protobuf
+// 删除字段时
+message Person {
+  string name = 1;
+  // int32 age = 2;  ❌ 只注释掉, 未来可能被重用
+}
+
+// 正确做法
+message Person {
+  reserved 2;       // ✓ 或者 reserved "age";
+  string name = 1;
+}
+#+end_src
+
+** 陷阱 2: 枚举没有 0 值
+
+#+begin_src protobuf
+// proto3 中禁止
+enum Status {
+  ACTIVE = 1;    // ❌ 必须有 0 值
+  INACTIVE = 2;
+}
+
+// 正确
+enum Status {
+  STATUS_UNSPECIFIED = 0;  // ✓
+  STATUS_ACTIVE = 1;
+  STATUS_INACTIVE = 2;
+}
+#+end_src
+
+** 陷阱 3: 误用 =int32= 编码负数
+
+#+begin_src protobuf
+message Temperature {
+  int32 celsius = 1;  // ❌ 负数会用 10 字节
+}
+
+// 正确
+message Temperature {
+  sint32 celsius = 1;  // ✓ 负数也只用 1~5 字节
+}
+#+end_src
+
+** 陷阱 4: 大量小消息性能差
+
+#+begin_src protobuf
+// 坏: 发送 100 万个小消息
+for (int i = 0; i < 1000000; ++i) {
+  LogEntry entry;
+  entry.set_message("...");
+  send(entry.SerializeAsString());
+}
+
+// 好: 批量打包
+message LogBatch {
+  repeated LogEntry entries = 1;
+}
+
+LogBatch batch;
+for (int i = 0; i < 1000000; ++i) {
+  batch.add_entries()->set_message("...");
+}
+send(batch.SerializeAsString());
+#+end_src
+
+** 陷阱 5: 跨语言字符串编码问题
+
+Protobuf 的 =string= 字段 *必须是 UTF-8*, 但编译器 *不检查*。
+
+#+begin_src python
+# Python (危险)
+msg.name = b'\xff\xfe'  # 非法 UTF-8, 但能序列化
+#+end_src
+
+其他语言解析时可能崩溃或替换为 =�=。
+
+*解决*: 严格验证输入, 或用 =bytes= 类型。
+
+* 总结
+
+Protobuf 的核心思想:
+
+1. *Schema-first*: 先定义 .proto, 再生成代码
+2. *向后兼容*: 通过字段编号 + wire type 实现
+3. *高效编码*: Varint 变长整数 + 紧凑二进制
+4. *跨语言*: 一份 .proto, 多种语言
+
+*何时用 Protobuf*:
+
+- 微服务间通信 (配合 gRPC)
+- 性能敏感的系统
+- 需要强类型保证
+- 长期维护的 API (schema evolution 友好)
+
+*何时不用*:
+
+- Web 前端 (JSON 更合适)
+- 配置文件 (YAML/TOML 更人类友好)
+- 快速原型 (JSON 更灵活)
+
+*最后的建议*: 如果你的系统有多个服务、需要长期维护、在意性能, 那就用 Protobuf。如果你只是写个简单的 REST API, JSON 够了。
+
+*永远记住*: 字段编号是神圣的, 一旦分配就不要改。这是 Protobuf 向后兼容的基石。
