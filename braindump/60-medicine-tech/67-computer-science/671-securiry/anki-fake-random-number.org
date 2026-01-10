@@ -1,0 +1,100 @@
+#+title: A Research for Fake Random Number Implementation in Anki and "rand" rust crate
+#+author: SOV710
+#+date: <2026-01-10 Sat>
+
+在对 anki 新的 apkg 格式 =collection.anki21b= 进行调研时，对 notes 的核心身份标识数据, guid 进行了一场轰轰烈烈的大调研
+
+* guid 生成原理 overview
+首先, Note 的数据结构如下
+
+#+begin_src rust
+impl Note {
+    pub fn new(notetype: &Notetype) -> Self {
+        Note {
+            id: NoteId(0),
+            guid: base91_u64(),
+            notetype_id: notetype.id,
+            mtime: TimestampSecs(0),
+            usn: Usn(0),
+            tags: vec![],
+            fields: vec!["".to_string(); notetype.fields.len()],
+            sort_field: None,
+            checksum: None,
+        }
+    }
+}
+#+end_src
+
+guid 是一个 base91 的随机数，其生成链路如下:
+
+#+begin_src
+pub(crate) fn base91_u64() -> String {
+    anki_base91(rand::random())
+}
+
+fn anki_base91(n: u64) -> String {
+    to_base_n(
+        n,
+        b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\
+0123456789!#$%&()*+,-./:;<=>?@[]^_`{|}~",
+    )
+}
+
+pub fn to_base_n(mut n: u64, table: &[u8]) -> String {
+    let mut buf = String::new();
+    while n > 0 {
+        let tablelen = table.len() as u64;
+        let (q, r) = (n / tablelen, n % tablelen);
+        buf.push(table[r as usize] as char);
+        n = q;
+    }
+    buf.chars().rev().collect()
+}
+#+end_src
+
+可以看到，首先是通过 =rand::random()= 生成一个伪随机数，经过对 =rand= 这个 crate 的调研后，发现其随机数生成原理分为两部分
+
+** 从操作系统拿熵源
+
+在不同操作系统拿真熵源，OS 从硬件噪声获取最接近真熵源的熵源
+
+不同系统的熵源 belike
+- Linux: =/dev/urandom=
+- Windows: =RtlGenRandom=
+- macOS: =getentropy=
+
+单以 linux 系统举例, =urandom= 是一个字符设备文件 (character device), 背后连接的是内核的随机数子系统 (CSPRNG)
+
+=cat /dev/urandom= 会不断输出，是因为每一次读操作都会触发内核生成新的伪随机字节，而不是“把某个已有内容读完”。
+
+=rand::random()= 每次取熵源会取出 32 字节 (256 bits) 作为熵源
+
+** 持续生成线程级别的伪熵源
+
+=rand= 取出 32 字节的真熵源后，使用这作为种子，使用 ChaCha12 的 CSPRNG，为每个线程单独持续生成伪随机数
+
+直到生成 64KB 流密码后，重新从 OS 真熵源取 32 字节真熵源，循环
+
+每次 anki 向 =rand= 取随机数时，取 64 位伪随机数 (=u64=)
+
+* 随机数如何变成 guid: base91
+
+字符表 (长度 91):
+
+#+begin_src
+b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\
+0123456789!#$%&()*+,-./:;<=>?@[]^_`{|}~"
+#+end_src
+
+=to_base_n= 做的事是标准的"进制转换"
+
+#+begin_src rust
+while n > 0 {
+  (q, r) = (n / 91, n % 91)
+  push(table[r])
+  n = q
+}
+reverse()
+#+end_src
+
+得到一个近乎完全随机的, 样本空间为 $2^{64}$ 的 guid，比如 =eCJuaGJ[m)=, 长度一般在 9~11 位，但是也可能更短
