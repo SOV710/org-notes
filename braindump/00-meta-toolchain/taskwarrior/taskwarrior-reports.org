@@ -660,25 +660,25 @@ ID  Description
 
 ** Verbose Tokens 详解
 
-| Token       | 含义                                 | 示例                              |
-|-----------+--------------------------------------+-----------------------------------|
-| =blank=     | 在输出中插入空行，增加清晰度         | 表格前后的空行                    |
-| =header=    | 命令开始前的消息                     | "[task next]" 提示                |
-| =footnote=  | 命令结束后的消息                     | "2 tasks"、"Created task 5"       |
-| =label=     | 表格的列标题                         | "ID  Description"                 |
-| =new-id=    | 新任务的 ID 反馈                     | "Created task 5"                  |
-| =new-uuid=  | 新任务的 UUID 反馈 (覆盖 new-id)     | "Created task f30cb9c3..."        |
-| =affected=  | 修改任务数量的反馈                   | "Modified 3 tasks"                |
-| =edit=      | =edit= 命令的详细模板                | =task edit= 的输出                |
-| =special=   | 应用特殊标签时的反馈                 | "Applied +next tag"               |
-| =project=   | 项目状态变化的反馈                   | "Project 'work' is 75% complete"  |
-| =sync=      | 同步反馈                             | "Sync successful"                 |
-| =filter=    | 显示使用的 filter                    | "Filter: status:pending"          |
-| =context=   | 显示当前 context                     | "Context 'work' active"           |
-| =override=  | 配置覆盖通知                         | "Configuration override detected" |
-| =recur=     | 循环任务实例创建通知                 | "Created recurring task instance" |
-| =default=   | Taskwarrior 选择默认行为的通知       | "Using default report 'next'"     |
-| =news=      | 新版本发布提醒                       | "New version available"           |
+| Token    | 含义                          | 示例                              |
+|----------+-------------------------------+-----------------------------------|
+| =blank=    | 在输出中插入空行，增加清晰度        | 表格前后的空行                       |
+| =header=   | 命令开始前的消息                 | "[task next]" 提示                |
+| =footnote= | 命令结束后的消息                 | "2 tasks"、"Created task 5"       |
+| =label=    | 表格的列标题                    | "ID  Description"                 |
+| =new-id=   | 新任务的 ID 反馈                | "Created task 5"                  |
+| =new-uuid= | 新任务的 UUID 反馈 (覆盖 new-id) | "Created task f30cb9c3..."        |
+| =affected= | 修改任务数量的反馈               | "Modified 3 tasks"                |
+| =edit=     | =edit= 命令的详细模板              | =task edit= 的输出                   |
+| =special=  | 应用特殊标签时的反馈              | "Applied +next tag"               |
+| =project=  | 项目状态变化的反馈               | "Project 'work' is 75% complete"  |
+| =sync=     | 同步反馈                       | "Sync successful"                 |
+| =filter=   | 显示使用的 filter               | "Filter: status:pending"          |
+| =context=  | 显示当前 context               | "Context 'work' active"           |
+| =override= | 配置覆盖通知                    | "Configuration override detected" |
+| =recur=    | 循环任务实例创建通知              | "Created recurring task instance" |
+| =default=  | Taskwarrior 选择默认行为的通知   | "Using default report 'next'"     |
+| =news=     | 新版本发布提醒                   | "New version available"           |
 
 *** Token 之间的依赖关系
 

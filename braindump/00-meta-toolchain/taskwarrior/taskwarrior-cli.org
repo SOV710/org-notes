@@ -440,23 +440,23 @@ Annotations 在 urgency 计算中有微弱的贡献 (系数 1.0)，表示任务�
 
 报告命令 *不修改数据*，只是以不同方式展示任务:
 
-| 命令          | 本质                 | 内置 filter           | 排序               |
-|-------------+----------------------+-----------------------+-------------------|
-| =list=        | 标准待办事项列表     | =status:pending=      | urgency 降序      |
-| =next=        | 最紧急的任务 (默认命令) | =status:pending -WAITING= | urgency 降序，限 1 页 |
-| =long=        | 详细列表             | =status:pending=      | urgency 降序      |
-| =all=         | 所有任务 (无 filter) | (空)                  | ID 升序           |
-| =completed=   | 已完成任务           | =status:completed=    | end 降序          |
-| =recurring=   | 循环任务             | =status:recurring=    | -                 |
-| =waiting=     | 等待中的任务         | =status:waiting=      | -                 |
-| =blocked=     | 被阻塞的任务         | =+BLOCKED=            | urgency 降序      |
-| =blocking=    | 阻塞其他任务的任务   | =+BLOCKING=           | urgency 降序      |
-| =overdue=     | 已过期任务           | =+OVERDUE=            | urgency 降序      |
-| =ready=       | 可以开始的任务       | =+READY=              | urgency 降序      |
-| =projects=    | 项目列表             | -                     | -                 |
-| =tags=        | 标签列表             | -                     | -                 |
-| =summary=     | 汇总统计             | (可自定义)            | -                 |
-| =burndown=    | 燃尽图               | =status:pending or status:completed= | - |
+| 命令      | 本质                | 内置 filter                        | 排序                |
+|-----------+---------------------+------------------------------------+---------------------|
+| =list=      | 标准待办事项列表       | =status:pending=                     | urgency 降序        |
+| =next=      | 最紧急的任务 (默认命令) | =status:pending -WAITING=            | urgency 降序，限 1 页 |
+| =long=      | 详细列表             | =status:pending=                     | urgency 降序        |
+| =all=       | 所有任务 (无 filter)  | (空)                               | ID 升序             |
+| =completed= | 已完成任务            | =status:completed=                   | end 降序            |
+| =recurring= | 循环任务             | =status:recurring=                   | -                   |
+| =waiting=   | 等待中的任务          | =status:waiting=                     | -                   |
+| =blocked=   | 被阻塞的任务          | =+BLOCKED=                           | urgency 降序        |
+| =blocking=  | 阻塞其他任务的任务     | =+BLOCKING=                          | urgency 降序        |
+| =overdue=   | 已过期任务            | =+OVERDUE=                           | urgency 降序        |
+| =ready=     | 可以开始的任务         | =+READY=                             | urgency 降序        |
+| =projects=  | 项目列表             | -                                  | -                   |
+| =tags=      | 标签列表             | -                                  | -                   |
+| =summary=   | 汇总统计             | (可自定义)                          | -                   |
+| =burndown=  | 燃尽图               | =status:pending or status:completed= | -                   |
 
 *** 报告的本质: 配置的组合
 
@@ -546,16 +546,16 @@ task 12 info
 
 还有一些辅助命令:
 
-| 命令         | 功能                           |
-|------------+--------------------------------|
-| =show=       | 显示配置                       |
-| =config=     | 修改配置                       |
-| =diagnostics= | 诊断信息 (版本、路径、依赖)    |
-| =sync=       | 同步到 Taskserver              |
-| =undo=       | 撤销上一次操作                 |
-| =help=       | 帮助信息                       |
-| =version=    | 版本号                         |
-| =calc=       | 日期计算器                     |
+| 命令        | 功能                   |
+|-------------+------------------------|
+| =show=        | 显示配置                |
+| =config=      | 修改配置                |
+| =diagnostics= | 诊断信息 (版本、路径、依赖) |
+| =sync=        | 同步到 Taskserver       |
+| =undo=        | 撤销上一次操作            |
+| =help=        | 帮助信息                |
+| =version=     | 版本号                  |
+| =calc=        | 日期计算器               |
 
 *** =undo= 命令
 
@@ -655,21 +655,21 @@ task project:kernel modify /memroy/memory/g
 
 Taskwarrior 支持非常灵活的日期语法:
 
-| 语法           | 含义                   |
-|--------------+------------------------|
-| =today=        | 今天                   |
-| =tomorrow=     | 明天                   |
-| =yesterday=    | 昨天                   |
-| =friday=       | 本周五 (或下周五)      |
-| =eom=          | End of month (月末)    |
-| =eoy=          | End of year (年末)     |
-| =now=          | 当前时刻               |
-| =sow=          | Start of week (周一)   |
-| =socm=         | Start of current month |
-| =socq=         | Start of current quarter |
-| =socy=         | Start of current year  |
-| =later=        | 某个未来时间 (模糊)    |
-| =someday=      | 某天 (模糊)            |
+| 语法      | 含义                     |
+|-----------+--------------------------|
+| =today=     | 今天                     |
+| =tomorrow=  | 明天                     |
+| =yesterday= | 昨天                     |
+| =friday=    | 本周五 (或下周五)           |
+| =eom=       | End of month (月末)      |
+| =eoy=       | End of year (年末)       |
+| =now=       | 当前时刻                  |
+| =sow=       | Start of week (周一)     |
+| =socm=      | Start of current month   |
+| =socq=      | Start of current quarter |
+| =socy=      | Start of current year    |
+| =later=     | 某个未来时间 (模糊)         |
+| =someday=   | 某天 (模糊)               |
 
 *相对日期*:
 
@@ -770,22 +770,22 @@ urgency = Σ (coefficient_i × indicator_i)
 
 Taskwarrior 的默认系数 (2.6.x 版本):
 
-| 因子                      | 系数   | 含义                           |
-|-------------------------+-------+--------------------------------|
-| =+next= tag               | 15.0  | 特殊标签，极大提升 urgency     |
-| =due= date                | 12.0  | 有 due date                    |
-| =blocking= other tasks    | 8.0   | 阻塞其他任务                   |
-| =priority.H=              | 6.0   | 高优先级                       |
-| =scheduled= date          | 5.0   | 已计划                         |
-| =active= (started)        | 4.0   | 正在进行中                     |
-| =priority.M=              | 3.9   | 中优先级                       |
-| =age= (任务年龄)          | 2.0   | 年龄越大越紧急 (最多加 2.0)    |
-| =priority.L=              | 1.8   | 低优先级                       |
-| =project=                 | 1.0   | 有 project                     |
-| =tags=                    | 1.0   | 有标签                         |
-| =annotations=             | 1.0   | 有 annotation                  |
-| =waiting=                 | -3.0  | 等待中 (降低 urgency)          |
-| =blocked= by other tasks  | -5.0  | 被阻塞 (降低 urgency)          |
+| 因子                   | 系数 | 含义                    |
+|------------------------+------+-------------------------|
+| =+next= tag              | 15.0 | 特殊标签，极大提升 urgency |
+| =due= date               | 12.0 | 有 due date             |
+| =blocking= other tasks   |  8.0 | 阻塞其他任务              |
+| =priority.H=             |  6.0 | 高优先级                 |
+| =scheduled= date         |  5.0 | 已计划                   |
+| =active= (started)       |  4.0 | 正在进行中                |
+| =priority.M=             |  3.9 | 中优先级                 |
+| =age= (任务年龄)          |  2.0 | 年龄越大越紧急 (最多加 2.0) |
+| =priority.L=             |  1.8 | 低优先级                 |
+| =project=                |  1.0 | 有 project              |
+| =tags=                   |  1.0 | 有标签                   |
+| =annotations=            |  1.0 | 有 annotation           |
+| =waiting=                | -3.0 | 等待中 (降低 urgency)     |
+| =blocked= by other tasks | -5.0 | 被阻塞 (降低 urgency)     |
 
 *** 计算示例
 

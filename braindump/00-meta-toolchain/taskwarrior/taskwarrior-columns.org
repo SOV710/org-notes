@@ -789,7 +789,7 @@ task add "Pay rent" due:28th recur:monthly until:now+1y
 
 这表示 "这个循环任务在 1 年后停止生成新实例"。
 
-*在 report 中显示 =until.remaining=*:
+*在 report 中显示* =until.remaining=:
 
 #+begin_example
 ID  Until  Description
