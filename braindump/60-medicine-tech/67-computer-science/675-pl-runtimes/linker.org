@@ -20,7 +20,7 @@
 
 ** 远古时代: 从汇编器到链接器的诞生
 
-在远古时代，当恐龙还在数据中心漫步时，许多程序都是自包含的完整体。在那个年代通常没有编译器——人们直接用 assembly code 编写程序——而汇编器实际上生成的是机器可以直接执行的 *可执行文件*。
+在远古时代，当恐龙还在数据中心漫步时，许多程序都是自包含的完整体。在那个年代通常没有编译器——人们直接用 assembly code 编写程序——而汇编器实际上生成的是机器可以直接执行的 *可执行文件*
 
 随着 Fortran 和 Cobol 等语言开始出现，人们开始以 *subroutine libraries* 的概念进行思考，这意味着必须有某种方式能够在不同时间运行汇编器，并将输出组合成单个可执行文件。这要求汇编器生成一种不同类型的输出，即后来被称为 *object file* 的文件 (我不知道这个名称的由来，可能是因为它们代表 "对象化" 的代码片段)。
 
@@ -121,7 +121,7 @@ int shared_data = 0;      // defined symbol
 - *Weak symbols*​: 可以被同名 strong symbol 覆盖的符号
 - *Absolute symbols*: 值不随重定位改变 (如常量)
 
-在链接过程中，链接器将为每个 defined symbol 分配一个 *最终地址*，并通过找到具有相同名称的 defined symbol 来 *解析* 每个 undefined symbol。
+在链接过程中，链接器将为每个 defined symbol 分配一个 *最终地址*, 并通过找到具有相同名称的 defined symbol 来 *解析* 每个 undefined symbol。
 
 ** Relocations: 地址修正计算
 
