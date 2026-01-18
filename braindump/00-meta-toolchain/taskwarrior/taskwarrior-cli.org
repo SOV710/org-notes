@@ -6,7 +6,7 @@
 
 * 命令行语法的本质
 
-Taskwarrior 的命令行语法乍一看是一堆参数的堆砌，但其实有着清晰的结构。理解这个结构是用好 Taskwarrior 的前提。
+Taskwarrior 的命令行语法乍一看是一堆参数的堆砌, 但其实有着清晰的结构。理解这个结构是用好 Taskwarrior 的前提。
 
 ** 通用语法形式
 
@@ -18,24 +18,24 @@ task [<filter>] <command> [<modifications>]
 
 | 段              | 本质                       |
 |-----------------+----------------------------|
-| =<filter>=        | 一个查询表达式，用于选中任务集合 |
+| =<filter>=        | 一个查询表达式, 用于选中任务集合 |
 | =<command>=       | 对集合执行的操作或报告         |
 | =<modifications>= | 对集合中每个任务施加的字段修改   |
 
-*关键点*: 这三个部分都是 *可选的*​。如果不指定 command，Taskwarrior 会使用默认命令 (由 =default.command= 配置项决定，通常是 =next=)。
+*关键点*: 这三个部分都是 *可选的*​。如果不指定 command, Taskwarrior 会使用默认命令 (由 =default.command= 配置项决定, 通常是 =next=)。
 
 ** 顺序无关的 Overrides
 
-除了这三个核心部分，命令行上还可以出现 *临时配置覆盖* (runtime overrides):
+除了这三个核心部分, 命令行上还可以出现 *临时配置覆盖* (runtime overrides):
 
 #+begin_src sh
 task rc.verbose=nothing project:Home list
 task list rc.defaultwidth=120 project:Home
 #+end_src
 
-这些 =rc.*= 参数可以出现在命令行的 *任何位置*，因为它们在命令执行前就被处理了，不参与 filter/command/modifications 的语法解析。
+这些 =rc.*= 参数可以出现在命令行的 *任何位置*, 因为它们在命令执行前就被处理了, 不参与 filter/command/modifications 的语法解析。
 
-这是个非常强大的特性，允许你为单次命令临时修改配置，而不影响 =~/.taskrc= 文件:
+这是个非常强大的特性, 允许你为单次命令临时修改配置, 而不影响 =~/.taskrc= 文件:
 
 #+begin_src sh
 # 使用另一个任务数据库
@@ -50,11 +50,11 @@ task rc.regex:off /pattern/ list
 
 * Filter: 查询表达式的代数本质
 
-Filter 是 Taskwarrior 最核心的概念，它决定了哪些任务会被选中。
+Filter 是 Taskwarrior 最核心的概念, 它决定了哪些任务会被选中。
 
 ** Filter 的本质: 布尔代数表达式
 
-一个 filter 本质上是一个 *布尔表达式*，对每个任务求值，返回 true (匹配) 或 false (不匹配)。
+一个 filter 本质上是一个 *布尔表达式*, 对每个任务求值, 返回 true (匹配) 或 false (不匹配)。
 
 例子:
 
@@ -65,7 +65,7 @@ task project:kernel +bug due.before:today
 在内部等价于:
 
 #+begin_example
-从 task 数据集中，选出满足:
+从 task 数据集中, 选出满足:
 - project == "kernel"
 - tags 包含 "bug"
 - due < today()
@@ -74,7 +74,7 @@ task project:kernel +bug due.before:today
 
 *** 隐式的 AND 连接
 
-当 filter 中有多个项时，默认是 *逻辑与* (AND) 连接:
+当 filter 中有多个项时, 默认是 *逻辑与* (AND) 连接:
 
 #+begin_src sh
 task project:Home +work priority:H
@@ -86,7 +86,7 @@ task project:Home +work priority:H
 task project:Home and +work and priority:H
 #+end_src
 
-这是个命令行语法的简写，减少打字量。
+这是个命令行语法的简写, 减少打字量。
 
 *** 显式的逻辑运算符
 
@@ -106,7 +106,7 @@ task project:Home or -work count
 task \( project:Home or project:Garden \) and +weekend list
 #+end_src
 
-*注意*: 括号在 shell 中有特殊含义，必须转义:
+*注意*: 括号在 shell 中有特殊含义, 必须转义:
 
 #+begin_src sh
 # 方法 1: 反斜杠转义
@@ -123,7 +123,7 @@ task "(project:Home or project:Garden)" list
 
 *** 1. 属性匹配: =attribute:value=
 
-最常见的 filter 形式，匹配属性值:
+最常见的 filter 形式, 匹配属性值:
 
 #+begin_src sh
 task project:kernel          # project == "kernel"
@@ -142,21 +142,21 @@ task priority.none:          # 没有 priority 的任务
 
 修饰符提供了更精细的控制:
 
-| 修饰符                      | 示例                     | 等价于          | 含义                 |
-|-------------------------+------------------------+----------------+---------------------|
-| =not=                     | =due.not:today=          | =due != today=   | 模糊非匹配           |
-| =before=, =below=          | =due.before:today=       | =due < today=    | 精确日期比较         |
-| =after=, =above=           | =due.after:today=        | =due >= tomorrow= | 精确日期比较         |
-| =none=                    | =project.none:=          | =project == ''=  | 空值                |
-| =any=                     | =project.any:=           | =project !== ''= | 非空值              |
-| =is=, =equals=             | =project.is:Home=        | =project == Home= | 精确匹配            |
-| =isnt=                    | =project.isnt:Home=      | =project !== Home= | 精确非匹配          |
-| =has=, =contains=          | =desc.has:Hello=         | =desc ~ "Hello"= | 模式匹配 (正则)      |
-| =hasnt=                   | =desc.hasnt:Hello=       | =desc !~ "Hello"= | 模式非匹配          |
-| =startswith=, =left=       | =desc.left:Fix=          | =desc ~ '^Fix'=  | 起始匹配            |
-| =endswith=, =right=        | =desc.right:bug=         | =desc ~ 'bug$'=  | 结尾匹配            |
-| =word=                    | =desc.word:TODO=         | =desc ~ '\bTODO\b'= | 单词边界匹配        |
-| =noword=                  | =desc.noword:TODO=       | =desc !~ '\bTODO\b'= | 单词边界非匹配      |
+| 修饰符            | 示例              | 等价于              | 含义          |
+|------------------+-------------------+--------------------+---------------|
+| =not=              | =due.not:today=     | =due != today=       | 模糊非匹配      |
+| =before=, =below=    | =due.before:today=  | =due < today=        | 精确日期比较    |
+| =after=, =above=     | =due.after:today=   | =due >= tomorrow=    | 精确日期比较    |
+| =none=             | =project.none:=     | =project == ''=       | 空值          |
+| =any=              | =project.any:=      | =project !== ''=     | 非空值         |
+| =is=, =equals=       | =project.is:Home=   | =project == Home=     | 精确匹配       |
+| =isnt=             | =project.isnt:Home= | =project !== Home=   | 精确非匹配      |
+| =has=, =contains=    | =desc.has:Hello=    | =desc ~ "Hello"=     | 模式匹配 (正则) |
+| =hasnt=            | =desc.hasnt:Hello=  | =desc !~ "Hello"=    | 模式非匹配      |
+| =startswith=, =left= | =desc.left:Fix=     | =desc ~ '^Fix'=      | 起始匹配       |
+| =endswith=, =right=  | =desc.right:bug=    | =desc ~ 'bug$'=      | 结尾匹配       |
+| =word=             | =desc.word:TODO=    | =desc ~ '\bTODO\b'=  | 单词边界匹配    |
+| =noword=           | =desc.noword:TODO=  | =desc !~ '\bTODO\b'= | 单词边界非匹配   |
 
 示例:
 
@@ -235,36 +235,36 @@ UUID 是 Taskwarrior 内部用于同步和跨设备识别任务的关键。
 
 *** 7. 虚拟标签 (Virtual Tags)
 
-虚拟标签是 Taskwarrior 内置的 "伪标签"，它们在运行时动态计算，不占用存储空间:
+虚拟标签是 Taskwarrior 内置的 "伪标签", 它们在运行时动态计算, 不占用存储空间:
 
-| 虚拟标签      | 含义                           |
-|-------------+--------------------------------|
-| =+PENDING=    | status:pending                 |
-| =+COMPLETED=  | status:completed               |
-| =+DELETED=    | status:deleted                 |
-| =+BLOCKED=    | 被其他任务阻塞                 |
-| =+UNBLOCKED=  | 未被阻塞 (等价于 =-BLOCKED=)   |
-| =+BLOCKING=   | 阻塞其他任务                   |
-| =+READY=      | 可以开始工作的任务             |
-| =+OVERDUE=    | 已过期                         |
-| =+TODAY=      | 今天到期                       |
-| =+TOMORROW=   | 明天到期                       |
-| =+WEEK=       | 本周到期                       |
-| =+MONTH=      | 本月到期                       |
-| =+YEAR=       | 今年到期                       |
-| =+ACTIVE=     | 正在进行中 (start 已设置)      |
-| =+SCHEDULED=  | 已计划 (scheduled 已设置)      |
-| =+PARENT=     | 是循环任务的父任务             |
-| =+CHILD=      | 是循环任务的子任务             |
-| =+UNTIL=      | 有过期时间                     |
-| =+WAITING=    | 处于等待状态                   |
-| =+ANNOTATED=  | 有 annotation                  |
-| =+TAGGED=     | 有任意标签                     |
-| =+PROJECT=    | 有 project                     |
-| =+PRIORITY=   | 有 priority                    |
-| =+DUE=        | 有 due date                    |
-| =+DUETODAY=   | 今天到期 (等价于复杂 filter)   |
-| =+ORPHAN=     | 孤儿任务 (没有 project)        |
+| 虚拟标签    | 含义                      |
+|------------+---------------------------|
+| =+PENDING=   | status:pending            |
+| =+COMPLETED= | status:completed          |
+| =+DELETED=   | status:deleted            |
+| =+BLOCKED=   | 被其他任务阻塞               |
+| =+UNBLOCKED= | 未被阻塞 (等价于 =-BLOCKED=)   |
+| =+BLOCKING=  | 阻塞其他任务                |
+| =+READY=     | 可以开始工作的任务           |
+| =+OVERDUE=   | 已过期                     |
+| =+TODAY=     | 今天到期                   |
+| =+TOMORROW=  | 明天到期                   |
+| =+WEEK=      | 本周到期                   |
+| =+MONTH=     | 本月到期                   |
+| =+YEAR=      | 今年到期                   |
+| =+ACTIVE=    | 正在进行中 (start 已设置)    |
+| =+SCHEDULED= | 已计划 (scheduled 已设置)   |
+| =+PARENT=    | 是循环任务的父任务           |
+| =+CHILD=     | 是循环任务的子任务           |
+| =+UNTIL=     | 有过期时间                  |
+| =+WAITING=   | 处于等待状态                |
+| =+ANNOTATED= | 有 annotation             |
+| =+TAGGED=    | 有任意标签                  |
+| =+PROJECT=   | 有 project                |
+| =+PRIORITY=  | 有 priority               |
+| =+DUE=       | 有 due date               |
+| =+DUETODAY=  | 今天到期 (等价于复杂 filter) |
+| =+ORPHAN=    | 孤儿任务 (没有 project)     |
 
 示例:
 
@@ -286,7 +286,7 @@ task +OVERDUE list
 
 ** Report Filter: 内置 Filter
 
-每个 report (如 =list=, =next=) 都有一个 *内置 filter*，会与命令行的 filter 组合:
+每个 report (如 =list=, =next=) 都有一个 *内置 filter*, 会与命令行的 filter 组合:
 
 #+begin_src sh
 # 查看 list report 的内置 filter
@@ -312,7 +312,7 @@ task status:pending and project:Home list
 
 *覆盖 report filter*:
 
-如果你想看到所有任务 (包括已完成)，需要使用没有内置 filter 的 report:
+如果你想看到所有任务 (包括已完成), 需要使用没有内置 filter 的 report:
 
 #+begin_src sh
 task project:Home all
@@ -326,7 +326,7 @@ task rc.report.list.filter='' project:Home list
 
 ** 空 Filter: 匹配所有任务
 
-最简单的 filter 是空 filter，匹配所有任务:
+最简单的 filter 是空 filter, 匹配所有任务:
 
 #+begin_src sh
 task count       # 显示所有任务数量 (pending + completed)
@@ -341,23 +341,23 @@ Command 决定了对选中的任务集合做什么操作。Taskwarrior 的 comma
 
 这些命令会 *修改任务数据库*:
 
-| 命令         | 语义                      | 示例                                    |
-|------------+---------------------------+----------------------------------------|
-| =add=        | 创建新任务                | =task add Fix the bug=                 |
-| =modify=     | 修改字段                  | =task 12 modify priority:H=            |
-| =done=       | 标记为完成 (status:completed) | =task 12 done=                        |
-| =delete=     | 删除任务 (status:deleted) | =task 12 delete=                       |
-| =start=      | 开始任务 (设置 start 字段) | =task 12 start=                        |
-| =stop=       | 停止任务 (清除 start 字段) | =task 12 stop=                         |
-| =annotate=   | 添加注释                  | =task 12 annotate "Progress update"=   |
-| =denotate=   | 删除注释                  | =task 12 denotate "Old note"=          |
-| =append=     | 追加到 description        | =task 12 append "more details"=        |
-| =prepend=    | 前置到 description        | =task 12 prepend "URGENT: "=           |
-| =duplicate=  | 复制任务                  | =task 12 duplicate=                    |
+| 命令      | 语义                        | 示例                               |
+|-----------+-----------------------------+------------------------------------|
+| =add=       | 创建新任务                    | =task add Fix the bug=               |
+| =modify=    | 修改字段                     | =task 12 modify priority:H=          |
+| =done=      | 标记为完成 (status:completed) | =task 12 done=                       |
+| =delete=    | 删除任务 (status:deleted)    | =task 12 delete=                     |
+| =start=     | 开始任务 (设置 start 字段)     | =task 12 start=                      |
+| =stop=      | 停止任务 (清除 start 字段)     | =task 12 stop=                       |
+| =annotate=  | 添加注释                     | =task 12 annotate "Progress update"= |
+| =denotate=  | 删除注释                     | =task 12 denotate "Old note"=        |
+| =append=    | 追加到 description           | =task 12 append "more details"=      |
+| =prepend=   | 前置到 description           | =task 12 prepend "URGENT: "=         |
+| =duplicate= | 复制任务                     | =task 12 duplicate=                  |
 
 *** =add= 命令
 
-创建新任务时，可以直接指定属性:
+创建新任务时, 可以直接指定属性:
 
 #+begin_src sh
 task add Fix the memory leak project:kernel priority:H due:friday +bug
@@ -373,7 +373,7 @@ task add "Line 1
 
 *** =modify= 命令
 
-Modify 是最灵活的命令，可以修改任意字段:
+Modify 是最灵活的命令, 可以修改任意字段:
 
 #+begin_src sh
 # 修改单个任务
@@ -389,8 +389,8 @@ task 12 modify due:              # 清空 due date
 
 *** =done= 和 =delete= 的区别
 
-- =done=: 将任务标记为 =status:completed=，保留在数据库中，可以在 =completed= report 中看到
-- =delete=: 将任务标记为 =status:deleted=，只能通过 =task all= 看到，或者用 =rc.report.all.filter= 修改
+- =done=: 将任务标记为 =status:completed=, 保留在数据库中, 可以在 =completed= report 中看到
+- =delete=: 将任务标记为 =status:deleted=, 只能通过 =task all= 看到, 或者用 =rc.report.all.filter= 修改
 
 *恢复已删除的任务*:
 
@@ -421,7 +421,7 @@ task +ACTIVE list
 
 *** =annotate= 命令
 
-Annotations 是任务的附加备注，带时间戳:
+Annotations 是任务的附加备注, 带时间戳:
 
 #+begin_src sh
 # 添加 annotation
@@ -434,16 +434,16 @@ task 12 info
 task 12 denotate "Discussed"
 #+end_src
 
-Annotations 在 urgency 计算中有微弱的贡献 (系数 1.0)，表示任务的活跃度。
+Annotations 在 urgency 计算中有微弱的贡献 (系数 1.0), 表示任务的活跃度。
 
 ** 第二类: Reporting Commands (只读)
 
-报告命令 *不修改数据*，只是以不同方式展示任务:
+报告命令 *不修改数据*, 只是以不同方式展示任务:
 
 | 命令      | 本质                | 内置 filter                        | 排序                |
 |-----------+---------------------+------------------------------------+---------------------|
 | =list=      | 标准待办事项列表       | =status:pending=                     | urgency 降序        |
-| =next=      | 最紧急的任务 (默认命令) | =status:pending -WAITING=            | urgency 降序，限 1 页 |
+| =next=      | 最紧急的任务 (默认命令) | =status:pending -WAITING=            | urgency 降序, 限 1 页 |
 | =long=      | 详细列表             | =status:pending=                     | urgency 降序        |
 | =all=       | 所有任务 (无 filter)  | (空)                               | ID 升序             |
 | =completed= | 已完成任务            | =status:completed=                   | end 降序            |
@@ -460,7 +460,7 @@ Annotations 在 urgency 计算中有微弱的贡献 (系数 1.0)，表示任务�
 
 *** 报告的本质: 配置的组合
 
-*关键认知*: =list=, =next=, =long= 等 *不是硬编码的命令*，而是 *预定义的报告* (report)。
+*关键认知*: =list=, =next=, =long= 等 *不是硬编码的命令*, 而是 *预定义的报告* (report)。
 
 每个 report 本质上是一组配置项的集合:
 
@@ -488,7 +488,7 @@ report.next.sort         = urgency-
 你可以创建自己的 report:
 
 #+begin_src sh
-# 定义一个 "today" report，显示今天到期的任务
+# 定义一个 "today" report, 显示今天到期的任务
 task config report.today.description "Tasks due today"
 task config report.today.filter "+DUETODAY status:pending"
 task config report.today.columns "id,project,priority,description,urgency"
@@ -501,7 +501,7 @@ task today
 
 *** =next= 是默认 report
 
-当你只输入 =task= 时，默认执行 =next= report (除非你修改了 =default.command=):
+当你只输入 =task= 时, 默认执行 =next= report (除非你修改了 =default.command=):
 
 #+begin_src sh
 task                # 等价于 task next
@@ -510,7 +510,7 @@ task project:Home   # 等价于 task project:Home next
 
 *** =export= 和 =import=: JSON 格式
 
-Taskwarrior 的数据是 JSON 格式，可以导出/导入:
+Taskwarrior 的数据是 JSON 格式, 可以导出/导入:
 
 #+begin_src sh
 # 导出为 JSON
@@ -531,7 +531,7 @@ task import tasks.json
 task 12 info
 #+end_src
 
-显示任务的所有属性，包括:
+显示任务的所有属性, 包括:
 
 - UUID
 - 创建时间 (entry)
@@ -559,7 +559,7 @@ task 12 info
 
 *** =undo= 命令
 
-Taskwarrior 会记录所有操作历史，可以撤销:
+Taskwarrior 会记录所有操作历史, 可以撤销:
 
 #+begin_src sh
 # 撤销上一次操作
@@ -569,7 +569,7 @@ task undo
 ls ~/.task/*.data
 #+end_src
 
-每次操作后，Taskwarrior 会在 =~/.task/undo.data= 中记录快照。
+每次操作后, Taskwarrior 会在 =~/.task/undo.data= 中记录快照。
 
 *** =calc= 命令: 日期计算器
 
@@ -599,7 +599,7 @@ task 12 modify due:tomorrow priority:H project:kernel
 规则:
 
 - 多个修改按顺序执行
-- 如果 value 为空，则清空字段: =field:=
+- 如果 value 为空, 则清空字段: =field:=
 
 ** 标签的添加和移除
 
@@ -614,7 +614,7 @@ task 12 modify -wontfix
 task 12 modify +bug -feature
 #+end_src
 
-注意: 标签的 =+= / =-= 在 modifications 中表示 "添加/移除"，而在 filter 中表示 "存在/不存在"。
+注意: 标签的 =+= / =-= 在 modifications 中表示 "添加/移除", 而在 filter 中表示 "存在/不存在"。
 
 ** 描述的修改
 
@@ -725,7 +725,7 @@ task add "Pay rent" due:28th recur:monthly
 task add "Quarterly report" due:eom recur:quarterly until:now+1y
 #+end_src
 
-循环任务会自动生成 "子任务" (child tasks)，父任务 (parent) 不会显示在普通报告中。
+循环任务会自动生成 "子任务" (child tasks), 父任务 (parent) 不会显示在普通报告中。
 
 ** 等待时间 (wait)
 
@@ -754,17 +754,17 @@ task 12 modify until:2025-12-31
 
 * Urgency: 自动优先级排序的核心
 
-Urgency (紧迫性) 是 Taskwarrior 最强大的特性之一，也是 =next= report 排序的核心。
+Urgency (紧迫性) 是 Taskwarrior 最强大的特性之一, 也是 =next= report 排序的核心。
 
 ** Urgency 的本质: 多项式计算
 
-Urgency 是一个 *实数*，由多个因子的加权和计算而来:
+Urgency 是一个 *实数*, 由多个因子的加权和计算而来:
 
 #+begin_example
 urgency = Σ (coefficient_i × indicator_i)
 #+end_example
 
-每个因子对应一个任务的属性 (如 priority, due date, tags)，每个因子有一个 *系数* (coefficient)，决定了该因子的重要性。
+每个因子对应一个任务的属性 (如 priority, due date, tags), 每个因子有一个 *系数* (coefficient), 决定了该因子的重要性。
 
 ** 默认的 Urgency 系数
 
@@ -772,7 +772,7 @@ Taskwarrior 的默认系数 (2.6.x 版本):
 
 | 因子                   | 系数 | 含义                    |
 |------------------------+------+-------------------------|
-| =+next= tag              | 15.0 | 特殊标签，极大提升 urgency |
+| =+next= tag              | 15.0 | 特殊标签, 极大提升 urgency |
 | =due= date               | 12.0 | 有 due date             |
 | =blocking= other tasks   |  8.0 | 阻塞其他任务              |
 | =priority.H=             |  6.0 | 高优先级                 |
@@ -801,7 +801,7 @@ Taskwarrior 的默认系数 (2.6.x 版本):
 
 *** Due Date 的动态计算
 
-Due date 对 urgency 的贡献不是固定的 12.0，而是根据 *距离截止日期的时间* 动态计算:
+Due date 对 urgency 的贡献不是固定的 12.0, 而是根据 *距离截止日期的时间* 动态计算:
 
 #+begin_example
 due_contribution = 12.0 × (1 - days_until_due / 14)
@@ -810,7 +810,7 @@ due_contribution = 12.0 × (1 - days_until_due / 14)
 - 今天到期: 12.0 × 1 = 12.0
 - 7 天后到期: 12.0 × 0.5 = 6.0
 - 14 天后到期: 12.0 × 0 = 0
-- 已过期: 12.0 × (1 + 超期天数/14)，可能超过 12.0
+- 已过期: 12.0 × (1 + 超期天数/14), 可能超过 12.0
 
 这让 urgency 能动态反映截止日期的临近程度。
 
@@ -855,12 +855,12 @@ task config urgency.user.tag.later.coefficient -6.0
 *最佳实践*:
 
 1. 小步调整 (每次 ±1.0)
-2. 调整后查看 =next= report，观察排序变化
-3. 不要过度拟合，urgency 是一个 *近似*，不是完美算法
+2. 调整后查看 =next= report, 观察排序变化
+3. 不要过度拟合, urgency 是一个 *近似*, 不是完美算法
 
 ** Urgency 的哲学
 
-Urgency 不是你的 "真实优先级"，而是一个 *决策辅助工具*。
+Urgency 不是你的 "真实优先级", 而是一个 *决策辅助工具*
 
 正如 Taskwarrior 文档所说:
 
@@ -878,7 +878,7 @@ Urgency is just a number, but a number calculated using a polynomial that consid
 
 ** DOM (Document Object Model): 访问任何数据
 
-Taskwarrior 提供了一个 DOM 系统，允许你访问任务的任意属性:
+Taskwarrior 提供了一个 DOM 系统, 允许你访问任务的任意属性:
 
 #+begin_src sh
 # 获取任务 12 的 description
@@ -906,7 +906,7 @@ done
 
 ** Context: 工作场景切换
 
-Context 是 Taskwarrior 2.5.0+ 的新特性，允许你定义 "工作场景" 并快速切换:
+Context 是 Taskwarrior 2.5.0+ 的新特性, 允许你定义 "工作场景" 并快速切换:
 
 #+begin_src sh
 # 定义 context
@@ -928,11 +928,11 @@ task context show
 task context none
 #+end_src
 
-这避免了重复输入 filter，非常适合 "工作时间只看工作任务，回家只看家庭任务" 的场景。
+这避免了重复输入 filter, 非常适合 "工作时间只看工作任务, 回家只看家庭任务" 的场景。
 
 ** UDA (User Defined Attributes): 自定义字段
 
-如果内置字段不够用，可以定义自己的 UDA:
+如果内置字段不够用, 可以定义自己的 UDA:
 
 #+begin_src sh
 # 定义一个 "size" 字段 (S/M/L/XL)
@@ -961,7 +961,7 @@ UDA 可以是:
 
 ** Hooks: 自定义行为
 
-Taskwarrior 支持 *hooks*，在特定事件触发时执行自定义脚本:
+Taskwarrior 支持 *hooks*, 在特定事件触发时执行自定义脚本:
 
 | Hook 类型       | 触发时机               |
 |---------------+------------------------|
@@ -982,7 +982,7 @@ import json
 # 从 stdin 读取新任务
 task = json.loads(sys.stdin.readline())
 
-# 如果有 'bug' 标签且没有 priority，设置为 H
+# 如果有 'bug' 标签且没有 priority, 设置为 H
 if 'bug' in task.get('tags', []) and 'priority' not in task:
     task['priority'] = 'H'
 
@@ -1014,7 +1014,7 @@ task add "Task" && git commit -am "Added task"
 
 *** 与 Timewarrior 集成
 
-Timewarrior 是 Taskwarrior 的姊妹项目，用于时间追踪:
+Timewarrior 是 Taskwarrior 的姊妹项目, 用于时间追踪:
 
 #+begin_src sh
 # 启动任务时自动开始计时
@@ -1035,7 +1035,7 @@ task 12 stop
 
 *** GC (Garbage Collection)
 
-Taskwarrior 会保留已删除和已完成的任务，久而久之数据库会膨胀:
+Taskwarrior 会保留已删除和已完成的任务, 久而久之数据库会膨胀:
 
 #+begin_src sh
 # 永久删除已删除的任务
@@ -1045,7 +1045,7 @@ task rc.gc=on list
 task config gc on
 #+end_src
 
-但注意: GC 会 *永久删除* 已删除任务，无法恢复。
+但注意: GC 会 *永久删除* 已删除任务, 无法恢复。
 
 *** 限制历史记录
 
@@ -1063,19 +1063,19 @@ task config undo.backlog 10    # 只保留最近 10 次操作
 2. *Command 是操作*: 对子集执行操作或生成报告
 3. *Modifications 是更新*: 批量修改子集中的任务 (SQL 的 =UPDATE=)
 4. *Report 是视图*: 预定义的 filter + 排序 + 列选择
-5. *Urgency 是近似*: 多因子加权和，需要调优
+5. *Urgency 是近似*: 多因子加权和, 需要调优
 
 *最佳实践*:
 
-1. *少即是多*: 不要过度标记任务，关键信息用 priority/due/project
+1. *少即是多*: 不要过度标记任务, 关键信息用 priority/due/project
 2. *定期审查*: 用 =tasksh= 的 =review= 命令定期清理过时任务
-3. *信任 urgency*: 让 =next= report 指导你的工作，不要过度思考
+3. *信任 urgency*: 让 =next= report 指导你的工作, 不要过度思考
 4. *自定义 report*: 为常见查询创建自定义 report (如 =task today=)
-5. *利用 context*: 工作/家庭场景切换，减少认知负担
+5. *利用 context*: 工作/家庭场景切换, 减少认知负担
 
-Taskwarrior 是一个 *工具箱*，不是一个 "方法论"。它不会强迫你使用 GTD 或 Eisenhower Matrix，而是提供灵活的机制让你构建自己的工作流。关键在于找到适合自己的 urgency 系数、report 和 workflow，然后坚持使用。
+Taskwarrior 是一个 *工具箱*, 不是一个 "方法论"。它不会强迫你使用 GTD 或 Eisenhower Matrix, 而是提供灵活的机制让你构建自己的工作流。关键在于找到适合自己的 urgency 系数、report 和 workflow, 然后坚持使用。
 
-最后，记住 Taskwarrior 的设计哲学: *低摩擦* (low-friction)。添加任务应该像写便签一样快速，查看任务应该一目了然。如果你发现自己在与 Taskwarrior 搏斗，那可能是配置出了问题，而不是工具的问题。
+最后, 记住 Taskwarrior 的设计哲学: *低摩擦* (low-friction)。添加任务应该像写便签一样快速, 查看任务应该一目了然。如果你发现自己在与 Taskwarrior 搏斗, 那可能是配置出了问题, 而不是工具的问题。
 
 *开始很简单*:
 
@@ -1086,4 +1086,4 @@ task next
 task 1 done
 #+end_src
 
-这四个命令就是 Taskwarrior 的核心。其余的，都是优化和定制。
+这四个命令就是 Taskwarrior 的核心。其余的, 都是优化和定制。

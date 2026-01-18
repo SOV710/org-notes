@@ -4,15 +4,15 @@
 #+startup: showall
 #+options: toc:2 num:nil
 
-* 前言: Sort 不是 "排序"，是排序管线
+* 前言: Sort 不是 "排序", 是排序管线
 
-下面是一份 *严格基于 Taskwarrior 官方文档语义*、以 *技术文档 (technical note)* 风格撰写的说明，专门回答:
+下面是一份 *严格基于 Taskwarrior 官方文档语义*, 以 *技术文档 (technical note)* 风格撰写的说明, 专门回答:
 
 #+begin_quote
 *=report.<name>.sort= 是什么、怎么写、有哪些合法语法、以及 "什么叫写得好"*
 #+end_quote
 
-全文不讲使用技巧，不讲个人偏好，只讲 *规范、语义、约束、可推导行为*。
+全文不讲使用技巧, 不讲个人偏好, 只讲 *规范、语义、约束、可推导行为*
 
 ** Sort 的本质认知
 
@@ -32,18 +32,18 @@ Taskwarrior 的 sort:
                 最后按 ID 稳定
 #+end_example
 
-这是一个 *多键字典序排序管线* (multi-key lexicographical ordering pipeline)，不是简单的 "按某字段排"。
+这是一个 *多键字典序排序管线* (multi-key lexicographical ordering pipeline), 不是简单的 "按某字段排"。
 
 * 1. 定义 (官方语义)
 
-在 Taskwarrior 中，=report.<name>.sort= 定义了 *报表中任务行的排序规则*。
+在 Taskwarrior 中, =report.<name>.sort= 定义了 *报表中任务行的排序规则*
 
 其官方定义可以概括为:
 
 #+begin_quote
 *=sort= 是一个有序的排序键 (sort keys) 列表；*
 *排序按列表顺序逐级应用；*
-*每个排序键可以指定方向，并可选地指定 "分组断行 (list break)"。*
+*每个排序键可以指定方向, 并可选地指定 "分组断行 (list break)"。*
 #+end_quote
 
 换言之:
@@ -64,7 +64,7 @@ tasks | sort_by(start, desc) | sort_by(due, asc) | sort_by(project, asc) | sort_
 *关键推论*:
 
 #+begin_quote
-如果第一个排序键已经把所有任务分成了不相交的子集，
+如果第一个排序键已经把所有任务分成了不相交的子集,
 那么后续排序键 *只在子集内部* 起作用。
 #+end_quote
 
@@ -109,19 +109,19 @@ break ::= '/'
 
 *** 不能用于排序的 "列格式"
 
-某些 column format *不是字段*，不能用于排序:
+某些 column format *不是字段*, 不能用于排序:
 
 #+begin_src sh
-# ❌ 错误: 这是 format，不是字段
+# ❌ 错误: 这是 format, 不是字段
 task config report.list.sort 'description.truncated-'
 
 # ✅ 正确: description 是字段
 task config report.list.sort 'description-'
 #+end_src
 
-*经验法则*: 如果一个列名包含 =.=，后面的部分通常是 format，不能用于排序。
+*经验法则*: 如果一个列名包含 =.=, 后面的部分通常是 format, 不能用于排序。
 
-*例外*: =.age=, =.countdown= 等是 *派生字段*，可以排序:
+*例外*: =.age=, =.countdown= 等是 *派生字段*, 可以排序:
 
 #+begin_src sh
 # ✅ 正确: entry.age 是派生字段
@@ -137,7 +137,7 @@ task config report.list.sort 'entry.age-'
 
 规则:
 
-- 若省略方向符号，默认是 *升序 (=+=)*
+- 若省略方向符号, 默认是 *升序 (=+=)*
 - =key= 与 =key+= 语义等价
 
 示例:
@@ -165,7 +165,7 @@ urgency- ≡ urgency-   (高 urgency 在前)
 
 *** 空值的排序位置
 
-*关键行为*: 空值的排序位置是 *实现定义的* (implementation-defined)，但通常遵循:
+*关键行为*: 空值的排序位置是 *实现定义的* (implementation-defined), 但通常遵循:
 
 - *升序 (=+=)*: 空值排到 *最后*
 - *降序 (=-=)*: 空值排到 *最前*
@@ -192,14 +192,14 @@ task test
 任务 5 (无 due)
 #+end_src
 
-*推论*: 如果第一个排序键是稀疏字段 (很多任务为空)，会导致大量任务 "堆积" 在末尾，后续排序键才起作用。
+*推论*: 如果第一个排序键是稀疏字段 (很多任务为空), 会导致大量任务 "堆积" 在末尾, 后续排序键才起作用。
 
 ** 2.4 分组断行 (List Break, =/=)
 
-在排序键后追加 =/=，表示:
+在排序键后追加 =/=, 表示:
 
 #+begin_quote
-*当该排序键的值发生变化时，在输出中插入一个空行*
+*当该排序键的值发生变化时, 在输出中插入一个空行*
 #+end_quote
 
 语法位置:
@@ -216,7 +216,7 @@ project+/
 
 说明:
 
-- =/= *只影响显示，不影响排序结果*
+- =/= *只影响显示, 不影响排序结果*
 - =/= 仅在该排序键处生效
 - 一个 =sort= 中可以有多个 =/=
 
@@ -266,11 +266,11 @@ ID  Project  Pri  Due         Description
 5   work     M    2025-12-25  Documentation
 #+end_example
 
-两层分组: 先按 project，再按 priority。
+两层分组: 先按 project, 再按 priority。
 
 *** Break 的限制
 
-=/= *不能单独使用*，必须附加在排序键后:
+=/= *不能单独使用*, 必须附加在排序键后:
 
 #+begin_src sh
 # ❌ 错误
@@ -289,22 +289,22 @@ task config report.list.sort 'project+/,due+'
 1. 先按第一个排序键对所有任务排序
 2. 对于第一个键 "值相同" 的任务子集:
    - 再按第二个排序键排序
-3. 依次类推，直到排序键用尽
+3. 依次类推, 直到排序键用尽
 
-形式化地说，这是一个 *字典序 (lexicographical ordering)*。
+形式化地说, 这是一个 *字典序 (lexicographical ordering)*。
 
 *** 字典序的数学定义
 
-对于两个任务 $A$ 和 $B$，以及排序键序列 $(k_1, k_2, ..., k_n)$:
+对于两个任务 $A$ 和 $B$, 以及排序键序列 $(k_1, k_2, ..., k_n)$:
 
 #+begin_example
 A < B  ⟺  ∃i: (∀j < i: A[k_j] = B[k_j]) ∧ (A[k_i] < B[k_i])
 #+end_example
 
-翻译: A 排在 B 前面，当且仅当存在某个排序键 $k_i$，使得:
+翻译: A 排在 B 前面, 当且仅当存在某个排序键 $k_i$, 使得:
 
-- 在所有更高优先级的键上，A 和 B 相等
-- 在 $k_i$ 上，A 小于 B
+- 在所有更高优先级的键上, A 和 B 相等
+- 在 $k_i$ 上, A 小于 B
 
 *** 实例分析
 
@@ -330,12 +330,12 @@ sort = priority-,due+,urgency-
    - H 组: 任务 1, 2, 3
    - M 组: 任务 4, 5
 
-2. *第二级: due+* (升序，在 H 组内)
+2. *第二级: due+* (升序, 在 H 组内)
    - H 组排序:
      - 2025-12-20: 任务 1, 2
      - 2025-12-22: 任务 3
 
-3. *第三级: urgency-* (降序，在 H + 2025-12-20 内)
+3. *第三级: urgency-* (降序, 在 H + 2025-12-20 内)
    - H + 2025-12-20 排序:
      - 任务 1 (15.0) 在前
      - 任务 2 (12.0) 在后
@@ -357,7 +357,7 @@ sort = priority-,due+,urgency-
 
 ** 3.2 空值 (null / empty) 的处理
 
-官方文档没有把 "空值排序规则" 写成独立章节，但行为是确定的:
+官方文档没有把 "空值排序规则" 写成独立章节, 但行为是确定的:
 
 - 若某个任务在排序键上 *没有值*
   - 它仍然参与排序
@@ -365,7 +365,7 @@ sort = priority-,due+,urgency-
 - 因此:
 
 #+begin_quote
-*把 "可能为空" 的字段放在排序列表前部，会显著改变整体排序结构*
+*把 "可能为空" 的字段放在排序列表前部, 会显著改变整体排序结构*
 #+end_quote
 
 这是排序设计中最常见的误解来源。
@@ -397,7 +397,7 @@ ID  Due      Description
 5            Task E
 #+end_example
 
-观察: 无 =due= 的任务 (C, E) 排到 *最后*，且它们之间的顺序由 *ID* 决定 (稳定排序)。
+观察: 无 =due= 的任务 (C, E) 排到 *最后*, 且它们之间的顺序由 *ID* 决定 (稳定排序)。
 
 *** 空值分层的影响
 
@@ -414,7 +414,7 @@ task config report.bad.sort 'start-,due+,urgency-'
   2. 无 =start= 的任务 (绝大多数)
 - 第 2 组内部才按 =due= 和 =urgency= 排序
 
-*结果*: 用户会看到 "几个正在做的任务" 排在最前面，然后是 "所有其他任务" 混在一起，=urgency= 的作用被掩盖。
+*结果*: 用户会看到 "几个正在做的任务" 排在最前面, 然后是 "所有其他任务" 混在一起, =urgency= 的作用被掩盖。
 
 *正确做法*:
 
@@ -426,14 +426,14 @@ task config report.good.sort 'urgency-,start-,due+'
 现在:
 
 - 先按 =urgency= 排 (所有任务都有值)
-- =start= 只作为 *tie-breaker* (urgency 相同时，有 =start= 的优先)
+- =start= 只作为 *tie-breaker* (urgency 相同时, 有 =start= 的优先)
 
 ** 3.3 稳定排序 (Stable Sort)
 
 Taskwarrior 使用 *稳定排序* (stable sort):
 
 #+begin_quote
-如果两个任务在所有排序键上都相等，它们的相对顺序 *不会改变*。
+如果两个任务在所有排序键上都相等, 它们的相对顺序 *不会改变*。
 #+end_quote
 
 *实际行为*: 最终的 tiebreaker 是 *ID 升序*。
@@ -443,15 +443,15 @@ Taskwarrior 使用 *稳定排序* (stable sort):
 task 12 info  # urgency: 5.0
 task 15 info  # urgency: 5.0
 
-# 排序后，12 会在 15 前面
+# 排序后, 12 会在 15 前面
 task rc.report.list.sort='urgency-' list
 #+end_example
 
-*推论*: 即使你的 =sort= 只有一个键，输出顺序也是 *确定的* (不会随机)。
+*推论*: 即使你的 =sort= 只有一个键, 输出顺序也是 *确定的* (不会随机)。
 
 * 4. =sort= 中常用字段的 "排序属性"
 
-以下并非使用建议，而是 *字段在排序语义上的客观特性*。
+以下并非使用建议, 而是 *字段在排序语义上的客观特性*。
 
 ** 4.1 时间类字段 (=due=, =start=, =scheduled=, =wait=, =until=)
 
@@ -534,15 +534,15 @@ task config report.next.sort 'urgency-'
 *特性*:
 
 1. *所有任务都有 urgency* (默认至少有 age 贡献)
-2. 值分布连续，很少有完全相等的情况
-3. 动态计算，反映多个因素
+2. 值分布连续, 很少有完全相等的情况
+3. 动态计算, 反映多个因素
 
 *适用场景*: 作为 "默认排序" (当你不知道该怎么排时)。
 
 *** Priority
 
 - 离散值 (H / M / L / 无)
-- 本质是 *分类键*，不是连续排序尺度
+- 本质是 *分类键*, 不是连续排序尺度
 
 #+begin_src sh
 # priority- (降序): H → M → L → 无
@@ -558,7 +558,7 @@ task config report.bypri.sort 'priority-,due+'
 *推荐用法*:
 
 #+begin_src sh
-# 按 priority 分组，组内按 due 排序
+# 按 priority 分组, 组内按 due 排序
 task config report.grouped.sort 'priority-/,due+,urgency-'
 #+end_src
 
@@ -583,7 +583,7 @@ task config report.byproj.sort 'project+/,entry+'
 
 *特性*:
 
-- =project= 是 *中等密度* 字段 (大部分任务有，但不是全部)
+- =project= 是 *中等密度* 字段 (大部分任务有, 但不是全部)
 - 空值通常排到 *最前面* (字典序的特性)
 
 *** Status
@@ -596,7 +596,7 @@ task config report.byproj.sort 'project+/,entry+'
 task config report.list.sort 'status+'
 task config report.list.filter ''  # 空 filter
 
-# 所有 status 的任务都会显示，但通常不是你想要的
+# 所有 status 的任务都会显示, 但通常不是你想要的
 #+end_src
 
 *例外*: =all= report 可以按 status 排序:
@@ -609,7 +609,7 @@ task all
 *** Description
 
 - 按字典序排序
-- *极少用于排序* (因为值太分散，排序意义不大)
+- *极少用于排序* (因为值太分散, 排序意义不大)
 
 #+begin_src sh
 # 按 description 排序？通常没什么意义
@@ -650,11 +650,11 @@ task config report.active_tasks.sort 'modified.age+'
 task config report.stale_tasks.sort 'modified.age-'
 #+end_src
 
-*用途*: 定期审查，找出 "僵尸任务"。
+*用途*: 定期审查, 找出 "僵尸任务"。
 
 * 5. =sort= 的 "可读性问题" 与 =/= 的设计目的
 
-官方引入 =/= 的根本目的不是排序，而是 *提高人类阅读可分组性*。
+官方引入 =/= 的根本目的不是排序, 而是 *提高人类阅读可分组性*。
 
 例如:
 
@@ -698,7 +698,7 @@ ID  Project  Pri  Due         Description
 6   work     L    2025-12-26  Documentation
 #+end_example
 
-*问题*: 虽然排序正确，但 *视觉上难以分组*——你需要仔细看 project 列才能知道哪些任务属于同一组。
+*问题*: 虽然排序正确, 但 *视觉上难以分组*——你需要仔细看 project 列才能知道哪些任务属于同一组。
 
 *Sort B* (有 break):
 
@@ -737,21 +737,21 @@ task config report.list.sort 'project+/,priority-/,due+/'
 2. *不要在 urgency 上加 =/=*
 
 #+begin_src sh
-# ❌ 糟糕: urgency 是连续值，每个任务都会有空行
+# ❌ 糟糕: urgency 是连续值, 每个任务都会有空行
 task config report.list.sort 'urgency-/'
 #+end_src
 
 3. *考虑终端高度*
 
 #+begin_src sh
-# 如果 report 只显示 20 行，每个 project 有 5 个任务
+# 如果 report 只显示 20 行, 每个 project 有 5 个任务
 # 那么 4 个 project × (5 任务 + 1 空行) = 24 行
 # 可能会超出屏幕
 #+end_src
 
 * 6. 合法但不推荐的写法 (规范角度)
 
-以下写法在语法上合法，但在技术上通常不可解释或不可维护:
+以下写法在语法上合法, 但在技术上通常不可解释或不可维护:
 
 #+begin_src sh
 start-,due+,project+,urgency-
@@ -763,7 +763,7 @@ start-,due+,project+,urgency-
 - 放在首位会把列表先按 "是否存在 start" 分层
 - 后续排序键语义被掩盖
 
-这不是 "错"，但属于 *排序主键选择不当*。
+这不是 "错", 但属于 *排序主键选择不当*。
 
 ** 反模式 1: 稀疏字段作为首键
 
@@ -786,7 +786,7 @@ task config report.bad1.sort 'start-,urgency-'
 task config report.good1.sort 'urgency-,start-'
 #+end_src
 
-现在 =start= 只作为 tie-breaker，不会掩盖 urgency。
+现在 =start= 只作为 tie-breaker, 不会掩盖 urgency。
 
 ** 反模式 2: 时间字段降序作为首键
 
@@ -819,7 +819,7 @@ task config report.bad3.sort 'description+,urgency-'
 
 - =description= 是 *极度分散* 的字段 (几乎每个任务都不同)
 - 按字典序排序 *毫无意义*
-- 用户看到的是 "字母序"，不是 "重要性"
+- 用户看到的是 "字母序", 不是 "重要性"
 
 *修正*:
 
@@ -850,12 +850,12 @@ task config report.good4.sort 'urgency-'
 
 * 7. "写得好" 的技术判据 (不是偏好)
 
-从 Taskwarrior 文档所隐含的模型出发，一个 *良好定义的 =sort=* 应满足:
+从 Taskwarrior 文档所隐含的模型出发, 一个 *良好定义的 =sort=* 应满足:
 
 ** 判据 1: 主排序键必须 "稳定且密集"
 
 - "稳定": 大多数任务都有值
-- "密集": 值分布连续，不是极少数才出现
+- "密集": 值分布连续, 不是极少数才出现
 
 例如: =project=, =due=, =urgency=
 
@@ -887,7 +887,7 @@ echo "Due coverage: $coverage"
 - =scheduled=
 - =wait=
 
-若使用，应放在后部。
+若使用, 应放在后部。
 
 *形式化表示*:
 
@@ -902,9 +902,9 @@ echo "Due coverage: $coverage"
 sparse(k) ⟺ coverage(k) < 0.3
 #+end_example
 
-** 判据 3: 如果排序结果需要人工扫描，必须考虑 =/=
+** 判据 3: 如果排序结果需要人工扫描, 必须考虑 =/=
 
-否则排序虽正确，但 *不可读*。
+否则排序虽正确, 但 *不可读*。
 
 *人工扫描* 的定义:
 
@@ -916,13 +916,13 @@ sparse(k) ⟺ coverage(k) < 0.3
 
 #+begin_src sh
 # 假设你的 report 通常显示 30 个任务
-# 如果没有 break，用户需要逐行扫描 project 列
-# 如果有 break (project+/)，用户一眼就能看出分组
+# 如果没有 break, 用户需要逐行扫描 project 列
+# 如果有 break (project+/), 用户一眼就能看出分组
 #+end_src
 
 ** 判据 4: 末级排序键应该是 "最终裁决者"
 
-理想情况下，末级键应该让 *任意两个任务* 都能区分。
+理想情况下, 末级键应该让 *任意两个任务* 都能区分。
 
 *推荐末级键*:
 
@@ -932,7 +932,7 @@ sparse(k) ⟺ coverage(k) < 0.3
 
 *避免末级键*:
 
-- =priority-= (只有 4 个值，区分度低)
+- =priority-= (只有 4 个值, 区分度低)
 - =project+= (可能有很多任务同 project)
 
 ** 判据 5: 排序键总数 ≤ 4
@@ -949,7 +949,7 @@ sparse(k) ⟺ coverage(k) < 0.3
 
 *避免*:
 
-- 5+ 键: 过度复杂，难以理解
+- 5+ 键: 过度复杂, 难以理解
 
 *测试*:
 
@@ -969,7 +969,7 @@ Taskwarrior 文档明确支持:
 task rc.report.<name>.sort=... <name>
 #+end_src
 
-作为 *临时覆盖* 来验证排序行为，而不修改 =.taskrc=。
+作为 *临时覆盖* 来验证排序行为, 而不修改 =.taskrc=。
 
 这是官方推荐的实验方式。
 
@@ -978,7 +978,7 @@ task rc.report.<name>.sort=... <name>
 1. *临时测试*
 
 #+begin_src sh
-# 不修改配置，临时测试新 sort
+# 不修改配置, 临时测试新 sort
 task rc.report.list.sort='urgency-,project+/,due+' list
 #+end_src
 
@@ -1006,21 +1006,21 @@ task rc.report.list.sort='project+/,due+' list | grep '^$'
 4. *确认后固化*
 
 #+begin_src sh
-# 确认无误后，固化到配置
+# 确认无误后, 固化到配置
 task config report.list.sort 'urgency-,project+/,due+'
 #+end_src
 
 ** 使用 Verbose=nothing 调试
 
 #+begin_src sh
-# 纯数据输出，便于脚本分析
+# 纯数据输出, 便于脚本分析
 task rc.verbose=nothing rc.report.list.sort='urgency-' list
 #+end_src
 
 ** 导出 JSON 分析
 
 #+begin_src sh
-# 导出为 JSON，用 jq 分析排序
+# 导出为 JSON, 用 jq 分析排序
 task export | jq -r '.[] | "\(.urgency) \(.id) \(.description)"' | sort -n -r
 #+end_src
 
@@ -1079,20 +1079,20 @@ task show report.next.sort
 
 *分析*:
 
-- =start-=: 稀疏键，但放首位
+- =start-=: 稀疏键, 但放首位
   - *问题*: 会把 1-2 个 active 任务排到最前
-  - *合理性*: =next= 的语义是 "最该做的"，active 任务确实优先
-- =due+=: 中等键，早到期的在前
-- =project+=: 中等键，字典序
-- =urgency-=: 密集键，末级裁决
+  - *合理性*: =next= 的语义是 "最该做的", active 任务确实优先
+- =due+=: 中等键, 早到期的在前
+- =project+=: 中等键, 字典序
+- =urgency-=: 密集键, 末级裁决
 
 *评分*:
 
-- 稳定性: ⚠️ (首键稀疏，但语义合理)
-- 可读性: ⚠️ (无 break，但 =limit:page= 控制了长度)
+- 稳定性: ⚠️ (首键稀疏, 但语义合理)
+- 可读性: ⚠️ (无 break, 但 =limit:page= 控制了长度)
 - 语义清晰度: ✅
 
-*总体*: 虽然违反 "稀疏键不作首键" 的判据，但在 =next= 的特定语境下是合理的。
+*总体*: 虽然违反 "稀疏键不作首键" 的判据, 但在 =next= 的特定语境下是合理的。
 
 ** List Report
 
@@ -1103,7 +1103,7 @@ task show report.list.sort
 
 *分析*:
 
-- 与 =next= 类似，但 =project= 有 break
+- 与 =next= 类似, 但 =project= 有 break
 - *改进*: 增加了可读性
 
 *评分*:
@@ -1149,12 +1149,12 @@ task show report.overdue.sort
 - 可读性: ✅
 - 语义清晰度: ✅
 
-* 结语: Sort 是语义设计，不是语法配置
+* 结语: Sort 是语义设计, 不是语法配置
 
-最后，重申核心观点:
+最后, 重申核心观点:
 
 #+begin_quote
-Sort 不是 "技术配置"，而是 "语义设计"。
+Sort 不是 "技术配置", 而是 "语义设计"。
 #+end_quote
 
 *语法* 只告诉你 "怎么写是合法的"。
@@ -1167,7 +1167,7 @@ Sort 不是 "技术配置"，而是 "语义设计"。
 2. 让 *人类* 能快速理解
 3. 反映 *工作流* 的优先级逻辑
 
-如果你的 sort 让人困惑，问题不在语法，而在:
+如果你的 sort 让人困惑, 问题不在语法, 而在:
 
 - 你是否真正理解了自己的工作流？
 - 你是否把 "我觉得重要的" 放在了首位？
@@ -1175,4 +1175,4 @@ Sort 不是 "技术配置"，而是 "语义设计"。
 
 *最后的建议*:
 
-从简单开始 (单键排序)，逐步增加复杂度。每次只改变一个键，观察效果。不要试图一次性设计 "完美的 sort"——完美的 sort 是在使用中逐渐演化出来的。
+从简单开始 (单键排序), 逐步增加复杂度。每次只改变一个键, 观察效果。不要试图一次性设计 "完美的 sort"——完美的 sort 是在使用中逐渐演化出来的。
