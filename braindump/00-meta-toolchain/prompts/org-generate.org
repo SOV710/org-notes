@@ -35,6 +35,8 @@
      - #+begin_src language
        code
        #+end_src
+   - 长横线:
+     - -----
 
 4. 文件结构:
    - 包含完整 header (#+title, #+startup)
