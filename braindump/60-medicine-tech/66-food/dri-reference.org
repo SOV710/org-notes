@@ -1,0 +1,927 @@
+#+title: Dietary Reference Intakes (DRI) Quick Reference Guide
+#+author: SOV710
+#+date: <2026-01-15 Thu>
+#+startup: showall
+#+options: toc:2 num:nil
+
+* DRI 核心概念速查
+
+** 五类参考值定义
+
+*** EAR (Estimated Average Requirement)
+
+*估计平均需要量*
+
+- 定义: 满足 *50%* 健康个体需求的摄入水平
+- 用途: 评估群体营养摄入充足性, 计算 RDA 的基础
+- 统计: 中位数需求量, 正态分布下 50th percentile
+
+*** RDA (Recommended Dietary Allowance)
+
+*推荐膳食摄入量*
+
+- 定义: 满足 *97.5%* 健康个体需求的摄入水平
+- 用途: 个体膳食计划的目标值
+- 计算: ~RDA = EAR + 2 * SD~ (标准差)
+  - 若变异系数 (CV) 未知, 假设 CV = 10%
+  - 则 ~RDA = 1.2 * EAR~
+
+*** AI (Adequate Intake)
+
+*适宜摄入量*
+
+- 定义: 当证据不足以建立 EAR/RDA 时, 基于观察健康人群摄入量设定
+- 用途: 可作为个体摄入目标, 但 *不等同于 RDA*
+- 特例: 婴儿 (<12 月) 的所有营养素均为 AI, 基于母乳成分
+
+*** UL (Tolerable Upper Intake Level)
+
+*可耐受最高摄入量*
+
+- 定义: 几乎不会对健康造成不良影响的 *最高* 日摄入量
+- 用途: 警戒线, 超过 UL 风险增加
+- 重要: *UL 不是推荐摄入量*, 无证据表明超 RDA 有益
+
+*** CDRR (Chronic Disease Risk Reduction Intake)
+
+*慢性病风险降低摄入量*
+
+- 定义: 降低慢性病风险的摄入量阈值 (2019 年新增)
+- 目前仅对 *钠* 有 CDRR 值
+- 例: 成人钠 CDRR = 2,300 mg/day
+
+** AMDR (Acceptable Macronutrient Distribution Ranges)
+
+*宏量营养素可接受分布范围*
+
+能量来源占总热量的百分比范围:
+
+- 碳水化合物 (Carbohydrates): 45–65% 总热量
+- 脂肪 (fat): 20–35% 总热量
+- 蛋白质 (proteins): 10–35% 总热量
+
+** 生命阶段分组
+
+- Infants: 0–6 月, 7–12 月
+- Children: 1–3 岁, 4–8 岁
+- Males: 9–13, 14–18, 19–30, 31–50, 51–70, 71+ 岁
+- Females: 9–13, 14–18, 19–30, 31–50, 51–70, 71+ 岁
+- Pregnancy: ≤18, 19–30, 31–50 岁
+- Lactation: ≤18, 19–30, 31–50 岁
+
+* 关键维生素速查
+
+** 脂溶性维生素
+
+*** Vitamin A
+
+单位: μg RAE (Retinol Activity Equivalents)
+
+转换:
+- 1 μg RAE = 1 μg 视黄醇
+- 1 μg RAE = 12 μg beta-carotene (食物)
+- 1 μg RAE = 24 μg alpha-carotene
+- 旧单位: 1 IU = 0.3 μg 视黄醇
+
+RDA (成人):
+- 男性 (19+): 900 μg RAE/day
+- 女性 (19+): 700 μg RAE/day
+- 孕期: 770 μg RAE/day
+- 哺乳期: 1,300 μg RAE/day
+
+UL (成人 19+):
+- 3,000 μg/day (仅指预成型维生素 A, 不含类胡萝卜素)
+
+注意: 类胡萝卜素 (beta-carotene) 无 UL
+
+*** Vitamin D
+
+单位: μg (microgram) 或 IU (International Units)
+
+转换:
+- 1 μg = 40 IU
+- 1 IU = 0.025 μg
+
+RDA:
+- 婴儿 (0–12 月): 400 IU/day (10 μg) *[AI]*
+- 儿童/成人 (1–70 岁): 600 IU/day (15 μg)
+- 老年人 (71+ 岁): 800 IU/day (20 μg)
+- 孕期/哺乳期: 600 IU/day (15 μg)
+
+UL:
+- 婴儿 (0–6 月): 1,000 IU/day
+- 婴儿 (7–12 月): 1,500 IU/day
+- 儿童 (1–3 岁): 2,500 IU/day
+- 儿童 (4–8 岁): 3,000 IU/day
+- 9+ 岁: 4,000 IU/day
+
+血清标准:
+- 充足: 25(OH)D ≥ 20 ng/mL (50 nmol/L)
+- EAR 对应: ~16 ng/mL (40 nmol/L)
+
+*** Vitamin E
+
+单位: mg α-tocopherol
+
+转换:
+- 只计算 *RRR-α-tocopherol* (天然) 和 *2R-异构体* (补充剂)
+- 不包括 2S-异构体 (SRR-, SSR-, SRS-, SSS-)
+- 旧单位: 1 mg α-TE (α-tocopherol equivalents) 已废弃
+
+RDA (成人 19+):
+- 15 mg/day (所有性别)
+- 孕期: 15 mg/day
+- 哺乳期: 19 mg/day
+
+UL (成人 19+):
+- 1,000 mg/day (仅指补充剂形式)
+
+*** Vitamin K
+
+单位: μg
+
+AI (无 RDA):
+- 男性 (19+): 120 μg/day
+- 女性 (19+): 90 μg/day
+
+UL: 未确定 (ND, Not Determinable)
+
+** 水溶性维生素
+
+*** Vitamin C (Ascorbic Acid)
+
+单位: mg
+
+RDA:
+- 男性 (19+): 90 mg/day
+- 女性 (19+): 75 mg/day
+- 吸烟者: *+35 mg/day*
+- 孕期: 85 mg/day
+- 哺乳期: 120 mg/day
+
+UL (成人 19+):
+- 2,000 mg/day
+
+*** B1 (Thiamin)
+
+单位: mg
+
+RDA:
+- 男性 (19+): 1.2 mg/day
+- 女性 (19+): 1.1 mg/day
+
+UL: 未确定 (ND)
+
+*** B2 (Riboflavin)
+
+单位: mg
+
+RDA:
+- 男性 (19+): 1.3 mg/day
+- 女性 (19+): 1.1 mg/day
+
+UL: 未确定 (ND)
+
+*** B3 (Niacin)
+
+单位: mg NE (Niacin Equivalents)
+
+转换:
+- 1 mg niacin = 60 mg tryptophan (色氨酸)
+- 1 NE = 1 mg niacin
+
+RDA:
+- 男性 (19+): 16 mg NE/day
+- 女性 (19+): 14 mg NE/day
+
+UL (成人 19+):
+- 35 mg/day (仅指补充剂/强化食品, 不含天然食物)
+
+*** B6 (Pyridoxine)
+
+单位: mg
+
+RDA:
+- 男性 (19–50 岁): 1.3 mg/day
+- 男性 (51+ 岁): 1.7 mg/day
+- 女性 (19–50 岁): 1.3 mg/day
+- 女性 (51+ 岁): 1.5 mg/day
+
+UL (成人 19+):
+- 100 mg/day
+
+*** B9 (Folate)
+
+单位: μg DFE (Dietary Folate Equivalents)
+
+转换:
+- 1 DFE = 1 μg 食物叶酸
+- 1 DFE = 0.6 μg 强化食品中的叶酸
+- 1 DFE = 0.5 μg 空腹服用的叶酸补充剂
+
+RDA:
+- 成人 (19+): 400 μg DFE/day
+- 孕期: 600 μg DFE/day
+- 哺乳期: 500 μg DFE/day
+
+特殊建议:
+- 育龄女性: *400 μg 合成叶酸/day* (补充剂/强化食品) + 食物叶酸
+
+UL (成人 19+):
+- 1,000 μg/day (仅指合成叶酸, 不含天然食物叶酸)
+
+*** B12 (Cobalamin)
+
+单位: μg
+
+RDA:
+- 成人 (19+): 2.4 μg/day
+- 孕期: 2.6 μg/day
+- 哺乳期: 2.8 μg/day
+
+特殊建议:
+- 50+ 岁: 建议通过强化食品或补充剂摄入, 因 10–30% 老年人胃酸分泌不足
+
+UL: 未确定 (ND)
+
+*** Pantothenic Acid (B5)
+
+单位: mg
+
+AI (无 RDA):
+- 成人 (19+): 5 mg/day
+
+UL: 未确定 (ND)
+
+*** Biotin (B7)
+
+单位: μg
+
+AI (无 RDA):
+- 成人 (19+): 30 μg/day
+
+UL: 未确定 (ND)
+
+*** Choline
+
+单位: mg
+
+AI (无 RDA):
+- 男性 (19+): 550 mg/day
+- 女性 (19+): 425 mg/day
+- 孕期: 450 mg/day
+- 哺乳期: 550 mg/day
+
+UL (成人 19+):
+- 3,500 mg/day
+
+注意: 体内可合成, 但不足以满足所有生命阶段需求
+
+* 矿物质速查
+
+** 宏量矿物质
+
+*** Calcium
+
+单位: mg
+
+RDA:
+- 男性 (19–50 岁): 1,000 mg/day
+- 男性 (51–70 岁): 1,000 mg/day
+- 男性 (71+ 岁): 1,200 mg/day
+- 女性 (19–50 岁): 1,000 mg/day
+- 女性 (51+ 岁): 1,200 mg/day
+- 孕期/哺乳期 (19+): 1,000 mg/day
+
+UL:
+- 成人 (19–50 岁): 2,500 mg/day
+- 成人 (51+ 岁): 2,000 mg/day
+
+*** Phosphorus
+
+单位: mg
+
+RDA:
+- 成人 (19+): 700 mg/day
+
+UL (成人 19–70 岁):
+- 4,000 mg/day
+- 70+ 岁: 3,000 mg/day
+
+*** Magnesium
+
+单位: mg
+
+RDA:
+- 男性 (19–30 岁): 400 mg/day
+- 男性 (31+ 岁): 420 mg/day
+- 女性 (19–30 岁): 310 mg/day
+- 女性 (31+ 岁): 320 mg/day
+
+UL (成人 19+):
+- 350 mg/day (仅指补充剂, 不含食物和水)
+
+*** Sodium
+
+单位: mg
+
+AI:
+- 成人 (19–50 岁): 1,500 mg/day
+- 成人 (51–70 岁): 1,300 mg/day
+- 成人 (71+ 岁): 1,200 mg/day
+
+CDRR (慢性病风险降低):
+- 成人 (19+): 2,300 mg/day (= 5.8 g NaCl 食盐)
+
+UL: 未设定 (使用 CDRR 替代)
+
+*** Potassium
+
+单位: mg
+
+AI:
+- 男性 (19+): 3,400 mg/day
+- 女性 (19+): 2,600 mg/day
+
+UL: 未确定 (ND)
+
+** 微量矿物质
+
+*** Iron
+
+单位: mg
+
+RDA:
+- 男性 (19+): 8 mg/day
+- 女性 (19–50 岁): 18 mg/day
+- 女性 (51+ 岁): 8 mg/day
+- 孕期: 27 mg/day
+- 哺乳期: 9 mg/day
+
+UL (成人 19+):
+- 45 mg/day
+
+注意: 素食者 RDA 约为肉食者 1.8 倍 (非血红素铁吸收率低)
+
+*** Zinc
+
+单位: mg
+
+RDA:
+- 男性 (19+): 11 mg/day
+- 女性 (19+): 8 mg/day
+- 孕期: 11 mg/day
+- 哺乳期: 12 mg/day
+
+UL (成人 19+):
+- 40 mg/day
+
+*** Iodine
+
+单位: μg
+
+RDA:
+- 成人 (19+): 150 μg/day
+- 孕期: 220 μg/day
+- 哺乳期: 290 μg/day
+
+UL (成人 19+):
+- 1,100 μg/day
+
+*** Selenium
+
+单位: μg
+
+RDA:
+- 成人 (19+): 55 μg/day
+- 孕期: 60 μg/day
+- 哺乳期: 70 μg/day
+
+UL (成人 19+):
+- 400 μg/day
+
+*** Copper
+
+单位: μg
+
+RDA:
+- 成人 (19+): 900 μg/day
+
+UL (成人 19+):
+- 10,000 μg/day (= 10 mg)
+
+*** Manganese
+
+单位: mg
+
+AI (无 RDA):
+- 男性 (19+): 2.3 mg/day
+- 女性 (19+): 1.8 mg/day
+
+UL (成人 19+):
+- 11 mg/day
+
+*** Fluoride
+
+单位: mg
+
+AI (无 RDA):
+- 男性 (19+): 4 mg/day
+- 女性 (19+): 3 mg/day
+
+UL (成人 19+):
+- 10 mg/day
+
+*** Chromium
+
+单位: μg
+
+AI (无 RDA):
+- 男性 (19–50 岁): 35 μg/day
+- 男性 (51+ 岁): 30 μg/day
+- 女性 (19–50 岁): 25 μg/day
+- 女性 (51+ 岁): 20 μg/day
+
+UL: 未确定 (ND)
+
+*** Molybdenum
+
+单位: μg
+
+RDA:
+- 成人 (19+): 45 μg/day
+
+UL (成人 19+):
+- 2,000 μg/day
+
+* 宏量营养素速查
+
+** Protein
+
+单位: g
+
+RDA (成人 19+):
+- 0.8 g/kg 体重/day
+- 参考体重 (70 kg 男性): 56 g/day
+- 参考体重 (57 kg 女性): 46 g/day
+
+孕期:
+- 前半期: 同非孕期
+- 后半期: +25 g/day (1.1 g/kg)
+
+哺乳期:
+- +25 g/day
+
+AMDR: 10–35% 总热量
+
+** Carbohydrate
+
+单位: g
+
+RDA:
+- 成人 (19+): 130 g/day (大脑最低葡萄糖需求)
+  - *成年男性 (20+)*: 305 g/day (中位数)
+  - *成年女性 (20+), 孩子*: 228 g/day
+- 孕期: 175 g/day
+- 哺乳期: 210 g/day
+
+AMDR: 45–65% 总热量
+
+*** Fiber
+
+单位: g
+
+AI:
+- 男性 (19–50 岁): 38 g/day
+- 男性 (51+ 岁): 30 g/day
+- 女性 (19–50 岁): 25 g/day
+- 女性 (51+ 岁): 21 g/day
+
+定义: 14 g fiber/1,000 kcal
+
+*** Added Sugars
+
+UL: 未设定
+
+建议上限: <10% 总热量 (WHO/DGA)
+
+** Fat
+
+*** Total Fat
+
+AMDR: 20–35% 总热量
+
+*** Linoleic Acid (n-6)
+
+单位: g
+
+AI:
+- 男性 (19–50 岁): 17 g/day
+- 男性 (51+ 岁): 14 g/day
+- 女性 (19–50 岁): 12 g/day
+- 女性 (51+ 岁): 11 g/day
+
+AMDR: 5–10% 总热量
+
+*** α-Linolenic Acid (n-3)
+
+单位: g
+
+AI:
+- 男性 (19+): 1.6 g/day
+- 女性 (19+): 1.1 g/day
+
+AMDR: 0.6–1.2% 总热量
+
+*** EPA + DHA
+
+建议: ≤10% AMDR (即 ≤2 g/day for 2,000 kcal diet)
+
+注意: DRI 未对 EPA/DHA 单独设定值, 仅在 n-3 总量中
+
+*** Saturated Fat, Trans Fat, Cholesterol
+
+UL: 未设定
+
+建议: 尽可能低 (as low as possible while consuming nutritionally adequate diet)
+
+** Water
+
+单位: L/day (total water, 包括食物中的水)
+
+AI:
+- 男性 (19+): 3.7 L/day (~15.5 cups)
+- 女性 (19+): 2.7 L/day (~11.5 cups)
+- 孕期: 3.0 L/day
+- 哺乳期: 3.8 L/day
+
+注意: 约 80% 来自饮料, 20% 来自食物
+
+* 能量需求速查
+
+** EER (Estimated Energy Requirement)
+
+定义: 维持能量平衡的热量摄入估算值
+
+公式 (成人 19+):
+
+男性:
+- Sedentary (PA = 1.0):
+  EER = 662 - 9.53 × age + 1.0 × (15.91 × wt + 539.6 × ht)
+- Low Active (PA = 1.11):
+  EER = 662 - 9.53 × age + 1.11 × (15.91 × wt + 539.6 × ht)
+- Active (PA = 1.25):
+  EER = 662 - 9.53 × age + 1.25 × (15.91 × wt + 539.6 × ht)
+- Very Active (PA = 1.48):
+  EER = 662 - 9.53 × age + 1.48 × (15.91 × wt + 539.6 × ht)
+
+女性:
+- Sedentary (PA = 1.0):
+  EER = 354 - 6.91 × age + 1.0 × (9.36 × wt + 726 × ht)
+- Low Active (PA = 1.12):
+  EER = 354 - 6.91 × age + 1.12 × (9.36 × wt + 726 × ht)
+- Active (PA = 1.27):
+  EER = 354 - 6.91 × age + 1.27 × (9.36 × wt + 726 × ht)
+- Very Active (PA = 1.45):
+  EER = 354 - 6.91 × age + 1.45 × (9.36 × wt + 726 × ht)
+
+参数:
+- age: 年龄 (岁)
+- wt: 体重 (kg)
+- ht: 身高 (m)
+- PA: Physical Activity coefficient
+
+** PA 系数定义
+
+- Sedentary: 典型日常活动 (无额外运动)
+- Low Active: 等效于 2.2 miles/day @ 3–4 mph (步行 30–40 分钟)
+- Active: 等效于 7 miles/day @ 3–4 mph (步行 90–120 分钟)
+- Very Active: 等效于 17 miles/day @ 3–4 mph (步行 4+ 小时)
+
+* DRI 应用场景
+
+** 个体膳食计划
+
+目标:
+- 达到 RDA 或 AI → 不足风险 <2.5%
+- 低于 UL → 过量风险 <2.5%
+- 满足 AMDR
+
+错误做法:
+- 以 EAR 为目标 → 不足风险 50% (不可接受)
+- 超过 UL → 毒性风险增加
+
+** 群体摄入评估
+
+使用 EAR:
+- 计算 %摄入 < EAR → 不足风险人群比例
+- 用于营养监测 (如 NHANES)
+
+** 食品标签 (Daily Value, DV)
+
+DV vs. RDA:
+- DV 基于单一参考值 (通常为成人最高 RDA)
+- DV 不按年龄/性别细分
+- 例: 钙 DV = 1,300 mg (基于 9–18 岁 RDA)
+
+%DV 计算:
+- %DV = (食品中营养素含量 / DV) × 100
+
+* 重要注意事项
+
+** 单位转换表
+
+*** Vitamin A
+
+- 1 μg RAE = 3.33 IU (视黄醇)
+- 1 IU beta-carotene = 0.05 μg RAE
+- 旧: 1 RE = 1 μg 视黄醇
+- 转换: RAE (新) = RE (旧) / 2 (对于类胡萝卜素)
+
+*** Vitamin D
+
+- 1 μg = 40 IU
+- 100 IU = 2.5 μg
+- 400 IU = 10 μg
+- 1,000 IU = 25 μg
+
+*** Vitamin E
+
+- 1 mg α-tocopherol = 1.49 IU (天然 d-α-tocopherol)
+- 1 mg α-tocopherol = 2.22 IU (合成 dl-α-tocopherol)
+- 旧单位 α-TE 已废弃
+
+*** Folate
+
+- 食物叶酸: 1 μg = 1 DFE
+- 强化食品 (随食): 1 μg = 1.7 DFE
+- 补充剂 (空腹): 1 μg = 2 DFE
+
+*** Niacin
+
+- 1 mg niacin = 1 NE
+- 60 mg tryptophan = 1 NE
+
+** 特殊人群调整
+
+*** 素食者
+
+- 铁: RDA × 1.8
+- 锌: 可能需增加 50%
+- B12: 必须通过强化食品或补充剂
+
+*** 吸烟者
+
+- Vitamin C: +35 mg/day (氧化应激增加)
+
+*** 老年人 (50+)
+
+- B12: 建议通过强化食品/补充剂 (胃酸分泌减少)
+- Vitamin D: 71+ 岁 RDA 增至 800 IU
+- Calcium: 女性 51+ 增至 1,200 mg
+
+*** 孕期/哺乳期
+
+- 叶酸: 孕期 600 μg DFE (+50%)
+- 铁: 孕期 27 mg (+200%)
+- 碘: 孕期 220 μg, 哺乳期 290 μg
+- 钙: 无需增加 (吸收率提高)
+
+** 常见误区
+
+*** "超过 RDA 更好"
+
+错误: RDA 已覆盖 97.5% 人群需求, 超量无额外益处
+
+风险: 接近或超过 UL 可能有害
+
+*** "补充剂可替代食物"
+
+错误: 食物提供协同作用的营养素基质
+
+建议: Food first, supplement if needed
+
+*** "AI = RDA"
+
+错误: AI 证据等级低于 RDA, 不确定性更高
+
+含义: AI 可能低估或高估实际需求
+
+** UL 的特殊情况
+
+仅适用补充剂/强化食品:
+- Niacin (35 mg UL)
+- Folate (1,000 μg UL)
+- Vitamin E (1,000 mg UL)
+- Magnesium (350 mg UL)
+
+仅适用预成型维生素 A:
+- Vitamin A (3,000 μg UL)
+
+无 UL 不代表安全:
+- Vitamin K, Thiamin, Riboflavin, B12
+- Chromium, Arsenic, Silicon
+- 原因: 缺乏高剂量不良反应数据
+
+* 数据来源与更新
+
+** 权威来源
+
+- National Academies of Sciences, Engineering, and Medicine
+- Food and Nutrition Board (FNB)
+- NIH Office of Dietary Supplements (ODS)
+
+官方文档:
+- https://nap.nationalacademies.org (完整 DRI 报告)
+- https://ods.od.nih.gov (营养素 Fact Sheets)
+- https://health.gov/dietaryguidelines (DGA 膳食指南)
+
+** DRI 报告历史
+
+- 1997: Calcium, Phosphorus, Magnesium, Vitamin D, Fluoride
+- 1998: Thiamin, Riboflavin, Niacin, B6, Folate, B12, Pantothenic Acid, Biotin, Choline
+- 2000: Vitamin C, Vitamin E, Selenium, Carotenoids
+- 2001: Vitamin A, K, Arsenic, Boron, Chromium, Copper, Iodine, Iron, Manganese, Molybdenum, Nickel, Silicon, Vanadium, Zinc
+- 2005: Water, Potassium, Sodium, Chloride, Sulfate
+- 2011: Calcium, Vitamin D (修订)
+- 2019: Sodium, Potassium (CDRR)
+- 2023: Energy (修订)
+
+** 未更新部分
+
+多数维生素/矿物质 DRI 自 1998–2001 年后 *未修订*
+
+原因: 缺乏高质量随机对照试验 (RCT) 证据
+
+批评: 部分 DRI 基于观察性研究和专家意见 (证据等级低)
+
+** 国际差异
+
+- 加拿大: 与美国共用 DRI
+- 欧盟: 使用 PRI (Population Reference Intake) 替代 RDA
+- 英国: SACN (Scientific Advisory Committee on Nutrition) 推荐值
+- WHO/FAO: RNI (Recommended Nutrient Intakes)
+
+数值可能不同 (评估标准/目标人群差异)
+
+* 快速计算工具
+
+** RDA 从 EAR 估算
+
+假设 CV = 10%:
+
+~RDA ≈ EAR × 1.2~
+
+** DFE 转换 (Folate)
+
+食物 → DFE: 直接相等
+
+强化食品 (随食) → DFE: × 1.7
+
+补充剂 (空腹) → DFE: × 2
+
+** %DV 解读 (食品标签)
+
+- <5% DV: Low
+- 5–19% DV: Moderate
+- ≥20% DV: High (1 份提供每日所需 ≥1/5)
+
+** 素食者铁需求
+
+~RDA (vegetarian) = RDA (omnivore) × 1.8~
+
+例: 女性 (19–50 岁) 18 mg → 32 mg
+
+** 蛋白质快速估算
+
+~Protein (g/day) = 体重 (kg) × 0.8~
+
+例: 70 kg 成人 → 56 g/day
+
+* 临床应用 Checklist
+
+** 评估个体摄入充足性
+
+1. 计算日均摄入量 (3–7 天饮食记录)
+2. 与 RDA 或 AI 比较:
+   - ≥ RDA/AI → 充足
+   - < EAR → 不足风险高
+   - EAR ~ RDA → 灰色区域
+3. 检查是否超过 UL
+4. 考虑特殊因素 (年龄, 性别, 孕期, 疾病)
+
+** 设计补充方案
+
+1. 确定缺口: RDA - 实际摄入
+2. 选择补充剂剂量 ≤ (UL - 食物摄入)
+3. 避免多种补充剂叠加超 UL
+4. 优先食物来源
+
+** 解读血液检测
+
+维生素 D:
+- <12 ng/mL: Deficiency
+- 12–20 ng/mL: Insufficiency
+- ≥20 ng/mL: Sufficiency (DRI 标准)
+- ≥30 ng/mL: Optimal (部分学会建议)
+- >100 ng/mL: Toxicity risk
+
+B12:
+- <200 pg/mL: Deficiency
+- 200–300 pg/mL: Borderline
+- >300 pg/mL: Normal
+
+铁:
+- Ferritin <15 ng/mL: Depletion
+- TSAT <20%: Deficiency
+- Hemoglobin: 男 <13 g/dL, 女 <12 g/dL → Anemia
+
+** 妊娠期关键营养素
+
+必须增加:
+- Folate: 400 → 600 μg DFE
+- Iron: 18 → 27 mg
+- Iodine: 150 → 220 μg
+
+无需增加:
+- Calcium: 1,000 mg (吸收率自动提高)
+- Vitamin D: 600 IU
+
+** 老年期 (65+) 重点
+
+高风险缺乏:
+- Vitamin D (皮肤合成↓)
+- Vitamin B12 (胃酸↓)
+- Calcium (吸收↓)
+- Protein (肌肉流失)
+
+建议:
+- 筛查 25(OH)D, B12, Ferritin
+- 补充 D3 1,000 IU/day
+- B12 通过强化食品/补充剂
+- 蛋白质 1.0–1.2 g/kg (高于 RDA)
+
+* 附录: 常用营养素食物来源
+
+** 高钙食物 (mg/份)
+
+- 牛奶 (1 cup, 240 mL): 300
+- 酸奶 (1 cup): 400
+- 芝士 (1.5 oz, 42 g): 300
+- 羽衣甘蓝 (1 cup, cooked): 180
+- 豆腐 (1/2 cup, 钙盐凝固): 250
+- 罐装沙丁鱼 (带骨, 3 oz): 325
+
+** 高铁食物 (mg/份)
+
+- 牛肝 (3 oz): 5.0 (血红素铁)
+- 牛肉 (3 oz): 2.5 (血红素铁)
+- 强化谷物 (1 cup): 18 (非血红素)
+- 菠菜 (1 cup, cooked): 6.4 (非血红素)
+- 扁豆 (1 cup, cooked): 6.6 (非血红素)
+
+增强吸收: Vitamin C 同餐
+
+** 高 Vitamin D 食物 (IU/份)
+
+- 三文鱼 (3 oz, wild): 570
+- 鲭鱼 (3 oz): 400
+- 金枪鱼罐头 (3 oz): 150
+- 强化牛奶 (1 cup): 100
+- 强化橙汁 (1 cup): 100
+- 鸡蛋黄 (1 large): 40
+
+** 高 Omega-3 食物 (EPA+DHA, g/份)
+
+- 三文鱼 (3 oz): 1.5
+- 鲭鱼 (3 oz): 1.0
+- 沙丁鱼 (3 oz): 1.0
+- 金枪鱼 (3 oz): 0.5
+
+ALA (植物性):
+- 亚麻籽 (1 Tbsp): 2.4
+- 核桃 (1 oz): 2.5
+
+** 高叶酸食物 (μg DFE/份)
+
+- 强化谷物 (1 cup): 400
+- 菠菜 (1 cup, cooked): 260
+- 黑豆 (1 cup, cooked): 256
+- 芦笋 (4 spears): 90
+- 橙汁 (1 cup): 75
+
+* 参考文献标注
+
+本 cheatsheet 基于以下权威来源编制:
+
+1. National Academies of Sciences, Engineering, and Medicine. Dietary Reference Intakes (DRI) Reports. https://nap.nationalacademies.org
+2. NIH Office of Dietary Supplements. Nutrient Recommendations & Databases. https://ods.od.nih.gov/HealthInformation/nutrientrecommendations.aspx
+3. Institute of Medicine (2011). Dietary Reference Intakes for Calcium and Vitamin D.
+4. Institute of Medicine (2005). Dietary Reference Intakes for Water, Potassium, Sodium, Chloride, and Sulfate.
+5. Institute of Medicine (2001). Dietary Reference Intakes for Vitamin A, Vitamin K, Arsenic, Boron, Chromium, Copper, Iodine, Iron, Manganese, Molybdenum, Nickel, Silicon, Vanadium, and Zinc.
+6. Institute of Medicine (2000). Dietary Reference Intakes for Vitamin C, Vitamin E, Selenium, and Carotenoids.
+7. Institute of Medicine (1998). Dietary Reference Intakes for Thiamin, Riboflavin, Niacin, Vitamin B6, Folate, Vitamin B12, Pantothenic Acid, Biotin, and Choline.
+
+数据准确截至: 2025-01-15
+
+最新更新请查阅: https://ods.od.nih.gov 或 https://health.gov/dietaryguidelines

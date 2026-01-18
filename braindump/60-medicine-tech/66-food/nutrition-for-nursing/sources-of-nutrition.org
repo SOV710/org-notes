@@ -1,0 +1,541 @@
+#+title: Nutrition for Nursing Chapter 1: Sources of Nutrition
+#+author: SOV710
+#+date: <2026-01-16 Fri>
+
+* Sources of Nutrition
+
+** Carbohydrates (碳水化合物)
+
+*** Functions:
+Carbohydrates provide energy for cellular work, and help to regulate protein and fat metabolism (代谢).
+Adequate amounts of protein in the diet creates a protein-sparing effect, which results in protein being spared from energy use to perform its other essential functions.
+Brain and nervous system tissue require carbohydrates for maximum effective functioning.
+
+*** Types of Carbohydrates
+
+- *Monosaccharides* (单糖): simple carbohydrates (glucose (葡萄糖), fructose (果糖), and galactose (半乳糖))
+- *Disaccharides* (双糖): simple carbohydrates (sucrose (蔗糖), lactose (乳糖), and maltose (麦芽糖))
+- *Polysaccharides* (多糖):  complex carbohydrates (starch (淀粉), fiber (膳食纤维), and glycogen (糖原))
+
+Glycogen is the stored carbohydrate energy source found in the liver (肝脏) and muscles (肌肉).
+
+*** Mechanism
+
+The liver (肝脏) converts fructose and galactose into glucose, which is then released in the bloodstream.
+This elevates (使…升高) blood glucose levels, which causes the release of insulin (胰岛素) from the pancreas (胰腺). With insulin production, glucose is moved out of the bloodstream into cells in order to meet energy needs.
+
+*digest*:
+The body digests (消化) 95% of starch within 1 to 4 hr after ingestion (摄入). Digestion occurs mainly in the small intestine (小肠) using pancreatic amylase (胰淀粉酶) to reduce complex carbohydrates into disaccharides.
+
+Digestible carbohydrates provide *4 cal/g of energy*.
+
+-----
+
+*** Fiber
+
+Dietary fiber (膳食纤维) is the substance (成分) in plant foods that is indigestible.
+
+*Types*:
+- pectin (果胶)
+- gum (树胶)
+- cellulose (纤维素)
+- oligosaccharides (高聚糖)
+
+*Functions*:
+- Fiber is important for proper bowel elimination (肠道排泄).
+- Fiber helps to lower cholesterol and lessen the incidence of intestinal cancers.
+- Fiber has also been shown to help keep blood glucose levels stable by slowing the rate of glucose absorption.
+
+*DRI*:
+- Total fiber AI is *25 g/day* for females and *38 g/day* for males.
+- The fermentation (发酵) and metabolization (代谢) of fiber in the colon (结肠) provides *1.5 to 2.5 cal/g of energy*, depending on the type.
+
+** Proteins
+
+*** Types of Proteins
+
+- *Complete proteins*: from animal sources and soy (大豆), contain *sufficient* amounts of all nine essential amino acids.
+- *Incomplete proteins*: generally from plant sources, can contain an *insufficient* number or quantity of amino acids
+  - *Complementary proteins*: incomplete proteins that, when combined, provide a complete protein.
+    like, black beans with rice and hummus (鹰嘴豆泥) with crackers (饼干).
+
+*** Functions
+
+So FUCKING many
+
+- Nitrogen balance
+- Support of the immune system
+- Facilitating acid-base, fluid, and electrolyte balance
+- Formation of neurotransmitters, enzymes antibodies, peptide hormones, breast milk, mucus, histamine, and sperm
+
+*** Demands Factors
+- Tissue growth needs
+- Quality of the dietary protein
+- Added needs due to illness
+
+*** DRI
+- The RDA of protein is *0.8 g/kg* for healthy adults.
+- Protein’s acceptable macronutrient distribution range (AMDR) for adults is *10% to 35%* of total calories.
+- Underconsumption can lead to protein energy malnutrition (PEM). Kwashiorkor (夸希奥科病) and marasmus (消瘦症) are two disorders (疾病) caused by extreme PEM. These serious disorders are caused by a lack of protein ingestion.
+- Protein provides *4 cal/g* of energy.
+
+** Lipids
+*** Functions
+Lipids serve multiple essential roles in the body:
+- Hormone (激素) production
+- Structural material for cell walls
+- Insulation to maintain body temperature
+- Covering for nerve fibers
+
+*** Types of Lipids
+Lipids are categorized into three main types: triglycerides (甘油三酯), phospholipids (磷脂), and sterols (固醇).
+
+*Triglycerides*:
+Triglycerides account for 95% of fat in food. They are comprised of fatty acids (脂肪酸), which include saturated fatty acids (饱和脂肪酸) and unsaturated fatty acids (不饱和脂肪酸).
+- *Saturated fatty acids* are solid at room temperature.
+- *Unsaturated fatty acids*, including monounsaturated and polyunsaturated fatty acids, are usually from plant sources and help reduce health risks.
+  - Sources of monounsaturated fatty acids include olives, canola oil, avocado, peanuts, and other nuts.
+  - Sources of polyunsaturated fatty acids include corn, wheat germ, soybean, safflower, sunflower, and fish.
+
+*Essential fatty acids*:
+Essential fatty acids are made from broken down fats and must be supplied by the diet.
+- Essential fatty acids include *omega-3* and *omega-6*.
+
+*Phospholipids*:
+Phospholipids (e.g., lecithin) are important to cell membrane structure, as well as the transport of fat-soluble substances across the cell membrane.
+
+*Sterols*:
+Sterols (e.g., cholesterol (胆固醇)) are found in the tissues of animals. They are not an essential nutrient because the liver is able to produce enough to meet needs.
+If cholesterol is consumed in excess, it can build up in the tissues, causing congestion and increasing the risk for cardiovascular disease.
+
+*** Sources
+Lipids come from dark meat, poultry skin (家禽皮), dairy foods, and added oils such as margarine (人造黄油), butter, shortening (起酥油), oils, and lard (猪油).
+
+*** Dietary Recommendations
+The AMDR for fats is approximately *20% to 35%* of total calories. 10% or less of total calories should come from saturated fat sources.
+
+A low intake of dietary cholesterol is associated with reduced risks of cardiovascular disease (CVD) and obesity.
+
+A diet high in fat is linked to CVD, hypertension, and diabetes mellitus. The exception is for children under 2 years of age, who need a higher amount of fat to form brain tissue.
+
+Conversely (相反地), a diet with less than 10% of fat cannot supply adequate amounts of essential fatty acids and results in a cachectic (wasting) state.
+
+*** Digestion and Metabolism
+The majority of lipid metabolism occurs after fat reaches the small intestine, where the gallbladder (胆囊) secretes (分泌) concentrated bile (浓缩胆汁), which acts as an emulsifier (乳化剂) and enables the breakdown of fat into smaller particles (颗粒) for digestion.
+
+At the same time, the pancreas (胰腺) secretes pancreatic lipase (胰脂肪酶), which breaks down fat.
+
+Intestinal cells (肠道细胞) absorb the majority of the end products of digestion, with some being excreted (排出) in the feces (粪便).
+
+*Lipoproteins*:
+- *Very-low-density lipoproteins (VLDL)* carry triglycerides to the cells.
+- *Low-density lipoproteins (LDL)* carry cholesterol to the tissue cells (组织细胞).
+- *High-density lipoproteins (HDL)* remove excess cholesterol from the cells, and transport it to the liver for disposal.
+
+Lipids provide *9 cal/g* of energy and are the densest form of stored energy.
+
+** Vitamins
+*** Overview
+Vitamins are organic substances required for many enzymatic reactions (酶促反应). The main function of vitamins is to be a catalyst (催化剂) for metabolic functions and chemical reactions.
+
+There are 13 essential vitamins, each having a specialized function.
+
+Vitamins are classified into two categories:
+- *Water-soluble*: Vitamins C and B-complex
+- *Fat-soluble*: Vitamins A, D, E, and K
+
+Vitamins yield no usable energy for the body, but they are needed for energy to be metabolized.
+
+*** Water-Soluble Vitamins
+**** Vitamin C
+Vitamin C (ascorbic acid (抗坏血酸)) aids in tissue building and metabolic reactions, including healing, collagen formation, iron absorption, and immune system function.
+
+*Sources*:
+- Citrus fruits (oranges, lemons)
+- Tomatoes
+- Peppers
+- Green leafy vegetables
+- Strawberries
+
+*Special considerations*:
+Stress and illness, as well as cigarette smoking, increase the need for vitamin C. Cigarette smokers are advised to increase Vitamin C intake by *35 mg/day* due to increased oxidative stress (氧化应激) and metabolic turnover.
+
+*Deficiency*:
+Severe deficiency causes scurvy (坏血病), a hemorrhagic disease (出血性疾病) with diffuse tissue bleeding (全身组织广泛出血), painful limbs and joints (四肢和关节疼痛), weak bones, and swollen gums with loose teeth (牙龈肿胀并伴随牙齿松动). While scurvy can be fatal, it can be cured with moderate doses of vitamin C for several days.
+
+**** B-Complex Vitamins
+B-complex vitamins have many functions in cell metabolism. Each one has a varied duty, and many partner with other B vitamins for metabolic reactions. Most affect energy, metabolism, and neurologic function.
+
+Sources for B vitamins almost always include green leafy vegetables and unprocessed or enriched grains.
+
+*Thiamin (B1)*:
+Functions as a coenzyme (辅酶) in energy metabolism, promotes appetite, and assists with muscle actions through its role in nerve functioning.
+- *Deficiency*: results in beriberi (脚气病) with manifestations including ataxia (共济失调), confusion, anorexia (厌食), tachycardia (心动过速), headache, weight loss, and fatigue.
+- *Sources*: widespread in almost all plant and animal tissues, especially meats, grains, and legumes (豆类).
+
+*Riboflavin (B2)*:
+Works as a coenzyme to release energy from cells.
+- *Deficiency*: results in cheilosis (口角炎) with manifestations including scales and cracks on lips and in corners of the mouth, smooth and swollen red tongue (also called glossitis (舌炎)), and dermatitis (皮炎) of the ears, nose, and mouth.
+- *Sources*: milk, meats, and dark leafy vegetables.
+
+*Niacin (B3)*:
+Aids in the metabolism of fats, glucose, and alcohol, and synthesis of steroid hormones, cholesterol, and fatty acids.
+- *Deficiency*: causes pellagra (糙皮病) with manifestations including sun-sensitive skin lesions, gastrointestinal issues with impaired food digestion and excretion, nutrient absorption problems, and neurologic findings such as anxiety, insomnia, confusion, and paranoia (偏执).
+- *Sources*: meats, legumes, milk, whole grain and enriched breads and cereals.
+
+*Pyridoxine (Vitamin B6)*:
+Needed for cellular function and synthesis of hemoglobin (血红蛋白), neurotransmitters (神经递质), and niacin.
+- *Deficiency*: causes macrocytic anemia (巨幼红细胞性贫血) and CNS disturbances.
+- *Toxicity*: high intake of supplements can cause sensory neuropathy (感觉神经病变).
+- *Sources*: widespread food sources including meats, grains, and legumes.
+
+*Pantothenic acid (泛酸)*:
+Involved in the metabolism of carbohydrates, fats, and proteins as part of coenzyme A.
+- *Deficiency*: extremely rare, but results in generalized body system failure.
+- *Sources*: meats, whole grain cereals, dried peas and beans.
+
+*Biotin (生物素)*:
+Serves as a coenzyme used in fatty acid synthesis, amino acid metabolism, and the formation of glucose.
+- *Deficiency*: rare, but results in neurologic findings such as depression and fatigue, hair loss, and scaly red rash.
+- *Sources*: widespread food sources including eggs, milk, and dark green vegetables.
+
+*Folate (叶酸)*:
+Required for hemoglobin and amino acid synthesis, new cell synthesis, and prevention of neural tube defects (神经管缺陷) in utero. Folic acid is the synthetic form.
+- *Deficiency*: causes megaloblastic anemia (巨幼细胞性贫血), CNS disturbances, and fetal neural tube defects such as spina bifida (脊柱裂) and anencephaly (无脑畸形). It is important that all clients of child-bearing age get an adequate amount of folate due to neural tube formation occurring early in gestation (妊娠), often before a client knows they are pregnant.
+- *Sources*: occurs naturally in liver, dark-green leafy vegetables, orange juice, and legumes.
+
+*Cobalamin (Vitamin B12)*:
+Necessary for folate activation and red blood cell maturation.
+- *Deficiency*: causes pernicious anemia (恶性贫血) and is seen mostly in clients who follow a strict vegan diet, as B12 is found solely in foods of animal origin, and in those who have an absence of intrinsic factor (内在因子) needed for absorption of B12.
+- *Sources*: meat, shellfish, eggs, and dairy products.
+
+*** Fat-Soluble Vitamins
+**** General Characteristics
+All fat-soluble vitamins have the possibility for toxicity due to their ability to be stored in the body for long periods of time.
+
+Absorption of fat-soluble vitamins is dependent on the body's ability to absorb dietary fat. Fat digestion can be interrupted by any number of conditions, particularly those that affect the secretion of fat-converting enzymes, and conditions of the small intestine. Clients who have cystic fibrosis (囊性纤维化), celiac disease (乳糜泻), Crohn's disease (克罗恩病), or intestinal bypasses are at risk for deficiencies.
+
+Clients who have liver disease should be careful not to take more than the daily recommendations of fat-soluble vitamins, as excess is stored in the liver and adipose tissue (脂肪组织).
+
+**** Vitamin A
+Vitamin A (retinol (视黄醇), beta-carotene (β-胡萝卜素)) contributes to vision health, tissue strength and growth, and embryonic development (胚胎发育). Retinoids are found in animal foods and are the active form of vitamin A. Carotenoids (类胡萝卜素) are found in plants and are a precursor (前体) form of vitamin A, which the body converts to the usable form as needed.
+
+*Special considerations*:
+Care should be taken when administered to pregnant clients as some forms have teratogenic effects (致畸作用) on the fetus.
+
+*Deficiency*:
+Results in vision changes, xerophthalmia (干眼症) with dryness and hardening of the cornea (角膜), GI disturbances, and hyperkeratosis (角化过度).
+
+*Sources*:
+Fatty fish, egg yolks, butter, cream, and dark yellow or orange fruits and vegetables such as carrots, yams, apricots, squash, and cantaloupe.
+
+*Toxicity*:
+Can result from retinoids, and is more common in clients who are taking vitamin A supplements.
+
+**** Vitamin D
+Vitamin D assists in the absorption of calcium and phosphorus, and aids in bone mineralization (骨矿化).
+
+*Synthesis*:
+Sunlight enables the body to synthesize vitamin D in the skin.
+
+*Deficiency*:
+Results in bone demineralization (骨质脱矿), and extreme deficiency can cause rickets (佝偻病) and osteomalacia (骨软化症).
+
+*Toxicity*:
+Excess consumption can cause hypercalcemia (高钙血症).
+
+*Sources*:
+Fatty fish, eggs, and fortified products such as ready-to-eat cereals, milk, and orange juice.
+
+**** Vitamin E
+Vitamin E is an antioxidant (抗氧化剂) that helps to preserve lung and red blood cell membranes.
+
+*Deficiency*:
+Rare, but results in anemia and can cause edema (水肿) and skin lesions in infants.
+
+*Sources*:
+Vegetable oils and certain nuts.
+
+**** Vitamin K
+Vitamin K assists in blood clotting (凝血) and bone maintenance.
+
+*Deficiency*:
+Results in increased bleeding time.
+
+*Clinical use*:
+Used as an antidote (解毒剂) for excess anticoagulants (抗凝血剂) such as warfarin.
+
+*Sources*:
+Carrots, eggs, and dark green vegetables such as spinach, broccoli, and asparagus.
+
+** Minerals and Electrolytes
+*** Overview
+Minerals are inorganic elements (无机元素) that are available in an abundance of food sources and are used at every cellular level for metabolic exchanges.
+
+Minerals are divided into two categories:
+- *Major minerals*: occur in larger amounts (more than 5 g) in the body, and 100 mg or more is required through dietary sources each day
+- *Trace minerals*: required by the body in amounts of less than 5 g, and 20 mg or less is required through dietary sources each day
+
+Electrolytes (电解质) are electrically-charged minerals that cause physiological reactions to maintain homeostasis (体内平衡). Major electrolytes include sodium, potassium, and chloride.
+
+*** Major Minerals
+The seven major minerals are calcium, phosphorus, sodium, potassium, magnesium, chloride, and sulfur.
+
+**** Sodium (Na)
+*Major actions*:
+Maintains fluid volume, allows muscle contractions, and contributes to nerve impulses (神经冲动).
+
+*Major sources*:
+Table salt, added salts, and processed foods.
+
+*Deficiency*:
+Muscle cramping, memory loss, and anorexia.
+
+*Excess*:
+Fluid retention, hypertension (高血压), and disorientation (定向障碍).
+
+*Nursing actions*:
+Monitor level of consciousness, edema, and blood pressure.
+
+**** Potassium (K)
+*Major actions*:
+Maintains fluid volume inside cells and supports muscle action.
+
+*Major sources*:
+Oranges, dried fruits, tomatoes, avocados, dried peas, meats, broccoli, bananas, dairy products, whole grains, and potatoes.
+
+*Deficiency*:
+Dysrhythmias (心律失常), muscle cramps, and confusion.
+
+*Excess*:
+Dysrhythmia, muscle weakness, irritability, confusion, and numbness in extremities (四肢).
+
+*Nursing actions*:
+Monitor cardiac status and ECG (心电图). Give oral preparations (口服制剂) such as tablets or elixirs (酏剂) with meals to minimize GI irritation (胃肠道刺激).
+
+**** Chloride (Cl)
+*Major actions*:
+Assists with intracellular and extracellular fluid balance, aids acid-base balance, and supports digestion.
+
+*Major sources*:
+Table salt, added salts, and processed foods.
+
+*Deficiency*:
+Rare; may include muscle cramps and anorexia.
+
+*Excess*:
+Vomiting.
+
+*Nursing actions*:
+Monitor sodium levels.
+
+**** Calcium (Ca)
+*Major actions*:
+Bone and teeth formation, blood pressure regulation, blood clotting, and nerve transmission.
+
+*Major sources*:
+Dairy products, broccoli, kale, and fortified grains.
+
+*Deficiency*:
+Tetany (手足搐搦), positive Chvostek's and Trousseau's signs, ECG changes, osteoporosis (骨质疏松症) in adults, and poor growth in children.
+
+*Excess*:
+Constipation, renal stones (肾结石), lethargy (嗜睡), and depressed deep-tendon reflexes (深腱反射).
+
+*Nursing actions*:
+Monitor ECG and respiratory status. Give oral tablets with vitamin D.
+
+**** Magnesium (Mg)
+*Major actions*:
+Bone formation, catalyst (催化剂) for many enzyme reactions, nerve and muscle function, and smooth muscle relaxation.
+
+*Major sources*:
+Green leafy vegetables, nuts, whole grains, tuna, halibut, and chocolate.
+
+*Deficiency*:
+Weakness, dysrhythmias, convulsions (抽搐), increased blood pressure, and anorexia.
+
+*Excess*:
+Diarrhea, nausea, muscle weakness, hypotension (低血压), bradycardia (心动过缓), and lethargy.
+
+*Nursing actions*:
+Follow seizure precautions, and monitor level of consciousness and vital signs.
+
+**** Phosphorus (P)
+*Major actions*:
+Energy transfer in RNA and DNA, acid-base balance, and bone and teeth formation.
+
+*Major sources*:
+Dairy products, peas, meat, eggs, and legumes.
+
+*Deficiency*:
+Unknown.
+
+*Excess*:
+Decreased blood calcium levels.
+
+*Nursing actions*:
+Evaluate the use of antacids (注意类型) and the use of alcohol, as alcohol impairs absorption.
+
+**** Sulfur (S)
+*Major actions*:
+A component of vitamin structure and a by-product of protein metabolism.
+
+*Major sources*:
+Proteins.
+
+*Deficiency*:
+Only seen in severe protein malnourishment (营养不良).
+
+*Excess*:
+Toxicity does not result in any health issues.
+
+*Nursing actions*:
+Sulfur levels are not usually monitored.
+
+*** Trace Minerals
+**** General Characteristics
+Trace minerals, also called micronutrients (微量营养素), are required by the body in amounts of less than 5 g, and 20 mg or less is required through dietary sources each day.
+
+The nine trace elements are iron, iodine, zinc, copper, manganese, chromium, selenium, molybdenum, and fluoride.
+
+**** Iodine (碘)
+*Functions*:
+Iodine is used for synthesis of thyroxine (甲状腺素), the thyroid hormone that helps regulate metabolism. Iodine is taken up by the thyroid.
+
+*Deficiency*:
+When iodine is lacking, the thyroid gland (甲状腺) enlarges, creating a goiter (甲状腺肿).
+
+*Excess*:
+Too much iodine can result in thyrotoxicosis (甲状腺毒症).
+
+*Sources*:
+- Grown food sources vary widely and are dependent on the iodine content of the soil in which they were grown.
+- Seafood provides a good amount of iodine.
+- Table salt in the U.S. is fortified with iodine, so deficiencies are not as prevalent (普遍).
+
+*DRI*:
+The RDA is *150 mcg* for adults.
+
+**** Iron (铁)
+*Functions*:
+Iron is responsible for oxygen distribution to hemoglobin (血红蛋白) and myoglobin (肌红蛋白).
+
+*Metabolism*:
+The body recycles unused iron from dying red blood cells and stores it for later use.
+
+*Forms*:
+Iron in food consists of two forms:
+- *Heme iron* (血红素铁): found in meat, fish, and poultry
+- *Non-heme iron* (非血红素铁): found in grains, legumes, and vegetables
+
+*Supplementation*:
+Iron supplements can cause constipation, nausea, vomiting, diarrhea, and teeth discoloration when in liquid form. They can be taken with food to avert gastrointestinal manifestations, and nurses should encourage fresh fruits, vegetables, and a high-fiber diet.
+
+Supplements that are unneeded can become toxic.
+
+*Absorption*:
+Vitamin C increases the absorption of iron.
+
+*Risk groups*:
+Clients during the menstruating years, older infants and toddlers, and pregnant clients are at risk for iron deficiency anemia (缺铁性贫血).
+
+*Toxicity*:
+Can occur when there is too much iron stored in the body.
+
+**** Fluoride (氟化物)
+*Functions*:
+Fluoride forms a bond with calcium and thus accumulates in calcified body tissue, including bones and teeth. Water with added fluoride protects against dental cavities (龋齿).
+
+*Deficiency*:
+Can result in dental caries (龋齿) and increase the risk for osteoporosis.
+
+*Toxicity*:
+Can result in fluorosis (氟中毒), itching, and chest pain.
+
+** Water
+*** Overview
+Water is the most basic of nutrients. The body can maintain itself for several weeks on its food stores of energy, but it cannot survive without water or hydration for more than a few days.
+
+Water makes up the largest portion of total body weight and is crucial for all fluid and cellular functions.
+
+*** Fluid Balance
+Fluid balance is essential for optimum health and bodily function.
+
+The balance of fluid is a dynamic process regulated by the release of hormones.
+
+*** Water Loss and Excretion
+Water leaves the body via the kidneys (肾脏), skin, lungs, and feces (粪便). The greatest elimination is through the kidneys.
+
+Other loss factors include:
+- Bleeding
+- Vomiting
+- Rapid respirations (呼吸)
+
+*Insensible losses* (不显性失水):
+Healthy adults lose approximately *1,000 mL* of water daily through insensible losses, including respirations, skin, and fecal loss.
+
+To get rid of metabolic wastes, the body needs to excrete at least *500 mL* of urine daily.
+
+*** Water Intake Requirements
+To maintain a balance between intake and output, intake should approximate output. Therefore, the minimum daily amount of water intake needed is *1,500 mL*.
+
+*Sources*:
+Most water intake is from drinking fluids. Water is also present in solid sources such as lettuce, gelatin, soup, and melons.
+
+*AI for adults*:
+Under normal conditions:
+- Females: *2.7 L/day* total, of which *2.2 L* should be from fluids
+- Males: *3.7 L/day* total, of which *3 L* should be from fluids
+
+*** Special Considerations
+*Increased hydration needs*:
+Additional hydration can be required for:
+- Athletes
+- Persons with fever or illness such as vomiting and diarrhea
+- Those in hot climate conditions
+
+Fluid replacement can occur orally, enterally (肠内), or IV.
+
+*Vulnerable populations*:
+Young children and older adults dehydrate more rapidly.
+
+*Thirst as an indicator*:
+Thirst is a late indicator of the need for hydration, especially in older adults.
+
+*Alternatives for water aversion*:
+Some individuals can have an aversion (厌恶) to drinking water and should be encouraged to explore other options such as fresh fruits, fruit juices, flavored gelatin, frozen treats, and soups.
+
+*Caffeinated beverages*:
+Caffeinated drinks have a mild diuretic effect (利尿作用). However, tolerance develops in clients who regularly consume caffeinated beverages, which results in little to no effect on fluid volume.
+
+*** Assessment
+Assessment for proper hydration should include:
+- Skin turgor (皮肤张力)
+- Mental status
+- Orthostatic blood pressures (体位性血压)
+- Urine output and concentration
+- Moistness of mucous membranes (黏膜)
+
+** Phytonutrients (植物营养素)
+*** Overview
+Phytonutrients, also called phytochemicals (植物化学物质), occur naturally in plants.
+
+*** Functions
+Phytonutrients can have positive health effects, including:
+- Detoxifying the body
+- Stimulating the immune system
+- Promoting hormone balance
+- Serving as antioxidants (抗氧化剂)
+
+*** Sources
+Phytonutrients are found in:
+- Fruits
+- Vegetables
+- Green tea
+- Legumes
+- Whole grains
+- Broccoli
+
+*** Recommendations
+No recommendations for intake of phytonutrients exist at this time.
