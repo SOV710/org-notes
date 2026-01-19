@@ -1,0 +1,636 @@
+#+title: RIME Configuration Quick Reference
+#+author: SOV710
+#+date: <2026-01-19 Mon>
+#+startup: showall
+
+* 文件与目录结构
+
+** 共享资料夹 (SharedData)
+
+- Linux (ibus-rime): =/usr/share/rime-data/=
+- Linux (fcitx5): =/usr/share/fcitx5/rime/=
+- Windows: =安装目录\data=
+- macOS: =/Library/Input Methods/Squirrel.app/Contents/SharedSupport/=
+
+*作用*: 预设输入方案源文件，只读，软件升级时会覆盖。
+
+** 用户资料夹 (UserData)
+
+- Linux (ibus-rime): =~/.config/ibus/rime/= (0.9.1 以下: =~/.ibus/rime/=)
+- Linux (fcitx5): =~/.local/share/fcitx5/rime/=
+- Windows: =%APPDATA%\Rime=
+- macOS: =~/Library/Rime/=
+
+*作用*: 用户定制文件、编译结果 (=build/=)、用户词典 (=*.userdb=)
+
+** 关键文件类型
+
+| 扩展名                   | 用途               | 位置     |
+|-------------------------+--------------------+----------|
+| =.schema.yaml=            | 输入方案定义         | 用户/共享 |
+| =.dict.yaml=              | 词典源文件           | 用户/共享 |
+| =.custom.yaml=            | 用户定制补丁         | 用户     |
+| =.prism.bin=              | 拼写映射表 (编译产物) | =build/=   |
+| =.table.bin=              | 固态词典 (编译产物)   | =build/=   |
+| =.reverse.bin=            | 反查词典 (编译产物)   | =build/=   |
+| =.userdb/= 或 =.userdb.kct= | 用户词典            | 用户     |
+
+* 部署流程
+
+** 触发重新部署
+
+- Linux (ibus): =touch ~/.config/ibus/rime/; ibus restart= 或点击状态栏 ⟲
+- Windows: 开始菜单 → 小狼毫 → 重新部署
+- macOS: 系统菜单 → 重新部署
+
+** 部署做什么
+
+1. 合并 =*.custom.yaml= 到方案定义
+2. 根据词典生成音节表、单字表
+3. 自动注音 (未提供编码的词组)
+4. 建立索引 (=.prism.bin=, =.table.bin=, =.reverse.bin=)
+
+** 调试
+
+日志位置:
+
+- Linux (ibus): =/tmp/rime.ibus.*=
+- Windows: =%TEMP%\rime.weasel.*=
+- macOS: =$TMPDIR/rime.squirrel.*=
+
+关注级别: =WARNING= / =ERROR=
+
+* 定制方法
+
+** Patch 语法
+
+#+begin_src yaml
+# <方案标识>.custom.yaml 或 default.custom.yaml
+patch:
+  "一级/二级/三级": 新值
+  "列表/@0": 修改第一个元素 (从 0 计数)
+  "列表/@last": 修改最后一个元素
+  "列表/+": [追加, 到列表]  # 合并操作
+  "字典/+": {key: value}    # 合并操作
+#+end_src
+
+** 禁忌
+
+- *不要* 直接编辑共享资料夹文件
+- *不要* 直接编辑用户资料夹的 =.yaml= (除了 =.custom.yaml=)
+- *不要* 在 =.custom.yaml= 中重复 =patch:= 标记
+
+* 方案定义 (Schema)
+
+** 最小方案
+
+#+begin_src yaml
+# <方案标识>.schema.yaml
+schema:
+  schema_id: my_schema      # 唯一标识, 小写字母/数字/下划线
+  name: 我的方案            # 显示名称
+  version: "1.0"            # 版本号, 字符串类型
+#+end_src
+
+** 完整方案骨架
+
+#+begin_src yaml
+schema:
+  schema_id: example
+  name: 示例方案
+  version: "0.1"
+  author: [作者 <email>]
+  description: |
+    多行描述
+
+switches:  # 状态开关
+  - name: ascii_mode
+    reset: 0                # 0=中文, 1=西文
+    states: [中文, 西文]
+  - name: full_shape
+    states: [半角, 全角]
+  - name: simplification
+    states: [漢字, 汉字]
+
+engine:  # 功能组件 (按顺序执行)
+  processors:     # 处理按键
+    - ascii_composer
+    - recognizer
+    - key_binder
+    - speller
+    - punctuator
+    - selector
+    - navigator
+    - express_editor
+  segmentors:     # 分段
+    - ascii_segmentor
+    - matcher
+    - abc_segmentor
+    - punct_segmentor
+    - fallback_segmentor
+  translators:    # 翻译
+    - punct_translator
+    - script_translator
+    - reverse_lookup_translator
+  filters:        # 过滤
+    - simplifier
+    - uniquifier
+
+speller:  # 拼写器
+  alphabet: zyxwvutsrqponmlkjihgfedcba
+  delimiter: " '"
+  algebra: []  # 拼写运算规则
+
+translator:
+  dictionary: example_dict
+  prism: example
+
+punctuator:
+  import_preset: default
+
+key_binder:
+  import_preset: default
+
+recognizer:
+  import_preset: default
+#+end_src
+
+* 功能组件速查
+
+** Processors (按键处理器)
+
+| 组件           | 功能                           |
+|----------------+--------------------------------|
+| =ascii_composer= | 中/西文切换, 临时西文模式          |
+| =recognizer=     | 识别特定模式 (网址/反查/...)       |
+| =key_binder=     | 按键绑定                        |
+| =speller=        | 拼写处理, 编辑输入码              |
+| =punctuator=     | 标点符号                        |
+| =selector=       | 选字/换页 (数字键, 方向键)         |
+| =navigator=      | 光标移动 (←→ Home End)          |
+| =express_editor= | 编辑器 (空格/回车上屏, Backspace) |
+| =fluid_editor=   | 句式编辑器 (空格断词)             |
+
+** Segmentors (分段器)
+
+| 组件               | 功能            |
+|--------------------+-----------------|
+| =ascii_segmentor=    | 标记西文段落      |
+| =matcher=            | 标记符合规则的段落 |
+| =abc_segmentor=      | 标记常规文字段落   |
+| =punct_segmentor=    | 标记标点段落      |
+| =fallback_segmentor= | 标记其他未标记段落 |
+
+** Translators (翻译器)
+
+| 组件                      | 功能                  |
+|---------------------------+-----------------------|
+| =echo_translator=           | 回显输入码 (无其他候选时) |
+| =punct_translator=          | 转换标点               |
+| =script_translator=         | 音节表式 (拼音/注音/粤拼) |
+| =table_translator=          | 码表式 (五笔/仓颉)       |
+| =reverse_lookup_translator= | 反查                  |
+
+** Filters (过滤器)
+
+| 组件       | 功能    |
+|------------+---------|
+| =simplifier= | 繁简转换 |
+| =uniquifier= | 去重    |
+
+* 拼写运算 (Speller Algebra)
+
+** 基本操作
+
+- =xform/源/目标/=: 替换 (perl 正则)
+- =derive/源/目标/=: 派生 (保留原编码 + 新编码)
+- =abbrev/源/目标/=: 简码 (derive 的特例)
+- =fuzz/源/目标/=: 略拼 (模糊音)
+- =xlit/源字符集/目标字符集/=: 字符替换
+- =erase/模式/=: 删除匹配项
+
+** 示例: 双拼
+
+#+begin_src yaml
+speller/algebra:
+  - erase/^xx$/
+  - xform/^zh/A/
+  - xform/^ch/E/
+  - xform/^sh/V/
+  - xform/ei$/Q/
+  - xform/ian$/W/
+  # ... 更多规则
+  - xlit/QWERTY.../qwerty.../  # 最后转小写
+#+end_src
+
+** 示例: 模糊音
+
+#+begin_src yaml
+speller/algebra:
+  - derive/^([zcs])h/$1/       # z=zh, c=ch, s=sh
+  - derive/^([nl])/$1/          # n=l
+  - derive/ang$/an/             # ang=an
+  - derive/ing$/in/             # ing=in
+#+end_src
+
+** 示例: 简拼
+
+#+begin_src yaml
+speller/algebra:
+  - abbrev/^([a-z]).+$/$1/      # 首字母简拼
+  - abbrev/^([zcs]h).+$/$1/     # zh/ch/sh 简拼
+#+end_src
+
+* 词典 (Dictionary)
+
+** 词典文件结构
+
+#+begin_src yaml
+# example.dict.yaml
+---
+name: example
+version: "1.0"
+sort: by_weight           # 或 original
+use_preset_vocabulary: true
+...
+
+# 码表部分 (TSV 格式, Tab 分隔)
+你	ni
+我	wo
+的	de	99%
+的	di	1%
+天地	tian di
+目的地	mu di di
+
+# 词组自动注音 (满足条件时可省略编码)
+你我
+我的
+#+end_src
+
+** 码表格式
+
+| 字段 1 | 字段 2             | 字段 3 (可选)       |
+|-------+-------------------+--------------------|
+| 文字  | 编码 (空格分隔音节) | 权重 (整数或百分比) |
+
+** 自动注音条件
+
+- 每个字都有编码定义
+- 无多音字, 或多音字权重 >5%
+
+** 八股文
+
+预设词汇表 (23 万词条, 繁体优化):
+
+#+begin_src yaml
+use_preset_vocabulary: true
+#+end_src
+
+要求码表收录 opencc 标准异体字 (如: 为→爲, 钟→鐘)。
+
+* 常见定制
+
+** 候选数 (默认 5)
+
+#+begin_src yaml
+# default.custom.yaml
+patch:
+  "menu/page_size": 9
+#+end_src
+
+** 默认简体输出
+
+#+begin_src yaml
+# luna_pinyin.custom.yaml
+patch:
+  "switches/@2/reset": 1  # simplification 开关
+#+end_src
+
+** 默认英文模式
+
+#+begin_src yaml
+# luna_pinyin.custom.yaml
+patch:
+  "switches/@0/reset": 1  # ascii_mode 开关
+#+end_src
+
+** 标点符号
+
+#+begin_src yaml
+# luna_pinyin.custom.yaml
+patch:
+  punctuator/half_shape:
+    "/": "、"
+  punctuator/full_shape:
+    "/": "、"
+#+end_src
+
+** 方案选单
+
+#+begin_src yaml
+# default.custom.yaml
+patch:
+  schema_list:
+    - schema: luna_pinyin
+    - schema: double_pinyin
+    - schema: wubi86
+#+end_src
+
+** 方案选单快捷键
+
+#+begin_src yaml
+# default.custom.yaml
+patch:
+  "switcher/hotkeys":
+    - "Control+grave"  # Ctrl+`
+    - "Control+s"
+    - F4
+#+end_src
+
+** 按键绑定
+
+#+begin_src yaml
+# luna_pinyin.custom.yaml
+patch:
+  "key_binder/bindings":
+    - {when: paging, accept: bracketleft, send: Page_Up}     # [ 上翻页
+    - {when: has_menu, accept: bracketright, send: Page_Down}  # ] 下翻页
+    - {when: composing, accept: Return, send: Escape}        # 回车清码
+#+end_src
+
+*when 条件*:
+
+- =paging=: 已翻页
+- =has_menu=: 有候选菜单
+- =composing=: 正在输入
+- =always=: 总是
+
+** 中/西文切换键
+
+#+begin_src yaml
+# default.custom.yaml
+patch:
+  ascii_composer/good_old_caps_lock: true  # Caps Lock 大写锁定
+  ascii_composer/switch_key:
+    Caps_Lock: commit_code     # 或 inline_ascii / commit_text / noop
+    Shift_L: noop
+    Control_L: commit_code
+#+end_src
+
+*切换策略*:
+
+- =inline_ascii=: 临时西文 (回车后恢复中文)
+- =commit_text=: 上屏候选 + 切西文
+- =commit_code=: 上屏编码 + 切西文
+- =noop=: 屏蔽该键
+
+** 反查
+
+#+begin_src yaml
+# cangjie5.custom.yaml
+patch:
+  reverse_lookup/dictionary: luna_pinyin
+  reverse_lookup/prefix: "`"
+  reverse_lookup/tips: 〔拼音〕
+#+end_src
+
+** 模糊音 (朙月拼音)
+
+#+begin_src yaml
+# luna_pinyin.custom.yaml
+patch:
+  speller/algebra:
+    __patch:
+      - pinyin:/zh_z_bufen      # zh/z 不分
+      - pinyin:/n_l_bufen       # n/l 不分
+      - pinyin:/en_eng_bufen    # en/eng 不分
+      - pinyin:/abbreviation    # 简拼
+#+end_src
+
+** 特定程序关闭中文
+
+#+begin_src yaml
+# squirrel.custom.yaml (macOS)
+patch:
+  app_options/com.apple.Terminal:
+    ascii_mode: true
+
+# weasel.custom.yaml (Windows)
+patch:
+  app_options/gvim.exe:  # 小写
+    ascii_mode: true
+#+end_src
+
+** 关闭逐键提示
+
+#+begin_src yaml
+# cangjie5.custom.yaml
+patch:
+  translator/enable_completion: false
+#+end_src
+
+** 关闭用户词典
+
+#+begin_src yaml
+# wubi86.custom.yaml
+patch:
+  translator/enable_user_dict: false
+#+end_src
+
+** 关闭连打
+
+#+begin_src yaml
+# cangjie5.custom.yaml
+patch:
+  translator/enable_sentence: false
+#+end_src
+
+* 小狼毫 (Windows) 特定
+
+** 字体字号
+
+#+begin_src yaml
+# weasel.custom.yaml
+patch:
+  "style/font_face": "微软雅黑"
+  "style/font_point": 14
+#+end_src
+
+** 横排候选
+
+#+begin_src yaml
+# weasel.custom.yaml
+patch:
+  "style/horizontal": true
+  "style/inline_preedit": true  # 内嵌编码 (TSF)
+#+end_src
+
+** 配色
+
+#+begin_src yaml
+# weasel.custom.yaml
+patch:
+  "style/color_scheme": aqua
+  "preset_color_schemes/aqua":
+    name: 碧水／Aqua
+    author: 佛振 <chen.sst@gmail.com>
+    text_color: 0x606060
+    back_color: 0xeeeceeee
+    border_color: 0xeeeceeee
+    hilited_text_color: 0x000000
+    hilited_back_color: 0xeeeceeee
+    hilited_candidate_text_color: 0xffffff
+    hilited_candidate_back_color: 0xcc8947
+    candidate_text_color: 0x000000
+#+end_src
+
+*颜色格式*: =0xBBGGRR= (蓝绿红, 24 位)
+
+* 鼠须管 (macOS) 特定
+
+#+begin_src yaml
+# squirrel.custom.yaml
+patch:
+  "style/color_scheme": native
+  "style/horizontal": false
+  "style/font_face": "PingFangSC"
+  "style/font_point": 16
+#+end_src
+
+* 高级技巧
+
+** 识别网址/邮箱
+
+#+begin_src yaml
+# default.custom.yaml
+patch:
+  recognizer/patterns/email: "^[A-Za-z][-_.0-9A-Za-z]*@.*$"
+  recognizer/patterns/url: "^(www[.]|https?:|ftp[.:]|mailto:|file:).*$|^[a-z]+[.].+$"
+#+end_src
+
+** 自定义词组 (利用标点)
+
+#+begin_src yaml
+# luna_pinyin.custom.yaml
+patch:
+  recognizer/patterns/reverse_lookup:  # 关闭 ` 反查
+  "punctuator/half_shape/`":
+    - "佛振 <chen.sst@gmail.com>"
+    - "https://rime.im"
+#+end_src
+
+** 数字后缀
+
+#+begin_src yaml
+# default.custom.yaml
+patch:
+  recognizer/patterns/rime123: "^rime[0-9]+$"
+#+end_src
+
+* YAML 语法要点
+
+** 缩进
+
+- 用 *空格* (不是 Tab)
+- 通常 2 或 4 个空格
+
+** 注释
+
+#+begin_src yaml
+# 这是注释
+#+end_src
+
+** 字符串
+
+#+begin_src yaml
+name: 普通字符串
+name: "带引号字符串"
+name: 'single quotes'
+description: |
+  多行字符串
+  保留换行
+#+end_src
+
+** 列表
+
+#+begin_src yaml
+list:
+  - item1
+  - item2
+#+end_src
+
+** 字典
+
+#+begin_src yaml
+dict:
+  key1: value1
+  key2: value2
+#+end_src
+
+** 锚点与引用
+
+#+begin_src yaml
+template: &ref
+  key: value
+
+use: *ref  # 引用
+#+end_src
+
+* 调试技巧
+
+** 常见错误
+
+1. *Tab 缩进*: 必须用空格
+2. *编码*: 必须 UTF-8 (无 BOM)
+3. *制表符*: 词典 TSV 用 Tab, 不是空格
+4. *引号*: =`= 在 YAML 中要用引号: ="`"=
+
+** 验证步骤
+
+1. 检查日志 (=ERROR= / =WARNING=)
+2. 删除 =build/= 重新部署
+3. 检查 YAML 语法 (缩进/引号)
+4. 确认文件名 (=<schema_id>.schema.yaml=)
+
+** 测试流程
+
+1. 小改动 → 部署 → 测试
+2. 出错 → 查日志 → 定位
+3. 回退到上一个可用版本
+
+* 参考资源
+
+- 官方 Wiki: [[https://github.com/rime/home/wiki]]
+- 方案详解: [[https://github.com/LEOYoon-Tsaw/Rime_collections/blob/master/Rime_description.md]]
+- 拼写运算: [[https://github.com/rime/home/wiki/SpellingAlgebra]]
+- 配方仓库: [[https://github.com/rime/plum]]
+- 社区方案: [[https://github.com/rime]]
+
+* 快速上手流程
+
+1. 安装 RIME 输入法
+2. 定位用户资料夹
+3. 创建 =default.custom.yaml= 调整全局设置
+4. 创建 =<方案>.custom.yaml= 调整具体方案
+5. 重新部署
+6. 测试, 查看日志, 迭代
+
+* 按键名称参考
+
+| 按键         | 名称           | 按键       | 名称          |
+|-------------+---------------+-----------+--------------|
+| Ctrl        | =Control=       | Alt       | =Alt=          |
+| Shift       | =Shift=         | Win/Cmd   | =Super=        |
+| Space       | =space=         | Enter     | =Return=       |
+| Tab         | =Tab=           | Esc       | =Escape=       |
+| Backspace   | =BackSpace=     | Delete    | =Delete=       |
+| Home        | =Home=          | End       | =End=          |
+| Page Up     | =Page_Up=       | Page Down | =Page_Down=    |
+| ←           | =Left=          | →         | =Right=        |
+| ↑           | =Up=            | ↓         | =Down=         |
+| F1-F12      | =F1= - =F12=      | ~         | =grave=        |
+| [ ]         | =bracketleft/right= | , .   | =comma/period= |
+
+*组合键格式*: =Control+Shift+a= (修饰符 + 按键)
+
+*释放标记*: =Release+key= (按键弹起时触发)
