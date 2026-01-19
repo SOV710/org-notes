@@ -38,11 +38,6 @@
 ### 2. 结构要求 (非常重要)
 - 严格使用 **org-mode 标题层级**
 - 标题层级必须与 `ORG_MODE_NOTE` 保持一致
-  - 例如：
-    - `** Lipids`
-    - `*** Types of Lipids`
-    - `*** Functions`
-    - `*** Digestion and Metabolism`
 - 同一层级下的内容必须是**逻辑同类项**
 - 不得出现"堆砌式段落"，必须合理拆分为小节与列表
 
@@ -95,4 +90,4 @@
 
 ## 输出目标
 
-一段**风格、术语、严谨度与 `ORG_MODE_NOTE` 完全一致的 org-mode 笔记续写内容**，主题为 `>>>READY_TO_MAKE` 所描述的营养学内容。
+一段**风格、术语、严谨度与 `ORG_MODE_NOTE` 完全一致的 org-mode 笔记续写内容**，主题为 `>>>READY_TO_MAKE` 所描述的内容。
