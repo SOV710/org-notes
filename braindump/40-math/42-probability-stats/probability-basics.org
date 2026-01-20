@@ -1,0 +1,130 @@
+#+title: Probability Basics
+#+author: SOV710
+#+date: <2026-01-20 Tue>
+#+startup: showall
+
+* Probability
+
+** Fundamental Concepts
+
+A *sample space* (样本空间) $\Omega$ is the set of all possible outcomes of an experiment.
+
+Points in $\Omega$ are called *sample outcomes* (样本结果), *realizations* (实现), or *elements* (元素).
+
+*Events* (事件) are subsets of $\Omega$.
+
+Basic set operations include *complement* (补集), *union* (并集), *intersection* (交集), *set difference* (集合差), and *set inclusion* (集合包含).
+
+The *null event* (空事件) and *true event* (必然事件) represent impossible and certain outcomes respectively.
+
+Events are *disjoint* (不交) or *mutually exclusive* (互斥) if their intersection is the null event.
+
+A *partition* (分割) of $\Omega$ is a sequence of disjoint sets $A_1, A_2, \dots$ such that $\bigcup_{i=1}^{\infty} A_i = \Omega$.
+
+The *indicator function* (示性函数) of $A$ is defined as $I_A(\omega) = I(\omega \in A) = \mathbf{1}_{\{\omega \in A\}}$.
+
+A sequence of sets is *monotone increasing* (单调递增) if $A_1 \subseteq A_2 \subseteq A_3 \subseteq \cdots$, and *monotone decreasing* (单调递减) if $A_1 \supseteq A_2 \supseteq A_3 \supseteq \cdots$.
+
+** Axioms of Probability
+
+The *probability* (概率) of $A$ is a real number $\mathbb{P}(A)$ assigned to every event $A$, which satisfies the following three axioms:
+
+1. *Non-negativity* (非负性): $\mathbb{P}(A) \ge 0$ for every $A$
+2. *Normalization* (规范性): $\mathbb{P}(\Omega) = 1$
+3. *Countable additivity* (可数可加性): If $A_1, A_2, \dots$ are disjoint, then
+   $$\mathbb{P}\!\left( \bigcup_{i=1}^{\infty} A_i \right) = \sum_{i=1}^{\infty} \mathbb{P}(A_i)$$
+
+** Interpretations of Probability
+
+There are two common interpretations of $\mathbb{P}(A)$: *frequencies* (频率) and *degrees of belief* (信念程度).
+
+The *law of large numbers* (大数定律) links statistics and probability under the frequency interpretation.
+
+The difference in interpretation does not matter much until we deal with *statistical inference* (统计推断), which gives rise to two schools: the *frequentist school* (频率学派) and the *Bayesian school* (贝叶斯学派).
+
+** Basic Properties
+
+From the axioms, we can derive:
+
+- $\mathbb{P}(\varnothing) = 0$
+- $A \subset B \quad \Rightarrow \quad \mathbb{P}(A) \le \mathbb{P}(B)$
+- $0 \le \mathbb{P}(A) \le 1$
+- $\mathbb{P}(A^c) = 1 - \mathbb{P}(A)$
+- $A \cap B = \varnothing \quad \Rightarrow \quad \mathbb{P}(A \cup B) = \mathbb{P}(A) + \mathbb{P}(B)$
+
+*Lemma* (引理): For any events $A$ and $B$,
+$$\mathbb{P}(A \cup B) = \mathbb{P}(A) + \mathbb{P}(B) - \mathbb{P}(AB)$$
+
+*Theorem* (定理) (Continuity of Probabilities, 概率的连续性):
+
+This result depends only on Axiom 3. If $A_n \rightarrow A$, then $\mathbb{P}(A_n) \rightarrow \mathbb{P}(A)$ as $n \rightarrow \infty$.
+
+** Uniform Probability Distribution
+
+For a finite sample space $\Omega$ where each outcome is equally likely, the *uniform probability distribution* (均匀概率分布) is given by
+$$\mathbb{P}(A) = \frac{|A|}{|\Omega|}$$
+
+This motivates the use of *combinatorial numbers* (组合数) as counting tools.
+
+The *binomial coefficient* (二项式系数) "n choose k" is
+$$\binom{n}{k} = \frac{n!}{k!(n-k)!}$$
+
+Important properties include:
+- $$\binom{n}{0} = \binom{n}{n} = 1$$
+- $$\binom{n}{k} = \binom{n}{n-k}$$
+
+** Independence
+
+Two events $A$ and $B$ are *independent* (独立) if
+$$\mathbb{P}(AB) = \mathbb{P}(A)\mathbb{P}(B)$$
+and we write $A \perp B$. If they are not independent, we write $A \not\!\perp B$.
+
+Independence can arise in two distinct ways:
+- Sometimes we explicitly *assume* (假设) that two events are independent.
+- In other instances, we *derive* (推导) independence by verifying that $\mathbb{P}(AB) = \mathbb{P}(A)\mathbb{P}(B)$.
+
+*Important conclusion*: Disjoint events with positive probability are /not/ independent.
+
+** Conditional Probability
+
+*Definition* (定义): If $\mathbb{P}(B) > 0$, then the *conditional probability* (条件概率) of $A$ given $B$ is
+$$\mathbb{P}(A \mid B) = \frac{\mathbb{P}(AB)}{\mathbb{P}(B)}$$
+
+*** Prosecutor's Fallacy
+
+The *prosecutor's fallacy* (检察官谬误) arises from confusing $\mathbb{P}(A \mid B)$ with $\mathbb{P}(B \mid A)$:
+
+- "If you are innocent, the probability of seeing this evidence is extremely small."
+- is incorrectly inferred as
+- "Given this evidence, the probability that you are innocent is extremely small."
+
+Note that $\mathbb{P}(\cdot \mid B)$ is a legal probability measure that satisfies the axioms of probability, but $\mathbb{P}(A \mid \cdot)$ does not satisfy the axioms as a function of its second argument.
+
+*** Basic Results
+
+*Lemma* (引理): For any events $A$ and $B$ with $\mathbb{P}(B) > 0$,
+$$\mathbb{P}(AB) = \mathbb{P}(A \mid B)\mathbb{P}(B) = \mathbb{P}(B \mid A)\mathbb{P}(A)$$
+
+*The Law of Total Probability* (全概率公式): Let $\{A_1, \dots, A_k\}$ be a partition of $\Omega$. Then
+$$\mathbb{P}(B) = \sum_{i=1}^k \mathbb{P}(B \mid A_i)\mathbb{P}(A_i)$$
+
+*Bayes' Theorem* (贝叶斯定理):
+$$\mathbb{P}(A_i \mid B) = \frac{\mathbb{P}(B \mid A_i)\mathbb{P}(A_i)}{\sum_j \mathbb{P}(B \mid A_j)\mathbb{P}(A_j)}$$
+
+The *prior probability* (先验概率) $\mathbb{P}(A_i)$ represents our judgment before seeing the data, while the *posterior probability* (后验概率) $\mathbb{P}(A_i \mid B)$ represents our updated judgment after observing the data.
+
+** Measurable Spaces and Probability Spaces
+
+Assigning probabilities to all subsets of $\Omega$ is not always feasible. Therefore, we restrict attention to a collection of events called a *σ-algebra* (σ-代数) or *σ-field* (σ-域).
+
+A class $\mathcal{A}$ is a σ-algebra if it satisfies:
+
+1. $\varnothing \in \mathcal{A}$: The impossible event must be measurable.
+2. If $A_1, A_2, \dots \in \mathcal{A}$, then $\bigcup_{i=1}^{\infty} A_i \in \mathcal{A}$: Closed under countable unions.
+3. $A \in \mathcal{A} \Rightarrow A^c \in \mathcal{A}$: Closed under complementation.
+
+The sets in $\mathcal{A}$ are said to be *measurable* (可测的). We call $(\Omega, \mathcal{A})$ a *measurable space* (可测空间).
+
+If $\mathbb{P}$ is a *probability measure* (概率测度) defined on $\mathcal{A}$, then $(\Omega, \mathcal{A}, \mathbb{P})$ is called a *probability space* (概率空间).
+
+The *Borel σ-field* (Borel σ-域) is a particularly important example of a σ-algebra in practice.
