@@ -6,7 +6,7 @@
 
 * Trait 系统: Rust 的灵魂
 
-Trait 是 Rust 最核心的抽象机制，相当于其他语言中的 "接口" (interface)，但更强大。它定义了类型必须实现的行为 (behavior)，是 Rust 实现 *零成本抽象* 和 *编译期多态* 的基石。
+Trait 是 Rust 最核心的抽象机制, 相当于其他语言中的 "接口" (interface), 但更强大。它定义了类型必须实现的行为 (behavior), 是 Rust 实现 *零成本抽象* 和 *编译期多态* 的基石。
 
 ** Trait 的三大用途
 
@@ -38,13 +38,13 @@ Trait 是 Rust 最核心的抽象机制，相当于其他语言中的 "接口" (
 | 性能    | *零成本* (编译期展开)           | 运行时开销 (一次间接跳转)  |
 | 代码体积 | 可能膨胀 (每种类型生成一份代码)  | 较小                   |
 | 返回值   | 可以返回具体类型              | 只能返回 =Box<dyn Trait>= |
-| 使用场景 | 已知具体类型，追求性能         | 运行时多态，类型不确定     |
+| 使用场景 | 已知具体类型, 追求性能         | 运行时多态, 类型不确定     |
 
 #+begin_src rust
 // 静态分发: 编译器为 Vec<i32> 和 Vec<String> 各生成一份代码
 fn process<T: Iterator>(iter: T) { }
 
-// 动态分发: 只生成一份代码，运行时通过 vtable 调用
+// 动态分发: 只生成一份代码, 运行时通过 vtable 调用
 fn process_dyn(iter: &mut dyn Iterator<Item = i32>) { }
 #+end_src
 
@@ -54,7 +54,7 @@ fn process_dyn(iter: &mut dyn Iterator<Item = i32>) { }
 
 *** =Debug= - 调试输出
 
-用于 ={:?}= 格式化输出，*几乎所有类型都应该实现*。
+用于 ={:?}= 格式化输出, *几乎所有类型都应该实现*。
 
 #+begin_src rust
 #[derive(Debug)]
@@ -82,7 +82,7 @@ impl Debug for Point {
 
 *** =Display= - 用户友好的输出
 
-用于 ={}= 格式化输出，*不能自动 derive*，需要手动实现。
+用于 ={}= 格式化输出, *不能自动 derive*, 需要手动实现。
 
 #+begin_src rust
 impl Display for Point {
@@ -103,11 +103,11 @@ println!("{}", p);  // (1, 2)
 #+begin_src rust
 #[derive(Clone)]
 struct Data {
-    buffer: Vec<u8>,  // heap 分配，clone 时会复制整个 Vec
+    buffer: Vec<u8>,  // heap 分配, clone 时会复制整个 Vec
 }
 
 let d1 = Data { buffer: vec![1, 2, 3] };
-let d2 = d1.clone();  // 显式克隆，避免意外
+let d2 = d1.clone();  // 显式克隆, 避免意外
 #+end_src
 
 *实现要求*: 所有字段都必须实现 =Clone=
@@ -119,14 +119,14 @@ let d2 = d1.clone();  // 显式克隆，避免意外
 
 *** =Copy= - 隐式按位复制
 
-标记 trait，表示类型可以通过 *按位复制* (memcpy) 来复制，*不需要调用 clone()*。
+标记 trait, 表示类型可以通过 *按位复制* (memcpy) 来复制, *不需要调用 clone()*。
 
 #+begin_src rust
 #[derive(Copy, Clone)]  // Copy 必须同时实现 Clone
 struct Point { x: i32, y: i32 }
 
 let p1 = Point { x: 1, y: 2 };
-let p2 = p1;  // 隐式复制，p1 仍然有效
+let p2 = p1;  // 隐式复制, p1 仍然有效
 println!("{:?}", p1);  // OK
 #+end_src
 
@@ -213,7 +213,7 @@ assert!(v1 < v2);
 
 *** =Hash= - 哈希
 
-计算类型的哈希值，用于 =HashMap=, =HashSet=。
+计算类型的哈希值, 用于 =HashMap=, =HashSet=。
 
 #+begin_src rust
 #[derive(Hash, PartialEq, Eq)]
@@ -226,7 +226,7 @@ let mut map = HashMap::new();
 map.insert(Key { id: 1, version: 2 }, "value");
 #+end_src
 
-*要求*: 如果 =a == b=，则 =hash(a) == hash(b)=
+*要求*: 如果 =a == b=, 则 =hash(a) == hash(b)=
 
 ** 操作符重载: 让自定义类型像内置类型一样用
 
@@ -326,7 +326,7 @@ impl<T> Deref for MyBox<T> {
 }
 
 let x = MyBox(String::from("hello"));
-println!("{}", x.len());  // 自动调用 (*x).len()，即 String::len()
+println!("{}", x.len());  // 自动调用 (*x).len(), 即 String::len()
 #+end_src
 
 *Deref Coercion*: 编译器自动插入多次 =deref()= 调用
@@ -346,7 +346,7 @@ print_str(&s);  // &MyBox<String> -> &String -> &str
 
 *** =From= / =Into= - 无错转换
 
-=From= 定义 *如何从其他类型创建自己*，=Into= 是其镜像。
+=From= 定义 *如何从其他类型创建自己*, =Into= 是其镜像。
 
 #+begin_src rust
 impl From<u32> for MyType {
@@ -366,7 +366,7 @@ let s: String = "hello".into();  // &str -> String
 let v: Vec<u8> = vec![1, 2, 3].into();
 #+end_src
 
-*惯例*: 只手动实现 =From=，编译器会自动提供 =Into=
+*惯例*: 只手动实现 =From=, 编译器会自动提供 =Into=
 
 #+begin_src rust
 // 错误示例
@@ -526,7 +526,7 @@ impl FromIterator<MyItem> for MyCollection {
 fn spawn<F>(f: F) where F: FnOnce() + Send + 'static { }
 #+end_src
 
-*自动实现*: 如果所有字段都是 =Send=，则类型自动是 =Send=
+*自动实现*: 如果所有字段都是 =Send=, 则类型自动是 =Send=
 
 *不是 Send 的类型*:
 - =Rc<T>=: 非原子引用计数
@@ -541,7 +541,7 @@ fn share<T: Sync>(x: &T) { }
 #+end_src
 
 *不是 Sync 的类型*:
-- =Cell<T>=, =RefCell<T>=: 内部可变性，非线程安全
+- =Cell<T>=, =RefCell<T>=: 内部可变性, 非线程安全
 - =Rc<T>=
 
 *Arc 是 Send + Sync*:
@@ -1162,8 +1162,8 @@ takes_string(my_s);  // 错误! 需要 my_s.0
 
 1. *小而专注*: 每个 trait 只做一件事 (Unix 哲学)
 2. *默认实现*: 为常见模式提供默认实现
-3. *组合优于继承*: 用多个 trait 组合，而非复杂的继承层次
-4. *object-safe 优先*: 除非确定不需要 trait object，否则保持 object-safe
+3. *组合优于继承*: 用多个 trait 组合, 而非复杂的继承层次
+4. *object-safe 优先*: 除非确定不需要 trait object, 否则保持 object-safe
 
 ** 命名惯例
 
@@ -1186,7 +1186,7 @@ takes_string(my_s);  // 错误! 需要 my_s.0
 
 ** 一份 Trait 实现 Checklist
 
-实现自定义类型时，考虑实现以下 traits:
+实现自定义类型时, 考虑实现以下 traits:
 
 - [ ] =Debug= (几乎必须)
 - [ ] =Clone= (如果可以安全克隆)
@@ -1196,7 +1196,7 @@ takes_string(my_s);  // 错误! 需要 my_s.0
 - [ ] =Default= (如果有合理的默认值)
 - [ ] =Display= (如果有用户友好的表示)
 - [ ] =Error= (如果是错误类型)
-- [ ] =Send= / =Sync= (自动实现，除非需要手动 =unsafe impl=)
+- [ ] =Send= / =Sync= (自动实现, 除非需要手动 =unsafe impl=)
 - [ ] =Serialize= / =Deserialize= (如果需要序列化)
 
-*记住*: Rust 的 trait 系统是零成本的抽象——用好它，能写出既优雅又高效的代码。
+*记住*: Rust 的 trait 系统是零成本的抽象——用好它, 能写出既优雅又高效的代码。
