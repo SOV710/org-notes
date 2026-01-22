@@ -1,0 +1,75 @@
+#+title: Rust Basics
+#+author: SOV710
+#+date: <2026-01-21 Wed>
+
+assert_eq! 断言
+
+文件 IO
+one-time IO
+
+#+begin_src
+use std::fs; let s = fs::read_to_string("input.txt")?;
+let bytes = fs::read("input.bin")?;
+#+end_src
+
+#+begin_src
+use std::fs;
+
+fs::write("output.txt", "hello world")?;
+#+end_src
+
+流式 IO
+
+#+begin_src
+use std::fs::File;
+use std::io::{self, Read};
+
+let mut f = File::open("input.txt")?;
+let mut buf = String::new();
+f.read_to_string(&mut buf)?;
+#+end_src
+
+逐行 IO
+#+begin_src
+use std::fs::File;
+use std::io::{self, Read};
+
+let mut f = File::open("input.txt")?;
+let mut buf = String::new();
+f.read_to_string(&mut buf)?;
+#+end_src
+
+fs operations
+
+#+begin_src
+use std::fs;
+
+fs::create_dir_all("dist/assets")?;
+fs::remove_dir_all("dist")?;
+
+fs::copy("a.txt", "b.txt")?;
+fs::rename("old", "new")?;
+
+#+end_src
+
+#+begin_src
+use std::path::Path;
+
+let p = Path::new("foo.md");
+if p.exists() && p.is_file() {
+    println!("ok");
+}
+#+end_src
+
+
+在看 orgize 代码时看到
+
+#+begin_src rust
+pub fn parse(input: impl AsRef<str>) -> Org {
+    ParseConfig::default().parse(input)
+}
+#+end_src
+
+其中 =input: AsRef<str>= 是一种常用的 =impl Trait= 语法糖, 表示接受任何能 "借用成 =&str=" 的类型
+
+-----
