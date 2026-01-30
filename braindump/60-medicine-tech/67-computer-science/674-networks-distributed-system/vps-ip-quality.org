@@ -31,11 +31,11 @@ IP 质量占风控权重最大, 但非唯一因素。即使使用真实海外家
 
 ** Primary Types
 
-- *ISP ( Fixed Line ISP )*: 固定线路互联网服务商 ( 如中国电信, AT&T ), 即住宅 IP
-- *DCH ( Data Center/Web Hosting/Transit )*: 云服务商机房分配的 IP ( AWS, GCP, 阿里云等 )
-- *MOB ( Mobile ISP )*: 移动网络运营商 ( 4G/5G )
-- *COM ( Commercial )*: 企业网络
-- *EDU ( University/College/School )*: 教育机构, 通常受信任
+- *ISP (Fixed Line ISP)*: 固定线路互联网服务商 ( 如中国电信, AT&T ), 即住宅 IP
+- *DCH (Data Center/Web Hosting/Transit)*: 云服务商机房分配的 IP ( AWS, GCP, 阿里云等 )
+- *MOB (Mobile ISP)*: 移动网络运营商 ( 4G/5G )
+- *COM (Commercial)*: 企业网络
+- *EDU (University/College/School)*: 教育机构, 通常受信任
 
 风控严格度一般为: 住宅 IP ≈ 移动 IP > 商业 IP >> 数据中心 IP。
 
