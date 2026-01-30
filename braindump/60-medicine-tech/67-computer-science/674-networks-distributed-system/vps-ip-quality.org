@@ -1,0 +1,155 @@
+#+title: VPS IP Quality Assessment and Detection Methodology
+#+startup: showall
+
+* IP Quality Fundamentals
+
+** Definition
+
+IP 质量指用户使用该 IP 访问网站时受到风控的强度。同一网站, 不同 IP 会触发不同级别的风控策略 ( 从无障碍访问到多层验证码甚至直接拒绝 )。
+
+** Wind Control Mechanism
+
+网站通过以下维度判断用户风险等级:
+
+- *IP 地址*: 地理位置, ISP, 网络类型, 历史行为
+- *行为模式*: TCP/WebSocket 延迟差异, DNS 解析异常, 地理距离矛盾
+- *指纹特征*: WebRTC 泄漏, TCP/IP 指纹, 浏览器指纹, 时区匹配度
+- *网络拓扑*: Traceroute 路径, 流量时序模式
+
+IP 质量占风控权重最大, 但非唯一因素。即使使用真实海外家庭网络, 仍可能因握手延时等因素被风控。
+
+** IP Database Architecture
+
+网站依托 *公开数据库* 和 *私有数据库* 实施风控:
+
+- *公开数据库*: MaxMind, IP2Location, IPQS 等专业服务, 记录 IP 的地理位置, ISP, 网络类型, 威胁情报
+- *私有数据库*: 网站自建, 记录 IP 在本站的历史行为 ( 注册频率, 请求模式等 )
+
+数据来源包括蜜罐捕获, 数据共享协议, 主动扫描探测, abuse 举报, 地理位置定位等。
+
+* IP Classification System
+
+** Primary Types
+
+- *ISP ( Fixed Line ISP )*: 固定线路互联网服务商 ( 如中国电信, AT&T ), 即住宅 IP
+- *DCH ( Data Center/Web Hosting/Transit )*: 云服务商机房分配的 IP ( AWS, GCP, 阿里云等 )
+- *MOB ( Mobile ISP )*: 移动网络运营商 ( 4G/5G )
+- *COM ( Commercial )*: 企业网络
+- *EDU ( University/College/School )*: 教育机构, 通常受信任
+
+风控严格度一般为: 住宅 IP ≈ 移动 IP > 商业 IP >> 数据中心 IP。
+
+** Secondary Attributes
+
+*** Native vs Broadcast IP
+
+- *原生 IP*: 注册国家与实际地理位置一致
+- *广播 IP*: 注册国家与实际地理位置不一致
+
+原生 IP 通常解锁能力更强, 风控较轻, 但这是中国特供概念, 国际上无此区分。
+
+*** Dual ISP
+
+ASN 所有者 (AS Usage Type) 和企业 (Usage Type) 同时标记为 ISP 或 MOB 的现象。家宽 IP 应具备双 ISP 特征且二者完全一致。
+
+*** Streaming Unlock
+
+流媒体服务 (Netflix, YouTube, TikTok 等) 根据 IP 地理位置判断解锁权限。解锁能力与 IP 质量仅轻微相关, 与地区强相关 (如美国地区普遍解锁率高, 香港地区解锁率低)。
+
+* Scenario-Based IP Selection
+
+- *流媒体专用*: 流媒体解锁机器 (可使用 DNS 劫持技术实现解锁, 无需追求高质量 IP)
+- *常规访问* (YouTube, GitHub, AI 服务): 干净的数据中心 IP 即可
+- *电商运营* (TikTok, Amazon): 原生 IP (家宽为锦上添花非必需)
+- *金融/AI/敏感注册*: 家宽 IP (极致风控需求, 成本高昂)
+
+*特殊现象*: 大厂 IP (AWS, GCP 等) 在 AI 服务中有奇效, 即使滥用严重也不易触发降智或风控。
+
+* Detection Methodology Without IP Access
+
+** IP2Location - Geographic and Type Verification
+
+- *用途*: 地理位置 + IP 类型 (DCH/ISP/MOB) 判定
+- *关键指标*: Region, Usage Type, AS Usage Type, ASN
+- *特征*: 地理定位极其准确 ("4 绿 1 红" 现象: 其他库标记为家宽而 IP2Location 标记为机房时, 实际为机房)
+- *局限*: 对滥用行为不敏感, Fraud Score 基本固定为 3 ( DCH ) 或 0 ( 其他 ), 仅当 Fraud Score = 99 时才表明严重滥用
+
+** IPQS - Abuse Sensitivity Detection
+
+- *用途*: IP 滥用行为检测
+- *关键指标*: Proxy Status, VPN Status, TOR Status, Fraud Score ( 75+ 可疑, 85+ 高风险, 90+ 极高风险 ), Recent Abuse, Bot Activity
+- *特征*: 异常灵敏, 易误判 ( 大流量和异常连接数会导致高风险评分 )
+- *判定逻辑*: IPQS 标记为干净的 IP 基本真干净, 标记为危险的不一定真危险 ( 若仅 IPQS 风险 100% 而其他库干净, 实际使用影响不大 )
+
+** Ping0 - Native/Broadcast IP Identification
+
+- *用途*: 原生/广播 IP 判定, ASN 归属查询
+- *特征*: ASN 判断极其准确
+- *局限*: IP 类型, ASN 属性, 风控值, 共享人数, 大模型检测等数据均不准确, 属于娱乐库, 无网站方实际使用
+
+** IPData - Abuse Flagging
+
+- *用途*: 查询 abuse, tor, proxy 等标记
+- *关键指标*: Threats 字段 ( 为 0 则正常 )
+- *局限*: 分数不准确, 仅看是否有标记即可
+
+** Scamalytics - Spam and Abuse History
+
+- *用途*: 垃圾邮件/abuse 检测
+- *判定逻辑*: 低分不一定好, 高分基本完蛋 ( 容易被 Cloudflare 验证码拦截 )
+- *特殊现象*: 真实家宽 IP 分数通常在 5-25, 而非 0
+
+** Cloudflare Radar - Bot Traffic Analysis
+
+- *用途*: 查询 ASN 的机器人与人类流量占比
+- *关键指标*: Bot vs. Human
+- *影响*: 直接影响 Cloudflare 验证码触发概率
+
+* Detection Methodology With IP Access
+
+** Automated Testing Scripts
+
+- =bash <(curl -Ls IP.Check.Place)=: 综合 IP 质量检测 + 常见流媒体解锁
+- =bash <(curl -L -s check.unlock.media)=: 全球流媒体解锁测试
+
+** Manual Verification Tests
+
+使用 Google 无痕模式进行以下测试:
+
+*** Google Search
+- *正常*: 可正常搜索
+- *扣分*: 提示 "我们的系统检测到您的计算机网络中存在异常流量" ( 严重扣分, 基本死刑 )
+
+*** Reddit
+- *正常*: 直接访问
+- *扣分*: "You've been blocked by network security." ( 中等严重 )
+
+*** YouTube
+- *正常*: 可直接播放
+- *扣分*: "请登录, 以便我们确认你不是聊天机器人" ( 中等严重 )
+
+*** Claude
+- *正常*: 不跳验证码
+- *加分*: 注册时可跳过接码直接注册
+
+*** ChatGPT
+- *正常*: 无人机验证, 无需登录即可对话
+- *扣分*: 需要验证或登录
+
+*注意*: Gemini/Meta 无法访问通常由 "送中" (IP 被私有数据库标记为中国地区) 导致, 与 IP 质量无关。
+
+* Common Pitfalls
+
+** Pseudo-Residential IP
+
+部分数据库中被标记为家宽, 实际为机房的 IP。常见 ASN 包括 Cogent, GTT, NTT 等。这些 IP 在国人商家中以家宽形式销售, 但专业数据库明确标记为 datacenter, 可能导致电商运营账号被封。
+
+*判别方法*: Cogent 从不涉及家宽业务, 若 ASN 为 Cogent 则必为数据中心 IP。
+
+** Detection Tool Selection
+
+- *专业库*: IP2Location ( 地理位置 ), IPQS ( 滥用检测 ), IPData ( 标记查询 )
+- *娱乐库*: Ping0 ( 仅用于 ASN 和原生/广播判定 ), IPLark, PingIP ( 不推荐 )
+- *付费库*: MaxMind ( 不付费无法查询详细信息 )
+
+*核心原则*: 无网站方实际使用的数据库无参考价值。最准确的检测方法是使用该 IP 实际访问目标网站。
