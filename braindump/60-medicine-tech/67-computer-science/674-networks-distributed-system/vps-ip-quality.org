@@ -77,9 +77,9 @@ ASN 所有者 (AS Usage Type) 和企业 (Usage Type) 同时标记为 ISP 或 MOB
 ** IPQS - Abuse Sensitivity Detection
 
 - *用途*: IP 滥用行为检测
-- *关键指标*: Proxy Status, VPN Status, TOR Status, Fraud Score ( 75+ 可疑, 85+ 高风险, 90+ 极高风险 ), Recent Abuse, Bot Activity
-- *特征*: 异常灵敏, 易误判 ( 大流量和异常连接数会导致高风险评分 )
-- *判定逻辑*: IPQS 标记为干净的 IP 基本真干净, 标记为危险的不一定真危险 ( 若仅 IPQS 风险 100% 而其他库干净, 实际使用影响不大 )
+- *关键指标*: Proxy Status, VPN Status, TOR Status, Fraud Score (75+ 可疑, 85+ 高风险, 90+ 极高风险), Recent Abuse, Bot Activity
+- *特征*: 异常灵敏, 易误判 (大流量和异常连接数会导致高风险评分)
+- *判定逻辑*: IPQS 标记为干净的 IP 基本真干净, 标记为危险的不一定真危险 (若仅 IPQS 风险 100% 而其他库干净, 实际使用影响不大)
 
 ** Ping0 - Native/Broadcast IP Identification
 
@@ -90,13 +90,13 @@ ASN 所有者 (AS Usage Type) 和企业 (Usage Type) 同时标记为 ISP 或 MOB
 ** IPData - Abuse Flagging
 
 - *用途*: 查询 abuse, tor, proxy 等标记
-- *关键指标*: Threats 字段 ( 为 0 则正常 )
+- *关键指标*: Threats 字段 (为 0 则正常)
 - *局限*: 分数不准确, 仅看是否有标记即可
 
 ** Scamalytics - Spam and Abuse History
 
 - *用途*: 垃圾邮件/abuse 检测
-- *判定逻辑*: 低分不一定好, 高分基本完蛋 ( 容易被 Cloudflare 验证码拦截 )
+- *判定逻辑*: 低分不一定好, 高分基本完蛋 (容易被 Cloudflare 验证码拦截)
 - *特殊现象*: 真实家宽 IP 分数通常在 5-25, 而非 0
 
 ** Cloudflare Radar - Bot Traffic Analysis
@@ -118,15 +118,15 @@ ASN 所有者 (AS Usage Type) 和企业 (Usage Type) 同时标记为 ISP 或 MOB
 
 *** Google Search
 - *正常*: 可正常搜索
-- *扣分*: 提示 "我们的系统检测到您的计算机网络中存在异常流量" ( 严重扣分, 基本死刑 )
+- *扣分*: 提示 "我们的系统检测到您的计算机网络中存在异常流量" (严重扣分, 基本死刑)
 
 *** Reddit
 - *正常*: 直接访问
-- *扣分*: "You've been blocked by network security." ( 中等严重 )
+- *扣分*: "You've been blocked by network security." (中等严重)
 
 *** YouTube
 - *正常*: 可直接播放
-- *扣分*: "请登录, 以便我们确认你不是聊天机器人" ( 中等严重 )
+- *扣分*: "请登录, 以便我们确认你不是聊天机器人" (中等严重)
 
 *** Claude
 - *正常*: 不跳验证码
@@ -148,8 +148,8 @@ ASN 所有者 (AS Usage Type) 和企业 (Usage Type) 同时标记为 ISP 或 MOB
 
 ** Detection Tool Selection
 
-- *专业库*: IP2Location ( 地理位置 ), IPQS ( 滥用检测 ), IPData ( 标记查询 )
-- *娱乐库*: Ping0 ( 仅用于 ASN 和原生/广播判定 ), IPLark, PingIP ( 不推荐 )
-- *付费库*: MaxMind ( 不付费无法查询详细信息 )
+- *专业库*: IP2Location (地理位置), IPQS (滥用检测), IPData (标记查询)
+- *娱乐库*: Ping0 (仅用于 ASN 和原生/广播判定), IPLark, PingIP (不推荐)
+- *付费库*: MaxMind (不付费无法查询详细信息)
 
 *核心原则*: 无网站方实际使用的数据库无参考价值。最准确的检测方法是使用该 IP 实际访问目标网站。
