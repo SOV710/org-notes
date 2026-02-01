@@ -1,0 +1,78 @@
+#+title: DoH
+#+author: SOV710
+#+date: <2026-02-15 Sun>
+
+RFC 8484 要求使用 base64url 编码 (不是标准 base64):
+
+- 用 - 替代 +
+- 用 _ 替代 /
+- 去掉填充符 =
+
+DoH 的查询模式:
+
+- GET
+      - *JSON API* 模式 (Google/Cloudflare 拓展), Header =accept: application/dns-json=, 加 =name=google.com&type=A= 的动态参数
+      - *DNS wireformat* (RFC 8484, optional), Header =content-type: application/dns-message=, 加 =dns=AAABAAABAAAAAAAAB2dvb2dsZQNjb20AAAEAAQ= 的动态参数, 其中参数内容是 DNS 查询包经过 base64url 编码的
+- POST
+      - *DNS wireformat* (RFC 8484, optional): 直接发 DNS 查询包 =\x00\x00\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06google\x03com\x00\x00\x01\x00\x01=
+
+
+DNS 查询消息结构:
+
+以 =google.com= 为例, 一个 DNS 查询包如下
+
+#+begin_src
+\x00\x00\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06google\x03com\x00\x00\x01\x00\x01
+#+end_src
+
+Part 1: DNS Header (12 bytes)
+
+#+begin_src
+\x00\x00  - Transaction ID (事务 ID，这里是 0)
+\x01\x00  - Flags (标志位)
+           0x0100 = 标准查询，递归查询
+\x00\x01  - Questions Count (问题数 = 1)
+\x00\x00  - Answer RRs (应答数 = 0，查询时为 0)
+\x00\x00  - Authority RRs (权威记录数 = 0)
+\x00\x00  - Additional RRs (附加记录数 = 0)
+#+end_src
+
+Part 2: Question Section (可变长度)
+
+#+begin_src
+\x06google\x03com\x00  - 域名编码
+\x00\x01              - Query Type (A 记录 = 1)
+\x00\x01              - Query Class (IN = 1, 互联网)
+#+end_src
+
+域名编码详解
+
+DNS 使用 *标签长度前缀* 编码域名
+
+#+begin_src
+google.com 编码为:
+\x06     - 长度 6 (下一个标签有 6 个字符)
+google   - 字符 'g' 'o' 'o' 'g' 'l' 'e'
+\x03     - 长度 3 (下一个标签有 3 个字符)
+com      - 字符 'c' 'o' 'm'
+\x00     - 结束标记 (长度 0)
+#+end_src
+
+
+示例:
+
+如果要查询 =example.com=
+
+POST + DNS wireformat
+
+#+begin_src shell
+echo -ne '\x00\x00\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03org\x00\x00\x01\x00\x01' | \
+curl -X POST -H 'content-type: application/dns-message' \
+  --data-binary @- 'https://hk.pms.loc.cc/dohgo' | hexdump -C
+#+end_src
+
+GET + JSON API
+
+#+begin_src shell
+curl -H 'accept: application/dns-json' 'https://1.1.1.1/dns-query?name=example.com&type=A' | jq
+#+end_src
