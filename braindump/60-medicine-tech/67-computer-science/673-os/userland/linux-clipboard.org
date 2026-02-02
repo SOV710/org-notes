@@ -1,0 +1,82 @@
+#+title: Mechanism of Linux Clipboard Implementation
+#+author: SOV710
+#+date: <2026-02-25 Wed>
+
+* 总览
+
+首先, 所有的 clipboard 机制都是由桌面协议实现的, x11 和 wayland
+
+x11 和 wayland clipboard 在技术上是同构的, 而且都有一个致命缺陷: *X server/compositor 不 own 数据, owner 死则数据亡*​。
+
+所以二者都需要 clipboard manager 作为补丁, x11 下是 =xclipboard=, wayland 下是 =cliphist= =copyq=, 即使进程退出也能保存剪切板数据
+
+简单来说, 就是都需要补丁做持久化问题
+
+*差异*:
+
+** 传输机制
+
+x11 用 X property (小数据) 和 INCR 协议 (大数据分片), 数据需要经过 X Server 作为中转; Wayland 直接给 owner 一个 fd, owner 往里写, requestor 从另一端读, 是真正的点对点 pipe。在大数据传输上效率更高
+
+** 安全
+
+想象一下, 假如有个恶意进程在后台偷偷读你的剪切板, 间隔一秒读一次, 就能把你的所有密码读出来, 你完全不知道, 这是不是很恐怖?
+
+x11 就是这么工作的, x11 的 clipboard 对读行为完全没有限制, 任何时候任何进程都可以读 clipboard, 没有任何检查, =xclip= 这类工具就是这么运作的
+
+所以 Wayland 限制: 只有有键盘 focus 的进程才能收到剪切板事件 (=wl_data_device.selection=), 没有 focus 的进程完全读不到这个事件
+
+但是, 像是 =cliphist= 这类剪切板管理器进程怎么办呢? 他们就是那种「后台偷偷监听你剪切板事件」的进程, 但并非恶意的, 而是用户刻意授权的
+
+=ext_data_control= 就是为这种场景设计的豁免协议, 允许绕过 focus 限制, 但是必须显示允许, 这就是 wayland 的「默认封闭, 显式授权」机制
+
+** MIME vs atom
+
+格式协商从 X atom 换成了字符串 MIME type, 没有本质区别, 只是更易读、不依赖 X atom 注册机制
+
+* MIME
+
+我在一个网页上复制了一段文字, 粘贴到另一个网页上, 效果可能就是:
+
+"Wayland 规定 =set_selection= 必须携带有效的输入事件 serial"
+
+但是, 复制到 ghostty 中, 效果就是
+
+"Wayland 规定 set_selection 必须携带有效的输入事件 serial"
+
+这就是 MIME
+
+*MIME 就是数据格式的声明*
+
+当你在网页里选中那段文字按 Ctrl+C, 浏览器作为 clipboard owner, 同时向 compositor 声明它能提供​*多种格式的同一份数据*
+
+- =text/html= → =Wayland 规定 <code>set_selection</code> 必须携带...= (带标签的富文本)
+- =text/plain;charset=utf-8= → =Wayland 规定 set_selection 必须携带...= (纯文字)
+
+
+粘贴的时候, 接收方 (requestor) 选择它自己能理解的格式。输入框支持 HTML, 就选 =text/html=, 于是 =<code>= 标签被渲染成了 inline code。​=wl-paste= 默认选 =text/plain=, 所以你拿到的是剥掉所有标签的纯文字。
+
+可以用 =wl-paste --type text/html= 查看当前 clipboard 中支持哪些 MIME
+
+例如, 我从 vivaldi 复制来的文字就是这样:
+
+#+begin_src
+❮ wl-paste --list-types
+text/plain
+text/plain;charset=utf-8
+UTF8_STRING
+chromium/x-internal-source-rfh-token
+text/plain;charset=utf-8
+TEXT
+chromium/x-source-url
+STRING
+text/html
+#+end_src
+
+从 ghostty 复制来的就是:
+
+#+begin_src
+❮ wl-paste --list-types
+text/plain;charset=utf-8
+text/plain
+#+end_src
