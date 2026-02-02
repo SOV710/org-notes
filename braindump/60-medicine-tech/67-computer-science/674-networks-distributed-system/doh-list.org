@@ -1,0 +1,889 @@
+#+title: DoH List
+#+author: SOV710
+#+date: <2026-02-15 Sun>
+
+* 始皇的 DoH
+
+https://aaa.ddd.oaifree.com/query-dns
+
+此处的 =aaa= 指可以被填充为任何符合 URL 规范的符号组合, 比如 =xxx=, =abcd=, =fqXMMPqE=
+
+* Cloudflare
+
+https://cloudflare-dns.com/dns-query
+Mozilla: https://mozilla.cloudflare-dns.com/dns-query
+
+无过滤: https://aaa.cloudflare-gateway.com/dns-query
+安全 DNS (拦截 malware): https://aaa.security.cloudflare-dns.com/dns-query
+
+=aaa= 含义同上
+
+* Tuso 佬自建公益 DoH
+
+香港DOH https://hk.pms.loc.cc/dohgo
+美国DOH https://runtime.webn.cc:2083/dnsgo
+美国DOH https://us.pms.loc.cc/dohgo
+
+不支持 GET, 不支持 JSON API, 只支持了 POST wireformat
+
+* 赤坂佬自建公益 DoH
+
+https://api.chibanban.de/api/paas/v4/chat/completions/gemini
+
+自带包长度混淆, 路径伪装, 负载均衡, ECH, EDNS解析
+100QPS, 直连最好, 国外也行, 但 ban OVH 和 AMAZON 的 ASN 访问
+不自带广告过滤, 能抗一点CC
+
+* curl/curl 下分享的海量 DoH
+
+DoH 数量​*实在太多*, 想看 benchmark 排名的可以直接​*划到最后*
+DoH 数量​*实在太多*, 想看 benchmark 排名的可以直接​*划到最后*
+
+由于主要使用场景在国内, 所以略去所有无法在国内使用的 DoH 服务器
+
+AliDNS (阿里云) 不被收录
+
+** Absolight
+
+https://resolver1.absolight.net/dns-query
+https://resolver2.absolight.net/dns-query
+
+都启用了 EDNS Padding (RFC 7830), 混淆真实查询长度
+
+*resolver2* 返回了额外的权威服务器信息 (NS 记录)
+
+不支持 JSON API
+
+** AdFilter
+
+Perth: https://per.adfilter.net/dns-query
+Sydney: https://syd.adfilter.net/dns-query
+Adelaide: https://adl.adfilter.net/dns-query
+
+Adblocking
+
+** Adfreedns
+
+https://adfreedns.top/dns-query
+
+** AKBXR DNS
+
+https://dns.akbxr.com/dns-query
+
+** Andrews & Arnold
+
+https://dns.aa.net.uk/dns-query
+
+** applewebkit.dev
+
+https://dns.applewebkit.dev/dns-query
+
+** Asteri Moon
+
+https://dns.asterimoon.com/dns-query
+
+** a47.me
+
+https://dns.a47.me/dns-query
+
+** bazooki-infra.dev
+
+https://bazooki-infra.dev/dns-query
+
+** Ben Hocking
+
+https://dns.bmwhocking.com/dns-query
+
+** Bitdefender
+
+https://dns.bitdefender.net/dns-query
+
+** BITServices
+
+https://dns.bitservices.io/dns-query
+
+** Blue Shield Umbrella
+
+https://rfree1.blue-shield.at/dns-query
+https://rfree2.blue-shield.at/dns-query
+
+** Brahma World
+
+https://dns.brahma.world/dns-query
+
+** brembeck.cloud
+
+https://dns.brembeck.cloud/dns-query
+
+** Canarypwn
+
+https://doh.aaaab3n.moe/dns-query-114514
+
+** caspervk.net
+
+https://dns.caspervk.net/dns-query
+
+** CERT Estonia
+
+https://dns.cert.ee/dns-query
+
+** Charter
+
+https://doh-01.spectrum.com/dns-query
+https://doh-02.spectrum.com/dns-query
+
+** chenu.ch
+
+https://dns.chenu.ch/dns-query
+
+** Christer Warén
+
+https://dns.christerwaren.fi
+
+** ChunghwaMC
+
+https://dns.chunghwamc.com/dns-query
+
+** CIRA Canadian Shield
+
+Private: https://private.canadianshield.cira.ca/dns-query
+Protected: https://protected.canadianshield.cira.ca/dns-query
+Family: https://family.canadianshield.cira.ca/dns-query
+
+** CleverAdmin
+
+https://dns1.techniverse.net/dns-query
+
+** Comss.one DNS
+
+Geo-blocking bypass: https://dns.comss.one/dns-query (*Can't Used in China Mainland*)
+Geo-blocking bypass with ad filtering: https://router.comss.one/dns-query (*Working*)
+
+** CSA-IT
+
+https://dns.csaonline.de/dns-query
+
+** csa-rz.de
+
+https://dns.csa-rz.de/dns-query
+
+** CSS Working Group
+
+https://dns.csswg.org/dns-query
+
+** CynthiaLabs
+
+https://dns.cynthialabs.net/dns-query
+
+** CZ.NIC
+
+https://odvr.nic.cz/dns-query
+
+** data.haus
+
+https://ns.data.haus/dns-query
+
+** datenquark.de
+
+https://dns.datenquark.de/dns-query
+
+** dev-umbrellagov
+
+https://dns.dev-umbrellagov.com/dns-query
+
+** Digitale Gesellschaft
+
+https://dns.digitale-gesellschaft.ch/dns-query
+
+** Disconnect.app
+
+https://doh.disconnect.app/dns-query
+
+** DNS4all
+
+https://doh.dns4all.eu/dns-query
+
+** DNS4EU
+
+Protective: https://protective.joindns4.eu/dns-query
+Protective and childsafe: https://child.joindns4.eu/dns-query
+Protective and adblocking: https://noads.joindns4.eu/dns-query
+Protective, adblocking, and childsafe: https://child-noads.joindns4.eu/dns-query
+Unfiltered: https://unfiltered.joindns4.eu/dns-query
+
+** dns4me
+
+https://ca01.dns4me.net
+https://ca02.dns4me.net
+https://us01.dns4me.net
+https://us02.dns4me.net
+https://sg01.dns4me.net
+https://sa01.dns4me.net
+https://au01.dns4me.net (*Can't Achieve*)
+https://au02.dns4me.net
+https://uk01.dns4me.net
+https://nz01.dns4me.net
+https://ie01.dns4me.net
+https://de01.dns4me.net
+
+** dnscry.pt
+
+Ashburn, US: https://abn01.dnscry.pt/dns-query
+Athens, Greece: https://ath01.dnscry.pt/dns-query
+Atlanta, US: https://atl01.dnscry.pt/dns-query
+Bogotá, Colombia: https://bog01.dnscry.pt/dns-query
+Bratislava, Slovakia: https://bts01.dnscry.pt/dns-query (*Can't Achieve*)
+Brisbane, Australia: https://bne01.dnscry.pt/dns-query
+Brussels, Belgium: https://bru01.dnscry.pt/dns-query (*Very Very Slow*, >10s)
+Calgary, Canada: https://yyc01.dnscry.pt/dns-query
+Chișinău, Moldova: https://kiv01.dnscry.pt/dns-query
+Copenhagen, Norway: https://cph01.dnscry.pt/dns-query (*Can't Achieve*)
+Coventry, UK: https://cvt01.dnscry.pt/dns-query (*Can't Achieve*)
+Dublin, Ireland: https://dub01.dnscry.pt/dns-query (*Very Slow*, >5s)
+Frankfurt, Germany-vServer: https://fra01.dnscry.pt/dns-query (*Can't Achieve*)
+Frankfurt, Germany-xTom:https://fra02.dnscry.pt/dns-query (*Very Slow*, >5s)
+Geneva, Switzerland: https://gva01.dnscry.pt/dns-query
+Hafnarfjordur, Iceland: https://haf01.dnscry.pt/dns-query
+Halifax, Canada: https://yhz01.dnscry.pt/dns-query
+Hanoi, Vietnam: https://han01.dnscry.pt/dns-query
+Ho-Chi-Minh City, Vietnam: https://sgn01.dnscry.pt/dns-query
+Istanbul, Turkey: https://ist01.dnscry.pt/dns-query (*Can't Achieve*)
+Las Vegas, US: https://las01.dnscry.pt/dns-query
+London, UK: https://lon01.dnscry.pt/dns-query (*Can't Achieve*)
+Madrid, Spain: https://mad01.dnscry.pt/dns-query
+Milan, Italy: https://mil01.dnscry.pt/dns-query
+Mumbai, India: https://bom01.dnscry.pt/dns-query
+Nuremberg, Germany: https://nue01.dnscry.pt/dns-query (*Can't Achieve*)
+Oradea, Romania: https://omr01.dnscry.pt/dns-query (*Very Very Slow*. >10s)
+Paris, France: https://par01.dnscry.pt/dns-query (*Can't Achieve*)
+Philadelphia, US: https://phl01.dnscry.pt/dns-query
+Phoenix, US: https://phx01.dnscry.pt/dns-query
+Portland, US: https://pdx01.dnscry.pt/dns-query
+Redditch, UK: https://rdd01.dnscry.pt/dns-query
+Salt Lake City, US: https://slc01.dnscry.pt/dns-query
+Sandefjord, Norway: https://trf01.dnscry.pt/dns-query
+Santa Clara, US: https://sjc01.dnscry.pt/dns-query (*Very Slow*, >5s)
+São Paulo, Brazil: https://gru01.dnscry.pt/dns-query
+Seattle, US: https://sea01.dnscry.pt/dns-query (*Can't Achieve*)
+Singapore Kuroit: https://sin03.dnscry.pt/dns-query
+Sofia: https://sof01.dnscry.pt/dns-query (*Can't Achieve*)
+Spokane, US: https://geg01.dnscry.pt/dns-query
+Stockholm, Sweden: https://sto01.dnscry.pt/dns-query (*Very Very Slow*, >10s)
+Sydney FlowVPS, Australia: https://syd02.dnscry.pt/dns-query
+Tallinn, Estonia: https://tll01.dnscry.pt/dns-query (*Very Slow*, >5s)
+Tampa, US: https://tpa01.dnscry.pt/dns-query
+Taos, US: https://tsm01.dnscry.pt/dns-query (*Can't Achieve*)
+Tbilisi, Georgia: https://tbs01.dnscry.pt/dns-query
+Toronto, Canada: https://yyz01.dnscry.pt/dns-query
+Vancouver, Canada: https://yvr01.dnscry.pt/dns-query
+Vienna, Austria: https://vie01.dnscry.pt/dns-query (*Can't Achieve*)
+Vilnius, Lithuania: https://vno01.dnscry.pt/dns-query (*Can't Achieve*)
+Warsaw, Poland: https://waw02.dnscry.pt/dns-query (*Can't Achieve*)
+
+(With EDNS padding)
+
+** dns.flatuslifir.is
+
+https://dns.flatuslifir.is/dns-query
+
+** dnsforge.de
+
+Adblocking : https://dnsforge.de/dns-query (*Can't Achieve*)
+Ads and pornblocking : https://clean.dnsforge.de/dns-query
+Hard : https://hard.dnsforge.de/dns-quer (*Can't Achieve*)
+
+** dnsHome.de
+
+https://dns.dnshome.de/dns-query
+
+** dnslow.me
+
+https://dnslow.me/dns-query
+
+** DNS over Tor
+
+https://japan.dnsovertor.cc/dns-query
+https://chuncheon.dnsovertor.cc/dns-query
+https://seoul.dnsovertor.cc/dns-query
+
+** DNSPod
+
+https://dns.pub/dns-query (*Extremely Fast*, dot padding)
+卧槽这是腾讯云的 DNS, 怪不得
+
+** Dom!nic
+
+https://3dns.eu/dns-query
+
+** domreg.lt
+
+https://doh.domreg.lt/dns-query
+
+** Dukun.de
+
+https://dukun.de/dns-query
+
+** duröhre.de
+
+https://xn--durhre-yxa.de/dns-query
+
+** ELIV DNS
+
+https://dns.eliv.kr/dns-query (证书过期, 测试日期为 2026-02-16, 过期了 5 天)
+
+** envs.net
+
+https://dns.envs.net/dns-query
+
+** faked.org
+
+https://dns.faked.org/dns-query
+
+** familiamv.net
+
+https://dnsvps.familiamv.net/dns-query
+
+** farshidhakimy.de
+
+https://dns.farshidhakimy.de/dns-query
+
+** FBI NICS E-Check
+
+https://nicsezcheckfbi.gov
+
+** FDN - French Data Network
+
+https://ns0.fdn.fr/dns-query
+https://ns1.fdn.fr/dns-query
+
+** fidelius.top
+
+https://fidelius.top/dns-query
+
+** floriantinney.de
+
+https://dns.floriantinney.de/dns-query
+
+** FLY_MC
+
+https://dns.flymc.cc/dns-query
+
+** Foundation for Applied Privacy
+
+https://doh.applied-privacy.net/query
+
+** Foxyfy DNS
+
+Germany (South): https://de-f1.foxyfy.net/dns-query
+Spain: https://es-ma.foxyfy.net/dns-query
+
+** Froth.zone
+
+https://dns.froth.zone/dns-query
+
+** Gamban
+
+https://dns.gamban.com/dns-query
+
+** gibblets.top
+
+https://gibblets.top/dns-query
+
+** Gottlieb Freitag
+
+https://dns.glf.wtf/dns-query
+
+** Guardio
+
+https://dns.guard.io/dns-query
+
+** Hafnova
+
+https://secure.hafnova.com/dns-query
+
+** HaGeZi DNS
+
+Germany, Falkenstein: https://root.hagezi.org/dns-query
+Germany, Nuremberg: https://wurzn.hagezi.org/dns-quer
+Finland, Helsinki: https://juuri.hagezi.org/dns-query
+
+** Hakase
+
+https://dns.haka.se/dns-query
+
+** Huque
+
+https://doth.huque.com/dns-query
+
+** imperio.top
+
+https://imperio.top/dns-query
+
+** Inforlogia
+
+https://dns.inforlogia.com/dns-query
+
+** kapite.in
+
+https://dns.kapite.in/dns-query
+** Kernel Error
+
+https://dns.kernel-error.de/dns-query
+
+** kescher
+
+https://dns.kescher.at/dns-query
+
+** ketan.dev
+
+https://pihole.aws.ketan.dev/dns-query
+
+** khon.dev
+
+https://adg.khon.dev/dns-query
+
+** Koala
+
+https://dns.koala.us.to/dns-query
+
+** Kosan
+
+https://dns.kosan.moe/dns-query
+
+** krctech.dev
+
+https://adblock.krctech.dev/dns-query
+
+** LavaDNS
+
+Finland: https://eu1.dns.lavate.ch/dns-query
+
+** Liberador.net
+
+https://dns.liberador.net
+
+** LobbyGod
+
+https://dns.lobbygod.com/dns-query
+
+** l337.site
+
+https://dns.l337.site/dns-query
+
+** Masters of Cloud
+
+https://masters-of-cloud.de/dns-query
+
+** meddy94.de
+
+https://adguard.meddy94.de/dns-query
+
+** mh4ckt3mh4ckt1c4s.xyz
+
+https://dns.mh4ckt3mh4ckt1c4s.xyz/dns-query
+
+** m-it.ro
+
+https://addns1.m-it.ro/dns-query
+
+** mydns.network
+
+Paranoia (no Google/Cloudflare): https://paranoia.mydns.network/dns-query
+Adblocking: https://adblock.mydns.network/dns-query
+
+** nashkan.net
+
+https://ae-fuj-w-p-1.nashkan.net/dns-query
+https://ae-fuj-w-p-2.nashkan.net/dns-query
+https://ae-fuj-w-p-3.nashkan.net/dns-query
+https://au-syd-w-f-1.nashkan.net/dns-query
+https://ro-buc-w-p-1.nashkan.net/dns-query
+https://us-chi-w-p-1.nashkan.net/dns-query
+https://us-kan-w-p-1.nashkan.net/dns-query
+https://us-nyc-w-p-1.nashkan.net/dns-query
+
+** neeb.it
+
+https://dns.neeb.it/dns-query
+
+** Nicolas Dorriere
+
+Non filtering: https://doh-own-recursion.nicolas-dorriere.fr/dns-query
+
+** Ningkelle
+
+Adblock: https://dns.ningkelle.id/dns-query
+Family: https://family.dns.ningkelle.id/dns-query
+
+** novg.net
+
+https://dns.novg.net/dns-query
+
+** OpenLoop
+
+https://ag.apollohct.com/dns-query
+
+** o2cloud.fr
+
+https://dns4eu.online/dns-query
+
+** Paulo
+
+https://dns.paulo.nom.za/dns-query
+
+** Pavol Decky
+
+https://dns.decky.eu/dns-query
+
+** pooblet.co.za
+
+https://pooblet.co.za/dns-query
+
+** Practically Unhackable
+
+https://dns.practicallyunhackable.com/dns-query
+
+** Pubhole
+
+https://doh.archuser.org/dns-query
+
+** Quiet Rocks
+
+https://dns.quiet.rocks/dns-query
+
+** QWER DNS
+
+https://lion.dns.qwer.pw/dns-query
+https://frog.dns.qwer.pw/dns-query
+https://tiger.dns.qwer.pw/dns-query
+
+** redhosting.com.ar
+
+https://dns.redhosting.com.ar/dns-query
+
+** renardbleu.dev
+
+https://renardbleu.dev/dns-query
+
+** Restena
+
+https://dnspub.restena.lu/dns-query
+
+** RetakeCS
+
+https://dns.retakecs.com/dns-query
+
+** revelio.top
+
+https://revelio.top/dns-query
+
+** RobinGroppe.de
+
+https://dns.rbn.gr/dns-query
+
+** roedel.cloud
+
+https://dns.roedel.cloud/dns-query
+
+** SafeServe
+
+https://safeservedns.com/dns-query
+
+** shoupperuser.com
+
+https://adguard.shoupperuser.com/dns-query
+
+** Slinkyman.net
+
+https://dns.slinkyman.net/dns-query
+
+** SmartGuard
+
+https://dns.smartguard.io/dns-query
+
+** smilence
+
+https://adg.geili.me/dns-query
+
+** Startup Stack
+
+https://dns.startupstack.tech/dns-query
+
+** StormyCloud
+
+https://dns.stormycloud.org/dns-query
+
+** sunnygyl.com
+
+https://sunnygyl.com/dns-query
+
+** Switch
+
+https://dns.switch.ch/dns-query
+
+** szpadel.ovh
+
+https://dns.szpadel.ovh/dns-query
+
+** t53.de
+
+https://dns.t53.de/dns-query
+
+** Telekom Deutschland
+
+https://dns.telekom.de/dns-query
+
+** Tls-data.de
+
+https://dns.tls-data.de/dns-query
+
+** UncensoredDNS
+
+https://anycast.uncensoreddns.org/dns-query
+
+** unx.io
+
+https://dns.unx.io/dns-query
+
+** Usable Privacy
+
+https://adfree.usableprivacy.net/dns-query
+
+** v.recipes
+
+Unfiltered: https://v.recipes/dns-query
+Adblock: https://v.recipes/dns-adblock
+ECS Optimized: https://v.recipes/dns-ecs
+
+** waringer-atg.de
+
+https://abel.waringer-atg.de/dns-query
+
+** W3C TAG
+
+https://dns.w3ctag.org/dns-query
+
+** xlion.tw
+
+https://dns.xlion.tw/dns-query
+
+** Yuu528
+
+https://dns.yuu-g.net/dns-query
+
+** zdn.ro
+
+https://zdn.ro/dns-query
+
+** 123000123.xyz
+
+https://123000123.xyz/dns-query
+
+** 4NetGuides
+
+https://ns2.4netguides.org/dns-query
+
+** @null31
+
+https://ibuki.cgnat.net/dns-query
+
+* Benchmarking
+
+使用 [[https://github.com/xxnuo/dns-benchmark][xxnuo/dns-benchmark]] 这个项目进行 benchmark 测试, 测试环境为 *深圳电信 163*
+
+** Top20
+
+性能测试 top20 如下:
+
+*** top1: https://api.chibanban.de/api/paas/v4/chat/completions/gemini
+
+*赤坂佬自建公益 DoH*, 发布帖 https://linux.do/t/topic/1373963
+自带包长度混淆, 路径伪装, 负载均衡, ECH, EDNS解析
+100QPS, 直连最好, 国外也行, 但 ban OVH 和 AMAZON 的 ASN 访问
+不自带广告过滤, 能抗一点CC
+
+*** top2: https://dns.chunghwamc.com/dns-query
+
+*中華麥塊*, 一个湾湾 MC 服务器建的 DoH, 阻断广告, Cloudflare 上游, 支持 DoT 和 DoQ
+
+*** top3: https://dns.lobbygod.com/dns-query
+
+*LobbyGod*, 支持 DoT
+
+*** top4: https://aaa.cloudflare-gateway.com/dns-query
+
+*Cloudflare* 的 *标准 DNS*, 发布帖 https://linux.do/t/topic/697242
+
+*** top4.5: https://dns.pub/dns-query (腾讯云, 不计入)
+
+*** top5: https://dns.koala.us.to/dns-query
+
+*Koala*, 有自己的 ASN, AS4242421488 (KOALA-AS), 服务器在东京
+Adblocking, 使用 Cloudflare 上游, 支持 DoT
+
+*** top6: https://dns.brahma.world/dns-query
+
+*Brahma World*, 无日志, 阻止广告+恶意软件+追踪器+网络钓鱼域名
+支持 DNSSEC • QNAME 最小化 • 无 EDNS 客户端子网 • 也支持 DoT
+为了防止泛滥滥用, 该服务器选择阻止所有属于已知数据中心的 IP ([[https://github.com/brahma-dev/ufw-bots][Blocked IP]])
+看名字貌似在印度
+
+*** top7: https://adfree.usableprivacy.net/dns-query
+
+*Usable Privacy*, 拦截广告, 支持 DoT
+
+*** top8: https://dns.szpadel.ovh/dns-query
+
+*szpadel.ovh*, 拦截广告, 支持 DoT
+
+*** top9: https://safeservedns.com/dns-query
+
+*SafeServe*, 由 *Namecheap* 运营, 支持 DoT
+
+*** top10: https://ag.apollohct.com/dns-query
+
+*OpenLoop*, 阻止广告, 使用 Cloudflare 上游, 支持 DoT
+
+*** top11: https://dns.startupstack.tech/dns-query
+
+*Startup Stack*, 国外一家做企业私有服务器托管的公司搭建的 DoH
+支持 DoT, 不支持广告拦截
+
+*** top12: https://sunnygyl.com/dns-query
+
+*sunnygyl.com*, 支持广告拦截, 使用 Cloudflare 上游, 支持 DoT
+
+*** top13: https://aaa.ddd.oaifree.com/query-dns
+
+*始皇的自建公益 DoH*, 原帖 https://linux.do/t/topic/1150121, 不支持广告拦截
+
+*** top14: https://dns.kernel-error.de/dns-query
+
+*Kernel Error*, DNSSEC 验证, 支持 DoT & DoQ, 不支持广告拦截
+
+*** top15: https://adblock.mydns.network/dns-query
+
+*mydns.network*, 由 Cloudflare Workers 驱动的公共 DoH 服务器
+通过代表您将查询转发到上游 DoH 服务器, 且不包含 IP 地址信息, 从而以独特的方式伪装您的查询
+开源, 随时部署您自己的实例!
+广告拦截, 也支持 DoT
+
+*** top16: https://adg.geili.me/dns-query
+
+*smilence*, 不做广告拦截
+
+*** top17: https://root.hagezi.org/dns-query
+
+*HaGeZi DNS*, 免费的、非商业的、具有安全过滤功能的欧盟公共 DNS 服务器
+该服务器位于德国, Falkenstein
+
+*** top18: https://juuri.hagezi.org/dns-query
+
+*HaGeZi DNS*, 免费的、非商业的、具有安全过滤功能的欧盟公共 DNS 服务器
+该服务器位于芬兰, 赫尔辛基
+
+*** top19: https://adfreedns.top/dns-query
+
+*Adfreedns*, 广告拦截, 同时支持 DoT 和 DoQ
+
+*** top20: https://dns1.techniverse.net/dns-query
+
+*CleverAdmin*, 广告拦截, 同时支持 DoT 和 DoQ
+
+*: Cloudflare/ControlD 上游意味着 Cloudflare/ControlD 可以看到查询的内容和 DoH 的 IP, 但通常看不到客户端的 IP, 除非 DoH 服务器转发它。
+
+** 广告过滤条件下-Top20
+
+*** top1: https://dns.chunghwamc.com/dns-query
+
+*中華麥塊*, 一个湾湾 MC 服务器建的 DoH, 阻断广告, Cloudflare 上游, 支持 DoT 和 DoQ
+
+*** top2: https://dns.koala.us.to/dns-query
+
+*Koala*, 有自己的 ASN, AS4242421488 (KOALA-AS), 服务器在东京
+Adblocking, 使用 Cloudflare 上游, 支持 DoT
+
+*** top3: https://dns.brahma.world/dns-query
+
+*Brahma World*, 无日志, 阻止广告+恶意软件+追踪器+网络钓鱼域名
+支持 DNSSEC • QNAME 最小化 • 无 EDNS 客户端子网 • 也支持 DoT
+为了防止泛滥滥用, 该服务器选择阻止所有属于已知数据中心的 IP ([[https://github.com/brahma-dev/ufw-bots][Blocked IP]])
+看名字貌似在印度
+
+*** top4: https://adfree.usableprivacy.net/dns-query
+
+*Usable Privacy*, 拦截广告, 支持 DoT
+
+*** top5: https://dns.szpadel.ovh/dns-query
+
+*szpadel.ovh*, 拦截广告, 支持 DoT
+
+*** top6: https://ag.apollohct.com/dns-query
+
+*OpenLoop*, 阻止广告, 使用 Cloudflare 上游, 支持 DoT
+
+*** top7: https://sunnygyl.com/dns-query
+
+*sunnygyl.com*, 支持广告拦截, 使用 Cloudflare 上游, 支持 DoT
+
+*** top8: https://adblock.mydns.network/dns-query
+
+*mydns.network*, 由 Cloudflare Workers 驱动的公共 DoH 服务器
+通过代表您将查询转发到上游 DoH 服务器, 且不包含 IP 地址信息, 从而以独特的方式伪装您的查询
+开源, 随时部署您自己的实例!
+广告拦截, 也支持 DoT
+
+*** top9: https://root.hagezi.org/dns-query
+
+*HaGeZi DNS*, 免费的、非商业的、具有安全过滤功能的欧盟公共 DNS 服务器
+该服务器位于德国, Falkenstein
+目前 Github 上最大 dns blocklist 之一 [[https://github.com/hagezi/dns-blocklists][dns-blocklist]] 就是这个组织维护的
+
+*** top10: https://juuri.hagezi.org/dns-query
+
+*HaGeZi DNS*, 免费的、非商业的、具有安全过滤功能的欧盟公共 DNS 服务器
+该服务器位于芬兰, 赫尔辛基
+
+*** top11: https://adfreedns.top/dns-query
+
+*Adfreedns*, 广告拦截, 同时支持 DoT 和 DoQ
+
+*** top12: https://dns1.techniverse.net/dns-query
+
+*CleverAdmin*, 广告拦截, 同时支持 DoT 和 DoQ
+
+*** top13: https://adguard.meddy94.de/dns-query
+
+*meddy94.de*, 广告拦截, 支持 DoT
+
+*** top14: https://us-kan-w-p-1.nashkan.net/dns-query
+
+*nashkan.net*, 阻止广告, 使用带有恶意软件过滤的 Cloudflare 上游
+
+*** top15: https://ns2.4netguides.org/dns-query
+
+*4NetGuides*, 拦截广告, 支持 DoT
+
+*** top16: https://dns.kapite.in/dns-query
+
+*kapite.in*, 阻止广告和赌博, 使用带有恶意软件过滤的 Cloudflare 上游和 AdGuard 浏览安全网络服务, 支持 DoT 和 DoQ
+
+*** top17: https://ro-buc-w-p-1.nashkan.net/dns-query https://us-chi-w-p-1.nashkan.net/dns-query
+
+*nashkan.net*, 和 top15 是同一家
+
+*** top18: https://dns.datenquark.de/dns-query
+
+*datenquark.de*, 拦截广告, 支持 DoT
+
+*** top19: https://zdn.ro/dns-query
+
+*zdn.ro*, 阻止广告, 使用 Cloudflare 上游和 AdGuard 浏览安全网络服务, 支持 DoT 和 DoQ
+
+*** top20: https://addns1.m-it.ro/dns-query
+
+*m-it.ro*, 屏蔽广告, 使用 Cloudflare 上游和 AdGuard 浏览安全网络服务
+
+*: Cloudflare/ControlD 上游意味着 Cloudflare/ControlD 可以看到查询的内容和 DoH 的 IP, 但通常看不到客户端的 IP, 除非 DoH 服务器转发它。
+
+吐槽: 德国的 DNS 真的好多好多, 这是真正的 1984 吗
