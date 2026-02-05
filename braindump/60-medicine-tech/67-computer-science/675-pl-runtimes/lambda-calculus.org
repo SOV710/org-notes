@@ -1,0 +1,3 @@
+#+title: The Nature of Computing: λ-calculus
+#+author: SOV710
+#+date: <2026-02-26 Thu>
