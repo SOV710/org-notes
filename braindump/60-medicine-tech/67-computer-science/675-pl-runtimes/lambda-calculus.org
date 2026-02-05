@@ -22,3 +22,190 @@
 今天, 我们不谈可读性, 只谈如何数学上「精确地」描述一种「计算过程」
 
 * 什么是计算
+
+直觉上, 计算就是 "按规则变换符号"。你有一些符号, 有一套规则, 然后你不断应用规则, 直到得到结果。
+
+*图灵机*​和 *λ 演算*​两种独立的数学框架都独立捕捉到了这种直觉, 并且给出了两种「计算」的定义框架, 二者被证明完全等价
+
+它们就是「计算」本身, 它们等价不代表它们在「计算能力」上等价, 图灵机的转移表完全可以由 $\lambda$ 演算的一个 $\beta$​-归约来完全表示
+
+证明 $\lambda$ 演算能被图灵机表示有个比理论更直观的方式, 那就是 lisp 和 haskell 已经在图灵机的物理实现 —— 现代计算机 —— 上工作了, 理论推导也简单, $\lambda$ 归约是 $\beta$​-归约: 找到一个 ​$(\lambda x.\, e_1)\; e_2$, 做代换
+
+这个操作完全可以被图灵机机械地执行:
+1. 把λ表达式编码为纸带上的字符串（括号+字母）
+2. 扫描纸带，找到最左边的 redex（可归约项）
+3. 执行代换：找到 $e_1$ 里所有 $x$ 的出现，替换为 $e_2$
+4. 重复, 直到没有 redex
+
+** Turing Machine
+
+*** Formal Definition
+
+一台图灵机是一个七元组 :
+
+$M = (Q, \Sigma, \Gamma, \delta, q_0, q_{accept}, q_{reject})$
+
+- $Q$ —— 有限状态集
+- $\Sigma$ —— 输入字母表 ( 不含空白符 )
+- $\Gamma$ —— 纸带字母表, $\Sigma \subset \Gamma$, 含空白符 $\sqcup$
+- $\delta: Q \times \Gamma \to Q \times \Gamma \times \{L, R\}$ —— 转移函数
+- $q_0 \in Q$ —— 初始状态
+- $q_{accept}, q_{reject} \in Q$ —— 接受 / 拒绝状态
+
+**** Configuration
+
+*格局 (Configuration)* 是计算在某一时刻的完整快照 :
+
+$C = uqv \quad u,v \in \Gamma^*, q \in Q$
+
+表示纸带内容为 $uv$, 读写头在 $v$ 的第一个字符处, 当前状态为 $q$。
+
+**** One-Step Transition
+
+*一步转移*​定义为格局之间的关系 $\vdash$ :
+
+$ua\,q\,bv \;\vdash\; uaq'cv \quad \text{if } \delta(q,b) = (q', c, R)$
+
+$uaq\,bv \;\vdash\; u\,q'acv \quad \text{if } \delta(q,b) = (q', c, L)$
+
+**** Computation
+
+*计算*​是格局的序列 :
+
+$C_0 \vdash C_1 \vdash C_2 \vdash \cdots$
+
+当到达 $q_{accept}$ 或 $q_{reject}$ 时终止。
+
+*** Computational Intuition
+
+图灵机捕捉的是 *工人按操作手册工作* 的直觉。
+
+有一条无限长的纸带 (内存), 一个读写头 (程序计数器 + ALU), 一本操作手册 (转移函数)。工人在任意时刻只做一件事: 看当前格子写的什么, 查手册, 改写这格, 往左或往右移一步, 换一个心理状态。
+
+计算的关键特征:
+
+- *局部性*: 每一步只依赖当前状态和当前符号
+- *顺序性*: 步骤严格线性推进
+- *有状态性*: 结果是全局状态的演变
+
+#+begin_quote
+图灵机回答的问题是: 什么问题是机器可以解决的 ?
+#+end_quote
+
+这非常接近真实硬件的工作方式 —— 寄存器, 内存, 程序计数器, 本质上就是图灵机的物理实现。
+
+** Lambda Calculus
+
+*** Formal Definition
+
+**** Syntax
+
+项的归纳定义 :
+
+$e ::= x \mid \lambda x.\, e \mid e_1\; e_2$
+
+三条构造, 仅此而已 : 变量, 函数抽象, 函数应用。
+
+**** Free Variables
+
+$FV(x) = \{x\}$
+
+$FV(\lambda x.\, e) = FV(e) \setminus \{x\}$
+
+$FV(e_1\; e_2) = FV(e_1) \cup FV(e_2)$
+
+**** Substitution
+
+*代换* (capture-avoiding substitution) $e_1[x := e_2]$ : 将 $e_1$ 中 $x$ 的自由出现替换为 $e_2$, 必要时做 $\alpha$​-重命名以避免变量捕获。
+
+**** Reduction Rules
+
+1. $\alpha$-conversion : $\lambda x.\, e \;\to_\alpha\; \lambda y.\, e[x := y] \quad (y \notin FV(e))$
+2. $\beta$-reduction : $(\lambda x.\, e_1)\; e_2 \;\to_\beta\; e_1[x := e_2]$
+3. $\eta$-reduction : $\lambda x.\, (e\; x) \;\to_\eta\; e \quad (x \notin FV(e))$
+
+其中 $\beta$​-reduction 是计算的核心, $\alpha$ 只是重命名, $\eta$ 表达函数的外延相等。
+
+**** Computation
+
+计算是项在 $\to_\beta$ 下的归约序列 :
+
+$e_0 \to_\beta e_1 \to_\beta e_2 \to_\beta \cdots$
+
+当项无法继续 $\beta$​-归约时, 称其为 *$\beta$​-范式 ( $\beta$​-normal form )*, 计算结束。
+
+**** Church-Rosser Theorem
+
+*合流性 ( Confluence )* :
+
+$e \twoheadrightarrow e_1 \text{ and } e \twoheadrightarrow e_2 \implies \exists\, e_3,\; e_1 \twoheadrightarrow e_3 \text{ and } e_2 \twoheadrightarrow e_3$
+
+即无论选择什么归约顺序, 如果最终能到达范式, 范式是唯一的。
+
+*** Church Encoding
+
+一切皆函数。数字与布尔值均可编码为纯 $\lambda$ 项 :
+
+- $\mathbf{0} = \lambda f.\, \lambda x.\, x$
+- $\mathbf{1} = \lambda f.\, \lambda x.\, f\; x$
+- $\mathbf{true} = \lambda t.\, \lambda f.\, t$
+- $\mathbf{false} = \lambda t.\, \lambda f.\, f$
+
+这意味着, 没有比 $\lambda$ 更加底层的公理和定义了, 没有类型了, $\lambda$ 就是最底层的原语
+
+*** Computational Intuition
+
+$\lambda$ 演算捕捉的是 *代入与化简* 的直觉, 就像在数学课上化简表达式一样。
+
+$(\lambda x.\, x + 1)\; 5$ 的意思是"把 5 代入 $x+1$", 结果是 $6$。没有内存, 没有状态, 没有时间顺序 —— 只有表达式, 和表达式之间的等价关系。
+
+计算的关键特征:
+
+- *无状态性*: 程序是数学对象, 不存在可变内存
+- *代换即执行*: 函数应用的语义完全由代换定义
+- *等价而非过程*: 执行是寻找范式, 而非追踪步骤
+
+#+begin_quote
+$\lambda$ 演算回答的问题是: 计算的代数结构是什么 ?
+#+end_quote
+
+-----
+
+** Comparison
+
+图灵机的基本操作是 *赋值* (改写纸带), $\lambda$ 演算的基本操作是 *代换* (函数应用)。
+
+以下为两者核心维度的对比 :
+
+- *计算的载体* : 图灵机使用状态 + 纸带 ; $\lambda$ 演算使用表达式
+- *一步计算* : 图灵机执行状态转移 ; $\lambda$ 演算执行 $\beta$-归约
+- *计算的结果* : 图灵机输出纸带上的内容 ; $\lambda$ 演算输出范式
+- *时间观* : 图灵机有显式的步骤序列 ; $\lambda$ 演算的时间隐式于归约关系中
+- *内存观* : 图灵机有显式内存 ( 纸带 ) ; $\lambda$ 演算中内存不存在
+- *对应范式* : 图灵机对应命令式编程 ; $\lambda$ 演算对应函数式编程
+
+这两个操作之间的张力, 就是命令式编程和函数式编程之间几十年争论的根源。
+
+* 停机问题
+
+** 形式定义
+
+(图灵机形式下, 停机问题的形式定义)
+
+** 直观理解
+
+停机问题就相当于在说: 假设有一个工人，知道一个机器的完全机械化的运作规则，又知道这个机器即将输入什么，那么让它进行完全机械的推导，能否知道这个机器能停机，也就是说能否推演出这个机器的计算结果？
+
+这在某种意义上是对的, 给我一台图灵机 $M$ 和一个具体的输入，我坐下来一步步按转移表模拟, 要么某一步进入 $q_{accept}$, 要么我发现它在兜圈子, 这完全没问题
+
+但是, 如果我是一台机器, 我按照 "一步步模拟" 的策略，如果 $M$ 不停机, 那么我也不会停机, 我会跟着 $M$ 陷进去
+
+停机问题要求的是, 不管 $M$ 有没有停机, 我必须停机, 我必须给出正确答案
+
+图灵、哥德尔、康托尔共同的答案是, 做不到
+
+换句话说, 预测计算的难度, 和做计算本身一样难, 没有捷径
+
+在物理学上, 就是没有比宇宙演化更快的预测宇宙未来的方式, 因为预测本身就是一个和被预测过程等量的运算
+
+在生物学生, 就是没有比模拟一个自动机更快的预测自动机成长的方式, 预测本身就和模拟一样难
