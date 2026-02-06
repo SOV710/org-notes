@@ -1,7 +1,11 @@
-# give up inbox/
+# my unclassfied articles
 inbox/
 
+# my projects, open-sourced and close-sourced
 workbench/
+
+# my journals
 life-log/
 
+# include my personal info
 braindump/00-meta-toolchain/meta/
