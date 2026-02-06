@@ -1,4 +1,4 @@
-#+title: The Nature of Computing: λ-calculus
+#+title: The Nature of Computing: λ-calculus, and Introduction to Type Systems
 #+author: SOV710
 #+date: <2026-02-26 Thu>
 
