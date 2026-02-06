@@ -242,7 +242,7 @@ $HALT = \{ \langle H, w \rangle \mid H \text{ halts on input } w \}$
 
 *** The Boundary
 
-停机问题划定了一条明确的界限: 有些问题是*机械不可解*的 — 判断任意程序是否含有 bug、完全自动化任意工作流、模拟一个人类 — 这些在界限之外, 无法用确定性程序解决。
+停机问题划定了一条明确的界限: 有些问题是​*机械不可解*​的 — 判断任意程序是否含有 bug、完全自动化任意工作流、模拟一个人类 — 这些在界限之外, 无法用确定性程序解决。
 
 界限之内, 万物皆可; 界限之外, 无解。
 
@@ -253,111 +253,155 @@ $HALT = \{ \langle H, w \rangle \mid H \text{ halts on input } w \}$
 
 ** Overview
 
-首先确定一个基调, 我们现在有两个关于计算的模型, 图灵机和 $\lambda$ 演算，接下来我们要走 *$\lambda$ 演算*​的模型深入, 理由很简单, 现代所有 PL 理论的数学基础都是基于函数式, 基于 $\lambda$ 演算的, 包括 Type System 的数学基础 Curry-Howard 同构
+首先确定一个基调。我们有两个关于计算的模型: 图灵机与 $\lambda$ 演算。接下来的理论路线将沿着 *$\lambda$ 演算* 深入展开。理由是, 现代所有程序语言理论 (PL Theory) 的数学基础均建立在函数式模型之上, 包括 Type System 的数学基础 Curry-Howard 同构。
 
-之前, 我们定义了一个编程语言需要什么, 「人类可读性」「精确」和「计算」, 现在我们同时解决了「精确」和「计算」, 我们有图灵机和 $\lambda$ 演算这两个世界上最强大的武器。现在, 唯一需要解决的是 「人类可读性」
+一门编程语言需要满足三个条件: 「人类可读性」、「精确」与「计算」。$\lambda$ 演算与图灵机已经同时解决了「精确」和「计算」。现在唯一需要解决的, 是「人类可读性」。
 
-无类型的 $\lambda$ 演算确实可以用，$\lambda$ 本身就是唯一的原语, 我们用 $\lambda$ 表示 boolean, 借助 Church encoding 我们可以编码所有 int 数字, 我们可以用 $\lambda$ 做所有的计算
+无类型的 $\lambda$ 演算 (Untyped Lambda Calculus) 在形式上是完备的: $\lambda$ 本身是唯一原语, 借助 Church encoding 可以编码 boolean、自然数及一切可计算结构。但它不符合人类的心智模型。表达式如 $\text{true} + 1$ 在无类型系统中语法合法、可以归约, 但对人类而言毫无语义意义——这是一种*语义错误*。
 
-但是，最大的问题是, $\lambda$ 不符合人类的心智模型, 人类需要计算数值, 需要计算 boolean, 但我们明显不能容忍 true + 1 这种, 逻辑上完全正确, 但对人类毫无意义的算式出现, 简而言之, 这是个语义错误
+#+begin_quote
+在无类型 $\lambda$ 演算中, 良型 (well-typed) 与良构 (well-formed) 是同一件事——语法合法即可归约, 系统对语义意义不加约束。
+#+end_quote
 
-在无类型 $\lambda$ 演算中, 良型 (well-typed) 和 良构 (well-formed) 是同一件事——只要语法合法，就可以归约。
+由此会归约出越来越多的「垃圾值」(stuck terms)。
 
-但语义上的意义，系统完全不管。大体上来说, 我们会归约出来越来越多的垃圾值
+因此, 我们需要构建额外的​*数学结构*​来约束语言: 在推导过程中即可将特定的语义错误排除在外。这套结构就是 *Type System*
 
-所以我们要构建更多的, 关于类型的​*数学结构*, 用来限制语言本身在推导的过程中, 就能把这种特定的​*语义错误*​排除
+Type System 在设计上是​*保守的 (conservative)*​。在「不漏报、不误报、能停机」三者之间, 它选择牺牲「不误报」——宁可拒绝某些语义上无害的程序, 也绝不放过非法程序。
 
-Type System 是保守的, 在「不漏报, 不误报, 能停机」中选择了牺牲「不误报」，宁可拒绝某些正常程序, 也不放过非法程序
+-----
 
 ** Simply Typed Lambda Calculus (STLC)
 
-我们要做的事情只有一件:
+STLC 的核心思想只有一句话:
 
 #+begin_quote
-给每个λ项贴上一个标签，然后定义一套规则，说明什么样的标签组合是合法的。
+给每个 $\lambda$ 项贴上一个标签, 然后定义一套规则, 说明什么样的标签组合是合法的。
 #+end_quote
 
-这个"标签"就是类型。
+这个「标签」就是​*类型 (Type)*
 
-STLC 的语法定义如下: (略)
+*** 语法
 
-只有两种构造, 基础类型, 和类型的函数结构, 注意后者是右结合的, 完全柯里化
+STLC 的类型语法定义如下:
 
-第二步: 类型环境
+$\tau ::= B \mid \tau_1 \to \tau_2$
 
-形式定义: xxx
+- $B$ 为基础类型 (base type), 如 $\text{Bool}$, $\text{Nat}$ 等
+- $\tau_1 \to \tau_2$ 为函数类型, 右结合, 完全柯里化
 
-第三步: 类型判断
+即 $\tau_1 \to \tau_2 \to \tau_3$ 解析为 $\tau_1 \to (\tau_2 \to \tau_3)$。
 
-形式记号: xxxx
+*** 类型环境
 
-第四步: 类型规则
+类型环境 (Typing Context) $\Gamma$ 是一个从变量到类型的有限映射:
 
-形式; xxx
+$\Gamma ::= \emptyset \mid \Gamma, x : \tau$
 
-规则一, 规则二，规则三
+它记录当前作用域内每个自由变量的类型假设。
 
-变量, 函数抽象, 函数应用
+*** 类型判断
 
-整个 STLC 的类型系统就是这三条规则
+类型判断 (Typing Judgment) 的形式记号为:
 
-简单示例应用: xxx
+$\Gamma \vdash e : \tau$
 
-STLC 保证的​*类型安全* (Type Safety) 由两个自定义构成
-- Progress: 一个良型的项，要么已经是值，要么还能继续归约
-- Preservation: 归约一步之后，类型不变
+读作: 「在上下文 $\Gamma$ 下, 项 $e$ 具有类型 $\tau$。」
 
+*** 类型规则
 
-*** Curry-Howard
+STLC 的整个类型系统由三条推导规则构成。
 
+*规则一 — 变量 (Var):*
 
-STLC 给我的感觉像是逻辑学中的蕴含, 知道前项和蕴含可以推导出后项, 知道前项和后项也可以推导出蕴含, 但知道蕴含和后项无法推导出前项
+$$\frac{x : \tau \in \Gamma}{\Gamma \vdash x : \tau}$$
 
-具体来说, STLC 的类型应用，就是逻辑学里的假言推理（Modus Ponens）
+若变量 $x$ 在环境 $\Gamma$ 中有类型假设, 则可直接判断其类型。
 
-STLC 的函数抽象, 就是逻辑学里的演绎定理（Deduction Theorem）
+*规则二 — 函数抽象 (Abs):*
 
-"知道蕴含和后项无法推导出前项", 这对应的是逻辑学里的肯定后件谬误（Affirming the Consequent）
+$$\frac{\Gamma, x : \tau_1 \vdash e : \tau_2}{\Gamma \vdash \lambda x{:}\tau_1.\ e : \tau_1 \to \tau_2}$$
 
-这就是 *Curry-Howard 同构*
+在扩展了 $x : \tau_1$ 的环境下, 若体 $e$ 的类型为 $\tau_2$, 则整个抽象的类型为 $\tau_1 \to \tau_2$。
 
-Curry-Howard 告诉我们：
+*规则三 — 函数应用 (App):*
 
-*写一个类型正确的程序，就是在构造一个逻辑证明。编译器的类型检查器，就是一个证明验证器。*
+$$\frac{\Gamma \vdash e_1 : \tau_1 \to \tau_2 \qquad \Gamma \vdash e_2 : \tau_1}{\Gamma \vdash e_1\ e_2 : \tau_2}$$
 
-*** 局限
+函数的参数类型必须与实参类型一致, 方可应用。
 
-STLC 失去为了保证类型完全安全, 失去了类型多态性 (Parametric Polymorphism), 具体来说就是
+*** 类型安全 (Type Safety)
 
-并且, 在 STLC 中不可能停机, 因为 Y 组合子在 STLC 中是不可类型化的, 这也让我们不可能写出死循环
+STLC 保证的类型安全由两个定理构成:
 
-这就是安全的代价, 我们用表达力换来了安全性
+- *Progress*: 一个良型的项, 要么已经是值 (value), 要么还可以继续归约一步。不存在「卡住」的良型项。
+- *Preservation*: 若 $\Gamma \vdash e : \tau$, 且 $e \to e'$, 则 $\Gamma \vdash e' : \tau$。归约一步后类型不变。
 
-这引出了下一个问题: 能否在保留表达力的同时, 保留安全性?
+*** Curry-Howard 同构
 
+观察 STLC 的类型规则, 可以发现一个深刻的对应关系。
+
+- *函数应用 (App)* 对应逻辑学中的​*假言推理 (Modus Ponens)*: 已知 $A \Rightarrow B$ 与 $A$, 可推出 $B$
+- *函数抽象 (Abs)* 对应逻辑学中的​*演绎定理 (Deduction Theorem)*: 在假设 $A$ 下能证明 $B$, 则可以证明 $A \Rightarrow B$
+- *「已知蕴含与后件, 无法推出前件」* 对应​*肯定后件谬误 (Affirming the Consequent)*: 已知 $A \Rightarrow B$ 与 $B$, 不能推出 $A$
+
+这就是 *Curry-Howard 同构*​。其核心断言如下:
+
+#+begin_quote
+*类型对应命题, 程序对应证明。写一个类型正确的程序, 就是在构造一个逻辑证明。编译器的类型检查器, 就是一个证明验证器。*
+#+end_quote
+
+*** 局限性
+
+STLC 为保证类型安全, 放弃了​*参数多态性 (Parametric Polymorphism)*​。例如, 恒等函数 $\lambda x.\ x$ 在 STLC 中无法给出单一的多态类型 $\forall \alpha.\ \alpha \to \alpha$, 对每个具体类型都需要单独定义。
+
+此外, Y 组合子在 STLC 中不可类型化, 这使得一般递归 (general recursion) 和无终止计算 (non-termination) 均无法在 STLC 中表达。这正是强规范化 (strong normalization) 的来源——所有良型项都必然停机。
+
+这是安全的代价: 我们用​*表达力*​换来了​*安全性*​。
+
+这引出下一个问题: 能否在保留表达力的同时, 也保留安全性?
+
+-----
 
 ** System F: 让类型成为参数
 
-在原始的 $\lambda$ 演算中, 我们只有 $\lambda$, 在 $\lambda$ 中只有「值」是一等公民, 因为只有值可以被抽象为一个参数传来传去
-
-但是, 在 STLC 中引入「类型」后, 我们并没有给予类型相同的地位，我们不能将类型作为参数传来传去
+在原始 $\lambda$ 演算中, 「值」是唯一的一等公民, 因为只有值可以被抽象为参数传递。在 STLC 中引入「类型」后, 类型仍然是二等公民——不能作为参数被抽象与传递。
 
 System F 做的事情只有一件:
 
-让类型也可以作为参数被抽象, 被传来传去
+#+begin_quote
+让类型也可以作为参数被抽象, 被传来传去。
+#+end_quote
 
-语法拓展: xxx
+*** 语法扩展
 
-类型规则: xxx
+在 STLC 的基础上, System F 新增两种构造:
 
-System F 在命题逻辑中对应的是二阶命题逻辑——命题可以对命题变量进行量化
+类型层面的抽象与实例化:
 
-规则四, 规则五
+$e ::= \ldots \mid \Lambda \alpha.\ e \mid e\ [\tau]$
 
-示例
+$\tau ::= \ldots \mid \alpha \mid \forall \alpha.\ \tau$
 
-*** System F 的代价
+- $\Lambda \alpha.\ e$: 类型抽象, 将类型变量 $\alpha$ 抽象为参数
+- $e\ [\tau]$: 类型应用, 将具体类型 $\tau$ 传入
 
-类型推导不可判定。 在 STLC 里，给定一个项，编译器可以自动推导出它的类型。在 System F 里，你必须手动标注类型——编译器无法自动推断完整的 $\forall$ 类型
+*** 类型规则
 
-这就是为什么 Haskell 使用的不是完整的 System F，而是它的一个可判定的子集，叫做 Hindley-Milner 类型系统——它限制了 $\forall$ 只能出现在类型的最外层，从而使类型推导重新变得可判定
+*规则四 — 类型抽象 (T-TAbs):*
+
+$$\frac{\Gamma, \alpha \vdash e : \tau}{\Gamma \vdash \Lambda \alpha.\ e : \forall \alpha.\ \tau}$$
+
+*规则五 — 类型应用 (T-TApp):*
+
+$$\frac{\Gamma \vdash e : \forall \alpha.\ \tau}{\Gamma \vdash e\ [\tau'] : \tau[\tau' / \alpha]}$$
+
+*** 逻辑对应
+
+System F 在 Curry-Howard 对应下对应​*二阶命题逻辑 (Second-Order Propositional Logic)*​——命题可以对命题变量进行全称量化 $\forall \alpha.\ P(\alpha)$。
+
+*** 代价: 类型推导不可判定
+
+在 STLC 中, 给定一个项, 编译器可以自动推导出其类型。但在完整的 System F 中, 类型推导是不可判定的——必须手动标注 $\forall$ 类型, 编译器无法自动推断。
+
+这就是为什么 Haskell 使用的不是完整的 System F, 而是其可判定子集 *Hindley-Milner (HM) 类型系统*​。HM 对 $\forall$ 的位置加以限制: $\forall$ 只能出现在类型的​*最外层 (prenex position)*, 从而使类型推导重新变得可判定, 并可通过 Algorithm W 高效实现。
