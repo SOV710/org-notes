@@ -1,0 +1,64 @@
+#+title: Engineering a Compiler: Overview
+#+author: SOV710
+#+date: <2026-02-27 Fri>
+
+Compiler Definition
+
+PL is computing itself
+
+machine is what to achieve computing
+
+machine has its own language, assembly
+
+compiler is the translator, input is source program, output is target program
+
+source-to-source translators
+
+interpreter: input is source program, output is result
+
+just-in-time compiler
+
+priciples of compiler:
+1. The compiler must preserve the meaning of the program being compiled. (but Rice's theorem, it's cruel)
+2. The compiler must improve the input program in some discernible way. (readable)
+
+
+compiler structure:
+
+two-phase compiler: front end and back end
+
+front end -> intermediate representation (IR) -> back end
+
+for better retargeting
+
+three-phase compiler: front end, optimizers, and back end
+
+front end --IR--> optimizer --IR--> back end
+
+The optimizer can make one or more passes over the ir, analyze the ir, and rewrite the ir
+
+so we have these def:
+- front end: which concern ...
+- optimizer: ...
+- back end: ...
+
+
+Of these three phases, the optimizer has the murkiest description. In practice, no optimal solution, for many reasons
+
+Actual case of a translation:
+
+Assume a expression of pragramming language:
+
+a ← a × 2 × b × c × d
+
+where a, b, c, and d are variables, ← indicates an assignment, and × is the operator for multiplication
+
+front end:
+
+Mathematically, the source language is a set, usually infinite, of strings defined by some finite set of rules, called a grammar.
+
+scanner --> parser --> elaboration
+
+optimizer: ...
+
+back end: ... (assume a type of asm)
