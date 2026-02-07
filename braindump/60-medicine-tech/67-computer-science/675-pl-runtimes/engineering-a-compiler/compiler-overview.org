@@ -2,63 +2,91 @@
 #+author: SOV710
 #+date: <2026-02-27 Fri>
 
-Compiler Definition
+* Compiler Definition
 
-PL is computing itself
+*Programming language* 是计算本身的表达形式 ; *machine* 是计算的执行载体, 拥有自己的语言 (汇编)。编译器即二者之间的翻译器 : 输入为源程序, 输出为目标程序。
 
-machine is what to achieve computing
+几个相关概念 :
 
-machine has its own language, assembly
+- *Source-to-source translator* : 源语言到另一源语言的翻译器, 目标仍是高级语言。
+- *Interpreter* : 输入源程序, 直接输出运行结果, 不产生独立的目标程序。
+- *Just-in-time compiler* : 在运行时将中间表示或字节码编译为本机代码, 兼具解释器的动态性与编译器的执行效率。
 
-compiler is the translator, input is source program, output is target program
+** 编译器的两条基本原则
 
-source-to-source translators
+1. *Meaning preservation* : 编译器必须保持被编译程序的语义。然而由 Rice's theorem 可知, 对于图灵完备语言, 程序语义的精确判定在一般情况下不可判定, 这使得"完全正确的保义变换"在理论上极为苛刻。
+2. *Improvement* : 编译器必须以某种可感知的方式改进输入程序, 例如提升执行效率或改善可读性。
 
-interpreter: input is source program, output is result
+* Compiler Structure
 
-just-in-time compiler
+** Two-phase Compiler
 
-priciples of compiler:
-1. The compiler must preserve the meaning of the program being compiled. (but Rice's theorem, it's cruel)
-2. The compiler must improve the input program in some discernible way. (readable)
+前端与后端通过 *intermediate representation (IR)* 解耦 :
 
+#+begin_quote
+Front End → IR → Back End
+#+end_quote
 
-compiler structure:
+这一结构的核心动机是 *retargeting* : 更换目标平台时只需替换后端, 前端可复用。
 
-two-phase compiler: front end and back end
+** Three-phase Compiler
 
-front end -> intermediate representation (IR) -> back end
+在两阶段基础上引入优化器 :
 
-for better retargeting
+#+begin_quote
+Front End --IR--> Optimizer --IR--> Back End
+#+end_quote
 
-three-phase compiler: front end, optimizers, and back end
+优化器可对 IR 进行一次或多次 *pass*, 分析并改写 IR。三个阶段的职责划分 :
 
-front end --IR--> optimizer --IR--> back end
+- *Front end* : 负责理解源语言 ; 检查词法、语法、语义的合法性 ; 将源程序转化为 IR。
+- *Optimizer* : 分析并变换 IR 以提升程序质量 (通常是性能)。优化器的描述在三者中最为模糊 : 实践中不存在通用意义下的最优解, 受限于不可判定性、编译时间约束及目标多样性等因素。
+- *Back end* : 将 IR 映射到目标机器 ; 负责指令选择、寄存器分配与指令调度, 最终输出目标代码。
 
-The optimizer can make one or more passes over the ir, analyze the ir, and rewrite the ir
+* 翻译过程示例
 
-so we have these def:
-- front end: which concern ...
-- optimizer: ...
-- back end: ...
+以如下赋值表达式为例 :
 
+$a \leftarrow a \times 2 \times b \times c \times d$
 
-Of these three phases, the optimizer has the murkiest description. In practice, no optimal solution, for many reasons
+其中 $a, b, c, d$ 为变量, $\leftarrow$ 表示赋值, $\times$ 为乘法运算符。
 
-Actual case of a translation:
+** Front End
 
-Assume a expression of pragramming language:
+源语言在数学上是一个 (通常无限的) 字符串集合, 由有限条规则 (称为 *grammar*) 定义。前端处理流程如下 :
 
-a ← a × 2 × b × c × d
+1. *Scanner (词法分析)* : 将源程序字符流切分为 token 序列。对上述表达式, 识别出 =a=, =←=, =2=, =×=, =b=, =c=, =d= 等 token。
+2. *Parser (语法分析)* : 依据文法规则, 将 token 序列归约为 *parse tree* 或 *AST*, 体现运算的结构与优先级。
+3. *Elaboration (语义分析 / 细化)* : 进行类型检查、符号表构建、名称解析等, 并将 AST 降低为 IR。例如将乘法链展开为一系列二元运算的 IR 指令序列。
 
-where a, b, c, and d are variables, ← indicates an assignment, and × is the operator for multiplication
+** Optimizer
 
-front end:
+优化器接收前端生成的 IR, 对其进行分析与改写。针对本例, 常见优化包括 :
 
-Mathematically, the source language is a set, usually infinite, of strings defined by some finite set of rules, called a grammar.
+- *Constant folding* : 将 $a \times 2$ 中的常量 $2$ 在编译期处理, 转化为移位或直接计算。
+- *Reassociation / strength reduction* : 重组乘法顺序以减少运算开销。
+- *Common subexpression elimination* : 若某子表达式在多处出现, 提取为临时变量避免重复计算。
 
-scanner --> parser --> elaboration
+优化器可以多遍运行, 每遍针对不同的分析目标。
 
-optimizer: ...
+** Back End
 
-back end: ... (assume a type of asm)
+后端将优化后的 IR 映射为目标汇编代码, 主要步骤 :
+
+1. *Instruction selection* : 为每条 IR 操作选择对应的目标指令。例如 $a \times 2$ 可映射为左移指令 =shl=​
+2. *Register allocation* : 将 IR 中的虚拟寄存器分配到有限的物理寄存器 ; 对 $a, b, c, d$ 分别分配寄存器, 溢出时生成 load/store
+3. *Instruction scheduling* : 重排指令顺序以规避流水线停顿, 充分利用目标 CPU 的执行单元
+
+最终输出形如 :
+
+#+begin_src asm
+  load  r1, a
+  load  r2, b
+  load  r3, c
+  load  r4, d
+  shl   r1, r1, 1    ; a × 2
+  mul   r1, r1, r2   ; × b
+  mul   r1, r1, r3   ; × c
+  mul   r1, r1, r4   ; × d
+  store a, r1
+#+end_src
