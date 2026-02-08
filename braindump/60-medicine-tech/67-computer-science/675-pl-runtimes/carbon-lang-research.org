@@ -1,0 +1,108 @@
+#+title: Carbon Language: Current Implementation Status and Potential Impact
+#+startup: showall
+
+* 背景与动机
+
+C++ 自诞生以来已历经数十年演进, 积累了大量历史包袱。尽管它在性能关键型软件领域仍占据主导地位, 但其复杂性、ABI 兼容约束以及极其困难的内存安全问题, 使得语言自身的演进陷入困境。2022 年 7 月, Google 工程师 Chandler Carruth 在加拿大 CppNorth 大会上正式宣布 Carbon Language, 将其定位为 *C++ 的实验性继任语言 (experimental successor)* 。
+
+Carbon 的核心哲学是: *不从零开始, 而是从 C++ 生态出发迁移*。这与 TypeScript 之于 JavaScript、Kotlin 之于 Java 的定位高度类似。
+
+* 语言设计目标
+
+** 核心目标
+
+- *性能对等*: 与 C++ 保持相同量级的运行时性能, 基于 LLVM 后端生成代码。
+- *双向互操作*: Carbon 代码可以调用 C++ 库, C++ 代码同样可以调用 Carbon, 且无需复杂的 FFI 层。
+- *渐进式迁移*: 支持一定程度的 C++ → Carbon 源代码自动转换 (source-to-source translation)。
+- *内存安全*: 计划设计一个内存安全方言, 方向上参照 Rust 的类型系统静态保证, 而非引入 GC 或引用计数的运行时开销。
+
+** 设计哲学上的取舍
+
+Carbon 在设计上明确提出 *"不在编译器中解决困难问题"* 的哲学。与 C++ 相比, 其语法更加一致、规则化。例如:
+
+- 函数用 =fn= 关键字声明, 变量用 =var= 声明。
+- 类型名即表达式 (type-as-expression)。
+- 命名空间默认为 local root。
+- 成员默认 public 可见。
+- 不支持指针运算, 只保留取地址与解引用操作。
+
+泛型系统是 Carbon 的重要设计亮点: 采用 *定义检查 (definition-checked) 泛型*, 在泛型定义时即完成类型检查, 而非在实例化时才报错——这与 C++ 模板的行为有根本区别。同时也支持受约束模板, 以实现从 C++ 模板向 checked generics 的平滑迁移路径。
+
+* 当前实现状态 (截至 2025 年初)
+
+** Toolchain 架构
+
+早期 Carbon 使用名为 /Carbon Explorer/ 的原型解释器, 目前已被弃用并归档。当前的工作重心转移到 *正式的 Toolchain 实现*, 采用了非传统的编译器架构:
+
+#+begin_quote
+词法分析 (Lex Tokens) → 解析树 (Parse Tree) → 语义 IR (SemIR) → LLVM IR
+#+end_quote
+
+这种 *SemIR* (Semantic IR) 的设计不同于 Clang 的 AST 模型, 处理效率更高, 且更容易 lowering 到 LLVM IR, 但对新贡献者存在一定的学习门槛。目前 Toolchain 已可通过 [[https://compiler-explorer.com][Compiler Explorer]] 在线试用, 且提供 nightly release 版本。
+
+** 2024 年进展
+
+- Toolchain 取得重大进展, 实现基本编译和执行能力。
+- 社区成员已用 Carbon 解决 Advent of Code 2024 中的 13 道题目, 证明 Toolchain 已有一定可用性。
+- Variadics (可变参数) 设计历经两年多攻关, 于 2024 年 12 月合并。
+- Compiler Explorer 将 Carbon Explorer 替换为新 Toolchain。
+
+** 2025 年路线图目标
+
+根据官方路线图, 2025 年的两大核心目标为:
+
+1. *C++ 互操作演示*: 实现对非模板 C++ API 的互操作, 达到可在真实场景演示的程度。
+2. *内存安全设计*: 从过去模糊的方向, 推进为具体可实施的内存安全设计方案。
+
+** v0.1 里程碑展望
+
+由于内存安全设计被纳入 v0.1 的必要条件, 该里程碑 *已推迟至 2026 年底*​。v1.0 生产就绪版本预计不早于 2028 年。
+
+#+begin_quote
+"Shipping 0.1 in 2026 will be a very ambitious goal and may not be possible, but the end of 2026 is now the soonest that 0.1 could realistically be ready to ship."
+— Carbon Language Roadmap
+#+end_quote
+
+* 与 Rust 的关系辨析
+
+这是社区中最常见的争论焦点之一。Carbon 团队自身的立场非常明确:
+
+#+begin_quote
+"If you can use Rust, ignore Carbon." — Carbon FAQ
+#+end_quote
+
+两者的目标受众有本质区别:
+
+- *Rust* 面向愿意接受全新编程范式、能够承担迁移成本的新项目或有能力重写的团队。Rust 的借用检查器从根本上改变了编程模型。
+- *Carbon* 面向拥有大规模 C++ 存量代码、难以整体迁移至 Rust 的团队。其目标是提供一条 *渐进式的迁移路径*, 而非强制切换。
+
+Chandler Carruth 在 2025 年 RustConf 上的演讲也明确指出: Rust 的 C++ 互操作能力在持续改善, 但短期内无法提供完整的双向互操作方案, 而这恰恰是 Carbon 的核心定位所在。
+
+* 潜在影响分析
+
+** 对 C++ 生态系统的影响
+
+Carbon 对 C++ 最直接的影响可能 *不是取代*, 而是 *倒逼 C++ 自身演进*​。Carbon 中的一些设计决策 (如 checked generics、更严格的模块系统) 可能反哺 C++ 标准的讨论, 类似于过去其他语言特性被引入 C++ 标准的历史。
+
+** 对内存安全讨论的贡献
+
+在 NSA、美国 CISA 等机构相继呼吁放弃 C/C++ 的背景下, Carbon 提出了一条 *不放弃 C++ 生态、同时逐步引入内存安全保证* 的路径。其内存安全设计将成为这一领域重要的工程实践参考。
+
+** 对编译器工程的影响
+
+Carbon Toolchain 采用的 SemIR 架构、开放透明的设计文档流程 (所有设计决策公开写成提案) 以及完全开源的演进机制, 本身对编译器工程社区具有教育和参考价值。
+
+** 对 Google 内部的意义
+
+Google 内部有大量规模庞大的 C++ 代码库 (如 Chrome、TensorFlow 相关基础设施等)。Carbon 的终极目标很可能是为 Google 自身提供一条可控的 C++ 遗留代码现代化路径。
+
+* 主要风险与不确定性
+
+- *社区规模*: 与 Rust 成熟的生态相比, Carbon 的贡献者社区规模尚小, 能否积累足够临界质量存在变数。
+- *时间窗口*: 距离 v0.1 最早仍需两年 (2026 年底), 届时语言竞争格局 (包括 Rust、C++ 新标准、甚至 Safe C++) 可能已发生显著变化。
+- *Google 依赖*: 项目目前仍由 Google 主要资金支持, 未来计划迁移至独立开源基金会, 但尚未完成。若 Google 优先级调整, 项目的持续性存在风险。
+- *C++ 互操作的复杂性*: C++ 模板的互操作被明确排除在 2025 年的范围之外, 这意味着真正无缝的互操作仍是长期目标。
+
+* 总结
+
+Carbon 是目前工业界对 C++ 继任语言最具系统性思考的尝试之一, 其在设计透明度、工程严谨性和对真实迁移场景的关注上值得肯定。然而它仍处于 *深度实验阶段*, 距离生产可用还有相当距离。对于现有 C++ 项目而言, 近期最务实的建议仍是: 新项目有条件则选 Rust, 存量 C++ 代码则持续关注 Carbon 的互操作进展, 等待 v0.1 正式发布后再做评估。
