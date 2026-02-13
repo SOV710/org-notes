@@ -35,7 +35,7 @@ Trait 是 Rust 最核心的抽象机制, 相当于其他语言中的 "接口" (i
 | 特性    | 泛型 =<T: Trait>=            | Trait Object =dyn Trait= |
 |---------+----------------------------+------------------------|
 | 分发方式 | 静态分发 (monomorphization) | 动态分发 (vtable)       |
-| 性能    | *零成本* (编译期展开)           | 运行时开销 (一次间接跳转)  |
+| 性能    | *零成本* (编译期展开)             | 运行时开销 (一次间接跳转)  |
 | 代码体积 | 可能膨胀 (每种类型生成一份代码)  | 较小                   |
 | 返回值   | 可以返回具体类型              | 只能返回 =Box<dyn Trait>= |
 | 使用场景 | 已知具体类型, 追求性能         | 运行时多态, 类型不确定     |
@@ -52,9 +52,11 @@ fn process_dyn(iter: &mut dyn Iterator<Item = i32>) { }
 
 ** 基础 Traits: 类型的身份证
 
+我知道*这是一个错误*我知道,
+
 *** =Debug= - 调试输出
 
-用于 ={:?}= 格式化输出, *几乎所有类型都应该实现*。
+用于 ={:?}= 格式化输出, *几乎所有类型都应该实现*​。
 
 #+begin_src rust
 #[derive(Debug)]
@@ -82,7 +84,7 @@ impl Debug for Point {
 
 *** =Display= - 用户友好的输出
 
-用于 ={}= 格式化输出, *不能自动 derive*, 需要手动实现。
+用于 ={}= 格式化输出, *​不能自动 derive*, 需要手动实现。
 
 #+begin_src rust
 impl Display for Point {
@@ -119,7 +121,7 @@ let d2 = d1.clone();  // 显式克隆, 避免意外
 
 *** =Copy= - 隐式按位复制
 
-标记 trait, 表示类型可以通过 *按位复制* (memcpy) 来复制, *不需要调用 clone()*。
+标记 trait, 表示类型可以通过 *​按位复制​* (memcpy) 来复制, *不需要调用 clone()*​。
 
 #+begin_src rust
 #[derive(Copy, Clone)]  // Copy 必须同时实现 Clone
@@ -213,7 +215,7 @@ assert!(v1 < v2);
 
 *** =Hash= - 哈希
 
-计算类型的哈希值, 用于 =HashMap=, =HashSet=。
+计算类型的哈希值, 用于 =HashMap=, =HashSet=​。
 
 #+begin_src rust
 #[derive(Hash, PartialEq, Eq)]
@@ -250,7 +252,7 @@ let p2 = Point { x: 3, y: 4 };
 let p3 = p1 + p2;  // Point { x: 4, y: 6 }
 #+end_src
 
-*关联类型 =Output=*: 定义运算结果的类型 (可以与 =Self= 不同)
+*​关联类型 =Output=*: 定义运算结果的类型 (可以与 =Self= 不同)
 
 #+begin_src rust
 impl Mul<f64> for Point {
@@ -311,7 +313,7 @@ grid[(1, 0)] = 99;
 
 *** =Deref= / =DerefMut= - 智能指针的魔法
 
-实现 =Deref= 让类型可以 *自动解引用* 到目标类型。
+实现 =Deref= 让类型可以 *​自动解引用​* 到目标类型。
 
 #+begin_src rust
 use std::ops::Deref;
@@ -340,7 +342,7 @@ let s = MyBox(String::from("world"));
 print_str(&s);  // &MyBox<String> -> &String -> &str
 #+end_src
 
-*警告*: 不要滥用 =Deref= 模拟继承！它只用于智能指针。
+*​警告​*: 不要滥用 =Deref= 模拟继承！它只用于智能指针。
 
 ** 转换 Traits: 类型之间的桥梁
 
@@ -413,11 +415,11 @@ open_file(String::from("file.txt"));  // String
 open_file(PathBuf::from("file.txt")); // PathBuf
 #+end_src
 
-*何时用*: 函数参数支持多种借用形式
+*​何时用​*: 函数参数支持多种借用形式
 
 *** =Borrow= / =BorrowMut= - HashMap 的秘密
 
-比 =AsRef= 更严格: *借用值必须与拥有值具有相同的 Hash 和 Eq*。
+比 =AsRef= 更严格: *借用值必须与拥有值具有相同的 Hash 和 Eq*​。
 
 #+begin_src rust
 use std::collections::HashMap;
@@ -608,7 +610,7 @@ drop(x);   // 正确: 使用 std::mem::drop
 
 * Ecosystem Traits: 生态系统中的重要 Traits
 
-** Serde: 序列化/反序列化
+** Serde: 序列化​/​反序列化
 
 *** =Serialize= / =Deserialize=
 
@@ -1024,7 +1026,7 @@ impl Display for Vec<i32> { }  // 编译错误!
 
 ** Trait Object 的限制
 
-*不是所有 trait 都能变成 trait object*！
+*不是所有 trait 都能变成 trait object*!
 
 *** Object Safety 规则
 
@@ -1095,7 +1097,7 @@ where
 
 ** Derive Macro 的顺序
 
-某些 derive 有 *依赖关系*:
+某些 derive 有 *​依赖关系​*:
 
 #+begin_src rust
 // 正确顺序
