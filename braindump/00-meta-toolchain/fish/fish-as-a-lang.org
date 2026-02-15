@@ -1,0 +1,6 @@
+#+title: Fish as a Language
+#+author: SOV710
+#+date: 2026-03-03 04:03:32
+#+description: 平时写 fish 脚本写的太不成熟了, 有了写这篇文章的想法
+
+fish (Friendly Interactive SHell) 的设计哲学是开箱即用、语法清晰、避免历史包袱。我们直接从语言本身切入。
