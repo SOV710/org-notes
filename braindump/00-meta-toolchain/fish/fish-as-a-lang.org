@@ -4,3 +4,23 @@
 #+description: 平时写 fish 脚本写的太不成熟了, 有了写这篇文章的想法
 
 fish (Friendly Interactive SHell) 的设计哲学是开箱即用、语法清晰、避免历史包袱。我们直接从语言本身切入。
+
+* Grammar
+
+** Variable
+
+#+begin_src fish
+# 赋值用 set, 没有 $ 在左边
+set name "world"
+set count 42
+
+# 读取用 $
+echo $name
+echo "hello $name"
+
+# 列表 (fish 原生支持列表, 这是核心特性)
+set fruits apple banana cherry
+echo $fruits[1]        # apple (下标从 1 开始)
+echo $fruits[2..]      # banana cherry (切片)
+echo (count $fruits)   # 3
+#+end_src
