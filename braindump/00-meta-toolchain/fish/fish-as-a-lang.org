@@ -24,3 +24,14 @@ echo $fruits[1]        # apple (下标从 1 开始)
 echo $fruits[2..]      # banana cherry (切片)
 echo (count $fruits)   # 3
 #+end_src
+
+作用域修饰符:
+
+#+begin_src fish
+set -l local_var "只在当前作用域"   # local
+set -g global_var "全局"            # global
+set -x EXPORTED "导出为环境变量"    # export (等价于 export)
+set -e var_to_delete                # 删除变量
+#+end_src
+
+注: 这是一个很大的坑点, 也是一个很大的难点, 后面我们会再讲到这个配置
