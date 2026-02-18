@@ -35,3 +35,22 @@ set -e var_to_delete                # 删除变量
 #+end_src
 
 注: 这是一个很大的坑点, 也是一个很大的难点, 后面我们会再讲到这个配置
+
+** String
+
+#+begin_src fish
+# 双引号: 插值
+set who "fish"
+echo "hello $who"          # hello fish
+
+# 单引号: 字面量, 无插值
+echo 'hello $who'          # hello $who
+
+# 字符串操作 (内建 string 命令, 非常强大)
+string length "hello"                    # 5
+string upper "hello"                     # HELLO
+string replace "foo" "bar" "foo baz"     # bar baz
+string match -r '\d+' "abc123"           # 123
+string split "," "a,b,c"                 # a b c (列表)
+string join "-" a b c                    # a-b-c
+#+end_src
