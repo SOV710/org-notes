@@ -89,3 +89,16 @@ if test -f /etc/hosts
     echo "exists"
 end
 #+end_src
+
+=[= 是 =test= 的 alias, 但 fish 社区更推荐直接使用 =test=
+
+#+begin_src
+# 命令成功/失败作为条件 (最惯用法)
+if command -q git
+    echo "git is installed"
+end
+
+if grep -q "pattern" file.txt
+    echo "found"
+end
+#+end_src
