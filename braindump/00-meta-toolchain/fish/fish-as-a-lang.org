@@ -66,3 +66,26 @@ echo "today is $today"
 # 直接嵌入
 echo "lines: "(wc -l < /etc/hosts)
 #+end_src
+
+** Condition
+
+#+begin_src fish
+# if/else if/else/end (注意 end 结尾, 无大括号)
+if test $count -gt 10
+    echo "big"
+else if test $count -gt 5
+    echo "medium"
+else
+    echo "small"
+end
+
+# 字符串比较
+if test "$name" = "fish"
+    echo "it's fish"
+end
+
+# 文件测试
+if test -f /etc/hosts
+    echo "exists"
+end
+#+end_src
