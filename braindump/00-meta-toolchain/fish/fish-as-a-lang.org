@@ -102,3 +102,25 @@ if grep -q "pattern" file.txt
     echo "found"
 end
 #+end_src
+
+** Loop
+
+#+begin_src fish
+# for 循环 (自然遍历列表)
+for fruit in $fruits
+    echo "fruit: $fruit"
+end
+
+# 遍历数字范围 (seq)
+for i in (seq 1 10)
+    echo $i
+end
+
+# while
+while test $count -gt 0
+    echo $count
+    set count (math $count - 1)
+end
+
+# break / continue 正常使用
+#+end_src
