@@ -124,3 +124,25 @@ end
 
 # break / continue 正常使用
 #+end_src
+
+** Functions
+
+#+begin_src fish
+# 用 function 定义, end 结尾
+function greet
+    echo "hello, $argv[1]"
+end
+
+greet world    # hello, world
+
+# $argv 是参数列表
+function sum
+    set total 0
+    for n in $argv
+        set total (math $total + $n)
+    end
+    echo $total
+end
+
+sum 1 2 3 4    # 10
+#+end_src
