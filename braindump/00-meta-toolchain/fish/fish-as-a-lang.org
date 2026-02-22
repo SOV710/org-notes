@@ -146,3 +146,29 @@ end
 
 sum 1 2 3 4    # 10
 #+end_src
+
+具名参数 (惯用法) :
+
+#+begin_src
+function connect
+    set -l host $argv[1]
+    set -l port $argv[2]
+    echo "connecting to $host:$port"
+end
+#+end_src
+
+=--argument-names= 语法糖 (fish 3.x) :
+
+#+begin_src
+function connect --argument-names host port
+    echo "connecting to $host:$port"
+end
+#+end_src
+
+函数描述与自动补全集成:
+
+#+begin_src fish
+function backup --description "backup a file"
+    cp $argv[1] $argv[1].bak
+end
+#+end_src
