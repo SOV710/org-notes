@@ -172,3 +172,28 @@ function backup --description "backup a file"
     cp $argv[1] $argv[1].bak
 end
 #+end_src
+
+** 返回值与状态码
+
+#+begin_src fish
+# fish 函数通过 return 返回退出码 (0=成功)
+# 通过 echo 或 stdout 传递数据
+
+function is_even
+    if test (math $argv[1] % 2) -eq 0
+        return 0    # 成功 (真)
+    else
+        return 1    # 失败 (假)
+    end
+end
+
+if is_even 4
+    echo "even"
+end
+
+# $status 是上一条命令的退出码
+ls /nonexistent
+echo $status    # 2
+#+end_src
+
+** Pipes and Redirections
