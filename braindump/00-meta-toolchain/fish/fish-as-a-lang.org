@@ -173,6 +173,8 @@ function backup --description "backup a file"
 end
 #+end_src
 
+* 特性
+
 ** 返回值与状态码
 
 #+begin_src fish
@@ -197,3 +199,17 @@ echo $status    # 2
 #+end_src
 
 ** Pipes and Redirections
+
+#+begin_src fish
+# 和 POSIX 一样
+cat file.txt | grep "pattern" | wc -l
+
+# 重定向
+echo "hello" > file.txt
+echo "world" >> file.txt
+command 2>/dev/null          # 丢弃 stderr
+command 2>&1 | less          # 合并 stderr 到 stdout
+
+# fish 特有: & 连接管道中的 stderr
+command &| less              # stdout + stderr 都进管道
+#+end_src
