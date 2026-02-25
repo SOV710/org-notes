@@ -213,3 +213,11 @@ command 2>&1 | less          # 合并 stderr 到 stdout
 # fish 特有: & 连接管道中的 stderr
 command &| less              # stdout + stderr 都进管道
 #+end_src
+
+** 通配符 (Glob)
+
+#+begin_src fish
+ls *.txt
+ls **/*.rs          # 递归 glob (fish 原生支持, 不需要 globstar 选项)
+ls file{1,2,3}.txt  # 大括号展开
+#+end_src
