@@ -588,7 +588,7 @@ task calc eom
 
 * Modifications: 字段修改的语法
 
-Modifications 部分指定了对选中任务的 *字段修改*。
+Modifications 部分指定了对选中任务的 *字段修改*​。
 
 ** 基本语法: =field:value=
 
@@ -614,7 +614,7 @@ task 12 modify -wontfix
 task 12 modify +bug -feature
 #+end_src
 
-注意: 标签的 =+= / =-= 在 modifications 中表示 "添加/移除", 而在 filter 中表示 "存在/不存在"。
+注意: 标签的 =+= / =-= 在 modifications 中表示 "添加​/移除", 而在 filter 中表示 "存在/​不存在"。
 
 ** 描述的修改
 
