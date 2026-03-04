@@ -1,0 +1,66 @@
+#+title: TTY/PTY Shared Character Device: Write Contention and Terminal State Corruption
+#+startup: showall
+#+author: SOV710
+#+date: 2026-03-04 10:03:39
+#+description: 
+
+* Core Principle
+
+TTY (或 PTY) 是内核字符设备。多个进程对同一 fd 的 =write(2)= 调用在 syscall 层面各自原子, 但进程间不存在高层同步机制。内核不感知写入者之间的语义关系。
+
+默认情况下, fd 0/1/2 均指向同一 =/dev/pts/N=, 因此任何来源的写入都可能与其他来源产生竞争。
+
+* Why TUI Programs Are Especially Fragile
+
+普通 line-by-line 程序的输出混叠, 后果仅为顺序错乱。TUI 程序 (neovim, tmux, htop 等) 依赖 *终端状态的连续性*: 每条 ANSI escape sequence 是对前一状态的增量操作。外来写入一旦插入 escape sequence 流的中间, 后续所有指令均基于错误状态执行, 表现为花屏或界面覆盖。
+
+* Failure Scenarios
+
+** =ssh -vvv= + TUI
+
+- =-v= debug 输出写入本地进程 stderr (fd 2)。
+- 远端 session I/O 经本地 PTY master 转发至同一终端 (fd 1)。
+- 两条数据流无协调, 写入顺序完全由调度时序决定。
+- debug 日志插入 TUI 的 escape sequence 流中间, 导致终端状态机解析错误, 产生显示撕裂。
+
+** 串口 console 与 shell session 共线
+
+- 内核 =printk= 与 getty/shell session 共享同一 UART。
+- 驱动层写入可能发生于中断上下文, 完全无视 userspace 程序状态。
+- 无任何仲裁机制。
+
+** Neovim 崩溃后终端状态残留
+
+Neovim 正常运行时设置:
+
+1. Raw mode ($\texttt{cfmakeraw}$)
+2. Alternate screen ($\texttt{\textbackslash e[?1049h]}$, 即 =smcup=)
+
+崩溃时若未执行清理 (=rmcup= / =tcsetattr= 还原), 终端停留在 raw mode + alternate screen。后续 shell 输出写入该状态, escape sequence 被错误解析, 表现为"日志涌出"。实际上多为正常 shell prompt 在错误终端状态下的渲染结果。
+
+* Mitigations
+
+** 场景对应方法
+
+- =ssh -vvv= *与 TUI 混杂* : 将 debug 输出重定向离开终端。
+
+  #+begin_src bash
+  ssh -vvv user@host 2>/tmp/ssh.log
+  #+end_src
+
+- *串口 =printk= 干扰* : 压制内核日志级别, 或将 console 与 tty 分配至不同串口。
+
+  #+begin_src bash
+  dmesg -n 1
+  #+end_src
+
+- *Neovim 崩溃后终端乱码* : 强制重置终端状态机 (可盲打)。
+
+  #+begin_src bash
+  reset        # 或等价的
+  tput reset
+  #+end_src
+
+** 根治方案
+
+使用 =tmux= 或 =screen=: 每个 pane 拥有独立 PTY, 日志流与交互流永远不共享同一字符设备, 从根本上消除写竞争。
