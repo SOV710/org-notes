@@ -1,0 +1,40 @@
+#+title: Making Docs: Claude Code Best Expriencement
+#+author: SOV710
+#+date: 2026-03-08 14:27:32
+#+description: 
+
+Strictly update the project documentation based on the current project source code.
+
+Targets:
+- Update `docs/`
+- Update `README.md`
+- Update `CLAUDE.md`
+
+Requirements:
+1. Only use information that can be verified directly from the current repository source code, directory structure, scripts, dependencies, configuration, commands, exported capabilities, and implemented behavior.
+2. Do not add descriptions based on assumptions, conventions, prior knowledge, or guesses.
+3. Do not invent features, roadmaps, limitations, compatibility statements, examples, commands, APIs, configuration options, or behaviors that are not clearly supported by the source code.
+4. If the source code does not provide enough evidence for a statement, remove it, weaken it, or leave it unspecified instead of guessing.
+5. Keep the three locations consistent:
+   - `README.md`: user-facing overview, quick start, core capabilities, and basic usage.
+   - `docs/`: more detailed documentation for deeper understanding, organized according to the existing structure.
+   - `CLAUDE.md`: guidance for AI agents or contributors, including project constraints, development conventions, key architectural understanding, and working rules.
+6. Prioritize the following during updates:
+   - Fix outdated information
+   - Remove content that does not match the current implementation
+   - Add documentation for features that already exist in the source code but are undocumented
+   - Standardize terminology, naming, commands, paths, and module descriptions
+   - Ensure the documentation reflects the real current state of the codebase
+7. Do not perform large stylistic rewrites; the primary goal is to align documentation with the actual implementation.
+8. Avoid generic or vague explanations; every statement should be traceable to something in the repository.
+9. Do not list or speculate about which documentation files might exist; simply read the repository and update the relevant ones directly.
+10. Read the source code and existing documentation thoroughly before making changes to avoid inconsistencies.
+11. After completing the updates, provide a short summary:
+   - What aspects were updated
+   - What incorrect or outdated content was removed
+   - What areas remain unspecified due to insufficient evidence in the source code
+
+Execution process:
+- First read the source code, configuration files, scripts, package manager files, and existing documentation.
+- Then modify the documentation files directly.
+- Finally provide a concise summary of the changes made.
