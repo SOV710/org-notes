@@ -1,0 +1,111 @@
+#+title: UNIX System Calls and OS Fundamentals
+#+author: SOV710
+#+date: 2026-03-05 16:00:06
+#+description: 
+
+* Operating System Overview
+
+** Role and Purpose
+
+An OS mediates between user applications and hardware, providing the following services:
+
+- *Multiplexing*: 多个应用程序共享硬件资源。
+- *Isolation*: 进程间相互隔离, 限制错误传播与安全威胁。
+- *Sharing*: 允许协作进程之间交换数据。
+- *Abstraction*: 向上层屏蔽硬件细节, 提升可移植性。
+
+** Core Design Tensions
+
+- 高效 vs. 通用抽象
+- 功能强大 vs. 接口简洁
+- 灵活性 vs. 安全性
+- 可移植性 vs. 利用特定硬件特性
+
+* xv6 as a Study Platform
+
+xv6 是为教学目的设计的 UNIX-like 内核, 运行于 RISC-V 架构 (通过 qemu 模拟)。它足够小, 可完整阅读, 同时覆盖了真实 OS 的核心机制, 是 Linux/macOS 等现代系统的概念原型。
+
+* System Call Mechanism
+
+用户程序通过 *system calls* 与内核交互。调用过程如下:
+
+1. 用户程序执行特殊指令 (看似函数调用)。
+2. CPU 保存用户寄存器, 提升特权级, 跳转至内核入口点。
+3. 内核执行对应实现 (如 =sys_open()=), 可能访问磁盘或更新内核数据结构。
+4. 内核恢复用户寄存器, 降低特权级, 返回调用点。
+
+* File Descriptors and I/O
+
+** File Descriptor Model
+
+- *File descriptor (FD)*: 小整数, 索引进程私有的 FD 表 (由内核维护)。
+- 每个 FD 关联一个 file/pipe/socket 等资源。
+- 不同进程拥有独立 FD 命名空间。
+- UNIX 惯例: FD =0= 为标准输入, FD =1= 为标准输出。
+
+** Key I/O System Calls
+
+- =read(fd, buf, n)=: 从 =fd= 最多读取 =n= 字节到 =buf=, 返回实际读取字节数或 =-1=​。
+- =write(fd, buf, n)=: 向 =fd= 写入 =n= 字节。
+- =open(path, flags)=: 打开或创建文件, 返回 FD (总是分配最小未使用 FD)。
+- =close(fd)=: 关闭 FD。
+
+UNIX I/O 以 8-bit 字节流为单位, 不解释数据格式, 格式解析由应用层负责。
+
+* Process Management
+
+** fork()
+
+=fork()= 创建调用进程的完整副本 (指令、数据、寄存器、FD、当前目录)。
+
+- 父进程: =fork()= 返回子进程 pid (正整数)。
+- 子进程: =fork()= 返回 =0=​。
+- 两个进程在 =fork()= 返回后独立执行。
+
+** exec()
+
+=exec(filename, argv)= 用可执行文件替换当前进程的地址空间。
+
+- 丢弃原有指令与数据内存, 加载新程序。
+- *保留*​文件描述符表。
+- 成功时不返回。
+
+** wait() and exit()
+
+- =wait(&status)=: 父进程阻塞直到某子进程退出, 获取其退出状态。
+- =exit(status)=: 终止进程并向父进程传递 32-bit 状态值 (惯例: =0= 表示成功)。
+
+** Shell Execution Model
+
+Shell 对每条命令执行 fork/exec/wait 三步序列:
+
+1. =fork()= 创建子进程。
+2. 子进程 (可选地修改 FD 后) 调用 =exec()=​。
+3. 父进程调用 =wait()=, 完成后打印下一个提示符。
+
+此设计使父进程 FD 不受子进程修改影响, 同时允许子进程在 exec 前完成 I/O 重定向配置。
+
+* I/O Redirection
+
+=open()= 始终分配最小未使用 FD。利用这一性质可实现重定向:
+
+#+begin_src c
+close(1);           // 关闭 stdout
+open("out", ...);   // 以 FD 1 打开目标文件
+exec("echo", ...);  // exec 继承 FD 表
+#+end_src
+
+FD 的间接性使得程序只需读写 FD =0= / =1=, 无需感知实际 I/O 目的地。重定向逻辑集中在 shell 中, 而非各个子程序。
+
+* Pipes
+
+=pipe(fds[2])= 创建一对 FD: =fds[0]= 用于读, =fds[1]= 用于写。内核为每个 pipe 维护一块缓冲区。
+
+- =write()= 向缓冲区追加数据。
+- =read()= 在无数据时阻塞等待。
+
+Pipe 与 =fork()= 结合可在父子进程间建立通信信道, shell 以此实现 =|= 管道操作符 (fork + pipe + exec 的组合)。
+
+* Directory Access
+
+进程可 =open()= 目录并读取其内容以获取文件名列表。​=.= 是当前目录的伪名称。
