@@ -1,0 +1,12 @@
+#+title: Claude Code 反代
+#+author: SOV710
+#+date: 2026-03-28 05:43:58
+#+description: 
+
+* 起因
+
+Claude Pro 已经充了一年多, 但额度始终是捉襟见肘
+
+恰好最近看到了一篇[[https://linux.do/t/topic/1740014][挺不错的文章]],
+
+目前所有额度表都是参考这篇 [[https://she-llac.com/claude-limits][逆向 claude code 的文章来的]]
