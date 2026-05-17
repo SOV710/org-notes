@@ -1,0 +1,67 @@
+#+title: TCP Throughput Limited by Small Receive Window over High RTT
+#+author: SOV710
+#+date: 2026-05-17 16:35:35
+#+description: 远端数据中心之间文件传输慢, 网络链路本身健康, 但 TCP receive window 只有 17,520 bytes 且没有 window scaling, 导致吞吐被 receive buffer / RTT 限制
+
+
+* Issue Description
+
+我们遇到了看似不一致的网络问题: 某些应用和文件传输速度缓慢, 另一些则正常, 还有些仅单向传输缓慢; 原本只需几分钟完成的任务, 现在却要耗费数小时
+
+数据包捕获显示, 存在重复确认 (DUP ACKs) 等丢包迹象
+
+我们面临着一项艰巨的排障任务——要么定位丢包源头, 要么证明网络并非罪魁祸首
+
+
+* Debugging
+
+** network healthcheck
+
+首先, 我们验证了网络的基本健康状况:
+
+- 确认节点之间的链路不存在拥塞
+- 检查接口计数器——排查错误、CRC 校验失败、丢包等问题
+- 验证接口配置——speed、双工模式、MTU 等。
+- 验证 QoS 统计信息——是否在某个特定队列中观察到异常高的丢包数?
+- 验证网络设备系统资源——CPU、内存等。
+- 验证控制平面——是否有数据包被转发到路由器 CPU 处理?
+
+到目前为止一切顺利, 那为什么文件传输速度这么慢呢? 某些传输的吞吐量低至 900 KBps。我们站点间有 1Gbps 的链路, 延迟仅 18 ms (RTT), 按理说吞吐量不应该有问题!
+
+** package window issue
+
+查看数据包捕获后, 我们发现 TCP 窗口通告的大小非常小, 只有 17,520 字节, 并且没有进行 scaling
+
+问题源于这个非常简单的公式:
+
+*Receive buffer size (bits) / RTT (seconds) = Max TCP throughput (bps)*
+
+让我们根据观察到的接收缓冲区大小 (TCP 窗口) 和站点间已知的 RTT 来实际应用这个公式:
+
+*(17,520 bytes * 8 bit) / .018 = ~7786666 bps*
+
+将其转换为 KBps (千字节/秒), 我们就得到了观察到的吞吐量: *950 KBps*
+
+
+** Solving
+
+那么, 如何纠正这个问题呢?
+
+首先, 你需要确保 TCP 窗口足够大, 以充分利用可用带宽
+
+让我们再进行一次计算, 确定在 18ms RTT 的 1Gbps 链路上充分利用带宽所需的 TCP 窗口大小
+
+*Bandwidth (bps) * RTT (seconds) = TCP window size (bits)*
+
+Bandwidth = 1Gbps /1024/1024/1024 = 1,073,741,824 bps
+RTT = 18ms = .018 seconds
+
+*1,073,741,824 * .018 = 19327352.832 / 8bits = TCP Window Size of 2,415,919.104 Bytes*
+
+哇, 看来需要超过 2MB 的 TCP 窗口大小才能达到 1Gbps 的吞吐量
+
+第一反应就是去增加所有服务器的 TCP 窗口大小, 这或许可行, 但需要谨慎操作, 因为如果未启用选择性确认 (Selective ACKs), 这可能会消耗更多系统内存, 甚至导致更严重的性能问题
+
+好消息是, RFC 1323 (http://tools.ietf.org/html/rfc1323) 定义了 TCP 窗口缩放机制, 允许窗口大小动态增长; 自 Vista/Server 2008 起, 该功能默认启用, 这也是某些应用能获得最佳性能而其他应用不能的原因之一
+
+启用 TCP 窗口缩放后, 我们的 StreamGraph 发生了显著变化: 注意它从较小值开始, 急剧攀升, 随后稳定在 1MB 左右波动。得益于 RFC 1323 的位移算法, 这一过程完全基于观测到的延迟动态调整。
