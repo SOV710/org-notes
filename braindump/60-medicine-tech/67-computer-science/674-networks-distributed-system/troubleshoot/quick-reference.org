@@ -1,0 +1,105 @@
+#+title: Network Troubleshooting Quick Reference Guide
+#+author: SOV710
+#+date: 2026-05-17 14:31:46
+#+description: 如果你怀疑遇到了网络问题, 可以尝试下面的一些命令
+
+
+* 明显的丢包问题
+
+** 示例命令
+
+#+begin_src shell
+mtr hostname
+ping -c 1000 -i .2 hostname
+owping hostname
+owping -c 10000 -i .01 hostname
+pscheduler task latency --dest receive host --packet-count 1000 --packet-interval .01
+#+end_src
+
+** 解释
+
+mtr 能逐跳估算丢包率, ping 和 owamp 则提供端到端的丢包评估
+
+某些问题仅在发送大量数据包时才会显现, 因此建议先使用默认设置, 再逐步增加 ping 和 owamp 的数据包速率
+
+若观察到大量丢包, 可能是由网络拥塞或光纤连接不良导致, 连接不良包括光模块故障、光纤弯折及多种潜在问题。这类问题排查困难, 可能需要登录路径上的每台网络设备查看错误计数器。确认拥塞的最佳方式是检查网络设备的 SNMP 计数器, 但这并非总是可行。
+
+
+* 路径与 MTU 问题
+
+** 示例命令
+
+#+begin_src shell
+traceroute hostname
+tracepath hostname
+ping -s 8900 -M do -c 4 hostname
+pscheduler task mtu --dest recv_host --source send_host
+pscheduler task --tool tracepath trace --source send_host --dest receive_host
+#+end_src
+
+** 解释
+
+这些命令将帮助你发现 MTU 问题和非对称路径
+
+某些路径可能设计上就是非对称的, 若延迟相近, 则不会影响性能; 但若某条路径的单向长度是另一方向的 100 倍, 则属于问题
+
+如果你的任一主机配置了巨型帧, 请检查路径上的 MTU 问题。
+
+
+* 主机性能问题
+
+** 示例命令
+
+#+begin_src shell
+pscheduler task throughput --dest hostname
+pscheduler task throughput --dest hostname --source hostname2
+pscheduler task throughput --dest receive_host --fq-rate 15G
+pscheduler task throughput --dest hostname  --window-size 64M
+pscheduler task --tool nuttcp throughput --dest hostname
+#+end_src
+
+** 解释
+
+这些命令将帮助判断是否存在主机调优问题
+
+查看 =iperf3= 输出的 cwnd 值, 确保未受 TCP 窗口限制
+
+查看 =nuttcp= 输出, 确认发送或接收主机是否受 CPU 限制
+
+使用 =iperf3 --fq-rate= 参数检查接收主机是否无法跟上发送端的速度
+
+
+* 网络缓冲区问题
+
+** 示例命令
+
+#+begin_src shell
+nuttcp -u -Ri300m/100 -i 1 -T5 -w1m hostname
+nuttcp -u -Ri300m/300 -i 1 -T5 -w1m hostname
+#+end_src
+
+** 解释
+
+导致数据包丢失的一个常见问题是网络设备的缓冲区过小
+
+使用 nuttcp 的"突发模式"是检测该问题的有效方法: 如果 100 个数据包的突发传输正常, 但 300 个数据包的突发传输出现丢包, 则很可能路径上存在某个缓冲区不足的设备
+
+遗憾的是, 要确定具体是哪个设备存在问题往往相当困难
+
+
+* 细微的数据包丢失问题
+
+** 示例命令
+
+#+begin_src shell
+pscheduler task --tool nuttcp throughput --dest hostname --source hostname --bandwidth 1G -u -l8900 -w1M
+nuttcp -l8900 -T30 -u -w2m -R3G -i1 hostname
+#+end_src
+
+** 解释
+
+对于 40G 和 100G 等超高速网络, 光纤连接必须保持绝对洁净, 通常只有在极高速数据流中才会注意到丢包现象
+
+测试此类链路的最佳方式是使用超过 2Gbps 的 UDP 测试。进行高速 UDP 测试时务必谨慎, 确保不会影响生产流量
+
+nuttcp 似乎是测试 UDP 丢包的最佳工具
