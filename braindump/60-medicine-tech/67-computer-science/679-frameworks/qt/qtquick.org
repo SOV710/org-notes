@@ -1,0 +1,290 @@
+#+title: A Brief History of Qt Quick
+#+author: SOV710
+#+date: 2026-04-25 12:07:55
+#+description: 
+
+* A Brief History of Qt Quick
+
+** 1. 前史: Qt Widgets 与移动 UI 压力
+
+Qt Quick 出现之前, Qt 的主流 GUI 技术是 *Qt Widgets*​。Widgets 是传统桌面 GUI 模型: 按钮, 菜单, 窗口, 布局, 绘制事件, =QPainter=, 事件循环。它很适合桌面软件, 例如 KDE 应用, 工具软件, IDE, CAD/EDA 类应用。
+
+问题在于, 2007 年以后移动设备和嵌入式 UI 的需求变了:
+
+- UI 需要大量动画, 过渡, 拖拽, 弹性滚动。
+- 设计师希望直接参与界面迭代。
+- 声明式 UI 比手写 C++ widget tree 更适合快速表达视觉结构。
+- GPU 加速和 retained scene 更适合高帧率界面。
+
+Qt Widgets 仍然重要, 但它的模型偏向传统桌面控件。Qt Quick 的诞生, 本质上是 Qt 对移动化, 动画化, 声明式 UI 的回应。
+
+** 2. 2010: Qt Quick 随 Qt 4.7 登场
+
+Qt Quick 首次正式进入 Qt 主线是在 *Qt 4.7* 时代。Qt 官方博客在 Qt 4.7 release candidate 阶段说明, Qt Quick 由三部分组成: *QML language*, *QtDeclarative module*, 以及 Qt Creator 中的 Qt Quick tooling components。([Qt][1])
+
+当时的 Qt Quick 不是单一库, 而是一组技术:
+
+- =QML=: 声明式 UI 语言。
+- =QtDeclarative=: 运行 QML 的框架模块。
+- =Qt Quick=: 一组用于构建动态 UI 的 QML 类型。
+- =Qt Creator=: 提供 QML 编辑, 预览, 设计器等工具链。
+
+Qt Wiki 也将 Qt Quick 的首次引入定位在 *Qt 4.7* 和 *Qt Creator 2.1*​。它的目标是让开发者和 UI 设计师一起构建 animated, touch-enabled UIs。([Qt Wiki][2])
+
+*** Qt Quick 1 的技术特征
+
+Qt 4.x 时代的 Qt Quick 通常称为 *Qt Quick 1*​。它的渲染体系仍然更接近传统 Qt 图形栈, 底层主要依赖 =QGraphicsView= / =QGraphicsScene= 一类机制。
+
+这导致一个结构性限制: Qt Quick 1 的声明式 UI 很现代, 但渲染架构还没有完全现代化。它可以做流畅动画, 但性能上限和 GPU 利用方式都不如后来的 Qt Quick 2。
+
+** 3. QML 的核心设计
+
+QML 是 Qt Quick 的关键。Qt 官方文档称 QML 是一种 multi-paradigm language, 允许对象按属性, 关系, 响应行为来定义。它的声明式语法把属性变化和行为直接嵌入对象定义中。([Qt Documentation][3])
+
+一个极简 QML 例子:
+
+#+begin_src qml
+import QtQuick
+
+Rectangle {
+width: 320
+height: 200
+color: "black"
+
+```
+Text {
+    anchors.centerIn: parent
+    text: "Hello Qt Quick"
+    color: "white"
+}
+```
+
+}
+#+end_src
+
+这段代码体现了 QML 的几个基本思想:
+
+- UI 是对象树。
+- 属性绑定是一等概念。
+- 视觉结构直接写在语言结构中。
+- 行为可以通过 JavaScript expression 和 signal handler 描述。
+- 性能敏感逻辑仍然可以放回 C++。
+
+QML 和 C++ 的关系不是替代关系。更准确地说, QML 负责高层 UI composition, C++ 负责性能敏感逻辑, 平台集成, 模型层, 后端服务。
+
+** 4. 2011: Qt Creator 工具链补齐
+
+Qt Quick 的完整落地依赖 Qt Creator。2011 年 Qt Creator 2.1 发布, Qt 官方称它与 Qt SDK 1.1 beta 和 Qt 4.7.2 一同发布, 并包含移动应用项目向导, 部署相关文件和文档更新。([Qt][4])
+
+同一天 Qt 官方博客还说, 随着 Qt Creator 2.1 发布, Qt Quick 已经达到官方 milestone。([Qt][5])
+
+这点很重要: Qt Quick 不是单纯增加一个运行时。它是一次完整产品方向调整:
+
+- 语言: QML。
+- 运行时: QtDeclarative / Qt Quick。
+- IDE: Qt Creator 的 QML 支持。
+- 目标平台: 移动, 嵌入式, 桌面。
+- 开发流程: 设计和开发协作。
+
+** 5. 2012: Qt 5 与 Qt Quick 2
+
+Qt Quick 真正成熟的节点是 *Qt 5.0*​。Qt 5 引入 *Qt Quick 2*, 最大变化是渲染架构切换为 *Scene Graph*​。
+
+Qt 6 文档仍然这样描述 Qt Quick 2 的核心: 它使用 dedicated scene graph, 并通过 OpenGL ES, OpenGL, Vulkan, Metal, Direct3D 等图形 API 渲染。scene graph 允许系统保留渲染场景, 在渲染前知道完整 primitive 集合, 从而做批处理和优化。([Qt Documentation][6])
+
+Qt Quick 2 的变化可以概括为:
+
+- 从传统 painter-oriented UI 转向 scene graph。
+- 从即时绘制模型转向 retained rendering model。
+- 更重视 GPU pipeline。
+- 更适合动画, shader effect, particle, transition。
+- UI thread 和 render thread 可以分离。
+
+*** Qt Quick 1 与 Qt Quick 2 的本质差异
+
+- Qt Quick 1:
+      - Qt 4.x 时代。
+      - 依赖较旧的图形视图体系。
+      - 更像声明式外壳加传统渲染后端。
+
+- Qt Quick 2:
+      - Qt 5 时代。
+      - 使用 scene graph。
+      - 面向 GPU 加速。
+      - 成为现代 Qt Quick 的基础。
+
+所以, Qt Quick 的历史不能只看 QML 语法。真正的断代点是 *Qt Quick 2 / Scene Graph*​。
+
+** 6. Qt Quick Controls: 从画布到应用控件
+
+早期 Qt Quick 更像一个动态 UI 画布。它能很好地画矩形, 图像, 文本, 动画, 状态切换, 但如果要构建完整应用, 还需要标准控件体系。
+
+Qt 5.1 时代加入了 *Qt Quick Controls*, 同时还有 Qt Quick Layouts 等模块。Qt Wiki 的 Qt 5.1 新特性页面列出 Qt Quick Controls 和 Qt Quick Layouts 作为新模块。([Qt Wiki][7])
+
+这意味着 Qt Quick 开始从 "做动效界面" 扩展到 "做完整应用界面"。
+
+后来 Qt 5.7 引入 *Qt Quick Controls 2*​。文档说明 Qt Quick Controls 2 提供一组可用于构建完整 Qt Quick 界面的控件, 并指出该模块 introduced in Qt 5.7。([Felgo][8])
+
+Qt Quick Controls 2 的重点不是 "控件更多", 而是:
+
+- 更轻量。
+- 更适合移动和嵌入式。
+- 样式系统更清晰。
+- 性能优于早期 Controls。
+- 更贴合 Qt Quick 的 scene graph 模型。
+
+** 7. Qt Quick 与 Qt Widgets 的分工演化
+
+Qt Quick 出现后, Qt 并没有废弃 Qt Widgets。两者长期并存。
+
+更合理的分工是:
+
+- *Qt Widgets*:
+      - 传统桌面应用。
+      - 原生桌面控件体验。
+      - 复杂表格, 树, 文档型软件。
+      - 旧项目维护成本低。
+
+- *Qt Quick*:
+      - 动画密集界面。
+      - 触控界面。
+      - 嵌入式 HMI。
+      - 车机, 工控, 医疗设备 UI。
+      - 需要设计师参与的现代视觉界面。
+      - 2D / 3D 混合界面。
+
+一个常见误解是: Qt Quick 是 Qt Widgets 的新版本。这个说法不准确。Qt Quick 是 Qt 的另一套 UI 技术栈, 它和 Widgets 的对象模型, 渲染模型, 开发方式都不同。
+
+** 8. 2017 左右: Qt Quick Controls 2 成为主流应用层方案
+
+Qt 5.7 以后, 如果要写新的 QML 应用, Qt Quick Controls 2 通常比旧版 Controls 更合适。
+
+它的历史意义在于: Qt Quick 不再只是做 "炫酷嵌入式界面" 的工具, 也可以更系统地构建普通应用界面。尤其在移动端和嵌入式端, Controls 2 更贴合 Qt Quick 的性能模型。
+
+不过, 它也带来一个代价: Qt Quick 的桌面原生感长期弱于 Qt Widgets。早期 Qt Quick Controls 的 desktop styling 和 native behavior 经常不如 Widgets 稳定。这也是很多桌面软件继续使用 Widgets 的原因。
+
+** 9. 2020: Qt 5.15 LTS 与 Qt Quick 3D
+
+Qt 5.15 是 Qt 5 系列的关键 LTS 版本。Qt 官方发布说明中提到, Qt 5.15 带来了 *Qt Quick 3D*, 可以在 QML 中定义 3D scene, mesh, light, material, 并将 3D 内容和 2D UI 结合。([Qt][9])
+
+这一步把 Qt Quick 的边界从 2D UI 扩展到 2D / 3D 混合界面。
+
+Qt Quick 3D 的意义:
+
+- 让 3D 内容进入 QML 体系。
+- 避免应用开发者直接维护复杂 OpenGL scene。
+- 更适合 HMI, 仪表盘, 产品可视化, 嵌入式 UI。
+- 为 Qt 6 的统一图形栈做铺垫。
+
+** 10. 2020 以后: Qt 6 与 RHI
+
+Qt 6 对 Qt Quick 最大的底层变化是图形抽象层。Qt 6 发布说明称, Qt 5 的硬件加速图形主要依赖 OpenGL, 但 Qt 6 中 Qt Quick 的 3D graphics 建立在新的 *RHI*, 即 Rendering Hardware Interface 之上。RHI 允许 Qt 使用平台原生 3D API, 例如 Windows 上的 Direct3D, macOS 上的 Metal。([Qt][10])
+
+这解决了 Qt 5 时代的一个战略问题: OpenGL 不再是所有平台的最佳图形 API。
+
+Qt 6 的方向是:
+
+- Windows: Direct3D。
+- macOS / iOS: Metal。
+- Linux / embedded: OpenGL, OpenGL ES, Vulkan, 取决于平台。
+- 跨平台 Qt Quick 代码尽量不感知底层 graphics API。
+
+Qt 6 文档也说明 Qt Quick scene graph 是 Item scene 的图形表示, 可以独立于 Item 状态被操作和渲染, 并且很多平台上可以在专用 render thread 上渲染。([Qt Documentation][6])
+
+** 11. Qt Quick 的历史主线
+
+可以把 Qt Quick 的历史压缩成几条主线:
+
+*** 从 imperative UI 到 declarative UI
+
+Qt Widgets 的核心是 C++ 对象和事件。Qt Quick 的核心是声明式对象树和属性绑定。
+
+这不是语法糖级别的变化。它改变了 UI 开发的抽象:
+
+- Widgets: 创建对象, 设置属性, 连接信号, 处理事件。
+- Qt Quick: 描述对象关系, 绑定属性, 定义状态, 声明过渡。
+
+*** 从 CPU painting 到 scene graph
+
+Qt Quick 1 仍然有传统图形栈的影子。Qt Quick 2 后, scene graph 成为核心。
+
+这让 Qt Quick 更适合:
+
+- 高频动画。
+- 大量视觉元素。
+- shader effect。
+- 粒子系统。
+- 触控 UI。
+- 嵌入式仪表盘。
+
+*** 从 OpenGL 到 multi-backend graphics
+
+Qt 5 时代, Qt Quick 2 基本绑定 OpenGL / OpenGL ES。Qt 6 时代, RHI 把 Qt Quick 推向多图形 API 后端。
+
+这是工程现实驱动的变化。Apple 推 Metal, Windows 生态偏 Direct3D, Vulkan 在部分平台重要, OpenGL 的战略地位下降。Qt 不能长期把核心 UI 栈押在 OpenGL 上。
+
+*** 从 2D UI 到 2D / 3D 统一 UI
+
+Qt Quick 3D 让 QML 可以表达 3D scene。Qt 6 又把 2D 和 3D 放进更统一的渲染路径。
+
+这对桌面普通软件未必关键, 但对车机, 工控, 仪表盘, 医疗设备, 机器人控制台很重要。
+
+** 12. 关键时间线
+
+- 2008: Nokia 收购 Trolltech, Qt 进入 Nokia 时代。Qt Wiki 的历史页面记录了这一事件。([Qt Wiki][11])
+- 2010: Qt 4.7 引入 Qt Quick, 包含 QML, QtDeclarative, Qt Creator tooling。([Qt][1])
+- 2011: Qt Creator 2.1 发布, Qt Quick 工具链补齐。([Qt][4])
+- 2012: Qt 5.0 带来 Qt Quick 2, scene graph 成为核心渲染架构。
+- 2013: Qt 5.1 加入 Qt Quick Controls 和 Qt Quick Layouts。([Qt Wiki][7])
+- 2016: Qt 5.7 引入 Qt Quick Controls 2。([Felgo][8])
+- 2020: Qt 5.15 LTS 发布, Qt Quick 3D 进入重要位置。([Qt][9])
+- 2020: Qt 6.0 发布, Qt Quick 图形栈转向 RHI。([Qt][10])
+
+** 13. 对 Qt Quick 的评价
+
+Qt Quick 的成功点:
+
+- 声明式 UI 抽象比 Widgets 更适合动态界面。
+- QML 的属性绑定非常适合表达 UI 状态。
+- Scene graph 让动画和 GPU 加速成为基础能力。
+- C++ / QML 混合模型保留了 Qt 的系统级能力。
+- 在嵌入式 HMI, 车机, 设备 UI 中非常强。
+
+Qt Quick 的问题:
+
+- QML 动态特性带来运行时错误风险。
+- 大型 QML 项目容易出现隐式依赖和状态混乱。
+- 桌面原生控件体验长期不如 Qt Widgets。
+- C++ / QML 边界设计不好时, 项目会迅速变得难维护。
+- 性能问题不总是来自渲染, 也可能来自 binding loop, model 更新, JavaScript 逻辑, delegate 创建过多。
+
+所以, Qt Quick 的正确使用方式不是 "把所有逻辑都写进 QML"。更稳的架构是:
+
+- C++ 提供 domain model, service, backend, performance-sensitive logic。
+- QML 负责 visual composition, animation, interaction。
+- 两者之间用 property, signal, model, invokable API 建立清晰边界。
+
+** 14. 最短结论
+
+Qt Quick 是 Qt 从传统桌面 GUI 框架走向现代声明式, 动画化, GPU 加速 UI 的结果。
+
+它的历史可以分为四个阶段:
+
+1. Qt 4.7: QML 和 Qt Quick 1 出现。
+2. Qt 5.0: Qt Quick 2 和 scene graph 奠定现代架构。
+3. Qt 5.x: Controls, Layouts, Controls 2 让它能构建完整应用。
+4. Qt 6: RHI 和 Qt Quick 3D 把它推进多图形 API, 2D / 3D 混合时代。
+
+如果说 Qt Widgets 代表传统桌面 Qt, Qt Quick 代表的就是现代嵌入式, 移动化, 动效化 Qt。
+
+[1]: https://www.qt.io/blog/2010/08/26/qt-47-release-candidate-and-qt-quick "Qt 4.7 Release Candidate and Qt Quick"
+[2]: https://wiki.qt.io/Qt_Quick "Qt Quick - Qt Wiki"
+[3]: https://doc.qt.io/qt-6/qtqml-syntax-basics.html "QML Syntax Basics"
+[4]: https://www.qt.io/blog/2011/03/01/qt-creator-2-1-0-released "Qt Creator 2.1.0 released"
+[5]: https://www.qt.io/blog/2011/03/01/qt-quick-is-here "Qt Quick is here, with community driven Qt ports for Android ..."
+[6]: https://doc.qt.io/qt-6/qtquick-visualcanvas-scenegraph.html "Qt Quick Scene Graph"
+[7]: https://wiki.qt.io/New_Features_in_Qt_5.1 "New Features in Qt 5.1"
+[8]: https://felgo.com/doc/qt5/qtquickcontrols2-index/ "Qt Quick Controls 2"
+[9]: https://www.qt.io/blog/qt-5.15-released "Qt 5.15 LTS Released | Software Development Tools"
+[10]: https://www.qt.io/blog/qt-6.0-released "Qt Platform 6.0 Released | Embedded Systems ..."
+[11]: https://wiki.qt.io/Qt_History "Qt History"
