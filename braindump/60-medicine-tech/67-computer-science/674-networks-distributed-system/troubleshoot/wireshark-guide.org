@@ -1,0 +1,106 @@
+#+title: Wireshark User Guide
+#+author: SOV710
+#+date: 2026-05-18 11:37:38
+#+description: 这是一篇我被 TCP 问题搞绝望之后, 写出来的文档
+
+
+* TCP (Transmission Control Protocol)
+
+*src port*: 源端口, 发送方进程使用的端口号
+
+*dst port*: 目的端口, 接收方进程监听的端口号
+
+*Sequence Number/seq*: 序列号, 它表示这个 TCP 段中第一个数据字节的编号, TCP 按字节编号; 真实包里的 raw sequence number 通常是一个大整数, 基于握手时交换的 ISN 递增
+    注意: SYN 包消耗一个 seq, 但 ACK 包不消耗 seq, 因此发送端的 ACK 包和第一个 TLS 包都是 =seq=1=
+
+*len*: 数据长度, 表示这个 TCP 段携带的应用层数据长度, 单位是字节, 通常不包括 TCP 头部长度
+
+例如:
+#+begin_src
+seq = 1000
+len = 500
+#+end_src
+
+表示这个 TCP 段携带的数据字节范围大致是:
+#+begin_src
+1000 ~ 1499
+#+end_src
+
+*Acknowledgment Number*: 我已经收到了对方哪些字节; 我下一步期望收到哪个序列号
+
+-----
+
+*Flags*:
+
+#+begin_src
+bit:   0  1  2  3   4  5  6   7    8    9    10   11   12   13   14   15
+      ┌───────────┬────────┬────┬────┬────┬────┬────┬────┬────┬────┬────┐
+      │Data Offset│Reserved│ AE │ CWR│ ECE│ URG│ ACK│ PSH│ RST│ SYN│ FIN│
+      └───────────┴────────┴────┴────┴────┴────┴────┴────┴────┴────┴────┘
+bits:   4 bits      3 bits   1    1    1    1    1    1    1    1    1
+#+end_src
+
+- data offset: 告诉接收方 TCP 头部有多长, TCP payload 从哪里开始, 公式: =tcp_header_length = data_offset x 4bytes=
+
+- Reserved: 保留位置, 在 RFC 9293 基础标准中 Reserved 有 4 bits, 但是后来其中一位被 AE (RFC 9768 引入) 用了, 现在只剩 3 bits
+
+- *AE*: Accurate ECN, 用于将传统的 ECN 机制变得更加精细, 引入自 RFC 9768
+  传统 ECN 机制: 一般服务器遇到拥塞时, 不一定丢包, 可以在 IP 头里给包打 CE 标, 接收端收到带 CE 标记的数据包后, 会在 TCP ACK 里通过 *ECE* 位告诉发送端: 我看到拥塞标记了; "发送端收到后降低发送速率", 并用 *CWR* 表示: "我已经降低拥塞窗口了"
+  传统 ECN(ECE) 只能表达: 我看到过拥塞, 但接收端不能表达: 我在这一轮收到了多少被 CE 标记的包, AE 补充了这一点
+  注: 这个 bit 以前叫 =NS= (Nonce Sum), 用于 ECN Nonce, 来自 RFC 3540; ECN Nonce 已被废弃, 这个 bit 现在由 AccECN 使用
+
+- *CWR*: Congestion Window Reduced, 用于发送端告诉接收端: 我已经为 ECN 信号降低了拥塞窗口, 引入自 RFC3168
+
+- *ECE*: ECN-Echo, 用于接收端告诉发送端: 我看到拥塞标记 CE 了, 引入自 RFC 3168
+
+- *URG*: Urgent Flag, 表示这个 TCP segment 里的 Urgent Pointer 字段有效, 引入自 RFC 793, 后在 RFC 9293 中被修正
+  TCP header 中有两个部分:
+    - Flags: URG
+    - Urgent Pointer: 16 bits
+  只有当 =URG = 1= 时, =Urgent Pointer= 才有效
+  P.S. Urgent Pointer 给出一个相对于 seq 的偏移, 例如: =seq = 1000, urgent pointer = 5=
+  但这里有历史坑: 上面这个例子, 表示紧急数据是 =1000, 1001, 1002, 1003, 1004=, 还是 =1000, 1001, 1002, 1003, 1004, 1005=?
+  简单来说, 包不包括最后一 bit?
+  现在, *RFC 9293* 明确采用前者, 但后者可能引发兼容问题
+
+- *ACK*: Acknowledgment, 表述确认号有效, TCP 基本语义, 不赘述
+
+- *PSH*: Push Function, 引入自 RFC 793, 后在 RFC 9293 中进一步澄清; 这个 flag 的语义比较多元, 意味着:
+  发送端: 不要继续为了合并更多数据而缓存, 尽快把已排队数据发出去
+  接收端: 收到带 PSH 的数据后, 不要等更多 TCP 数据, 尽快把已有数据交给应用
+  但实际上, 这个 flag 现在早就不用了, 可以忽略
+
+- *RST*: Reset, 表示收到该包的一方, 立刻放弃该 TCP connection, 丢弃未交付的数据, 并通知应用连接异常终止, TCP 经典控制位之一
+
+- *SYN*: Synchronize, TCP 基本语义, 表示同步序列号, 建立连接, 不赘述
+
+- *FIN*: Finish, TCP 基本语义, 表示本端发送方向结束, 不赘述
+
+-----
+
+*Window*: 服务器在 TCP 头里写的​*原始窗口值*, 注意这个还没乘 window scale
+
+*Calculated window size*: 协商后的 window size, 这个已经乘了 window scale
+
+*Window size scaling factor*: 原始 TCP 协议中的 window 字段只有 16 bit, 最大只能表示 65535 bytes, 约 64 KiB
+假设 RTT 是 300ms, 65535/0.3 = 218 KB/s = 1.75 Mbps, 那么说, 在 300ms RTT 的跨洲链路上, 即使物理带宽是 1 Gbps, 没有 window scaling 的单条 TCP 流, 理论上最高只能跑到 *1.75 Mbps*
+window scaling 就是为了解决这个问题诞生的, 引入自 RFC 1323, 后被 RFC 7323 取代
+window scale 只在 SYN / SYN+ACK 中协商, 两个方向分别独立, Client SYN 表示 client 接受窗口使用的倍率, Server SYN+ACK 表示 server 接受窗口使用的倍率
+
+*Checksum*: 略去
+
+*Urgent Pointer*: 和 URG 配合的部分, 一般不用
+
+-----
+
+*Options*: TCP 可选拓展字段, 用于给 TCP 连接增加额外能力
+TCP 固定头部是 20 bytes, 但可以通过 options 拓展最多到 60 bytes, 所以 TCP options 最多 40 bytes
+常见 TCP options:
+
+- *MSS*: Maximum segment size, 单个 TCP 报文段中, TCP Payload 的最大长度
+
+- *SACK_PERM*: Sack permitted, 让接收端告诉发送端: 我收到了哪些不连续的数据块, 这对丢包恢复很重要, 在长肥管道上 SACK 很有用, 但如果包乱序情况过于严重, SACK 可能会导致反效果
+
+- *Timestamps*: 服务器支持 TCP timestamps, 用途包括 RTT 测量, PAWS 之类
+
+- *WS*: window scale factor, 即上文说的 Window size scaling factor 真实通告的地方
